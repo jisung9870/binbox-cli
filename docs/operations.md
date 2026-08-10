@@ -5,8 +5,10 @@
 Tags matching `v*` and an explicit workflow dispatch build four assets:
 Linux/macOS on amd64/arm64. The build uses `CGO_ENABLED=0`, trimmed paths, no
 VCS-derived variance, a deterministic source timestamp, and linker-injected
-version, commit, and build time. Release output includes SHA-256 checksums, an
-SPDX SBOM, and GitHub build provenance attestation.
+version, commit, and build time. Release output includes SHA-256 checksums and
+an SPDX SBOM. GitHub build provenance attestation is also emitted when the
+repository is public; GitHub does not support attestations for user-owned
+private repositories.
 
 Local verification:
 

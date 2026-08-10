@@ -40,6 +40,34 @@ func TestVersionAndHelp(t *testing.T) {
 	if !strings.Contains(out.String(), "mcp inventory|audit") {
 		t.Fatal("help missing mcp")
 	}
+	if !strings.Contains(out.String(), "shell init zsh") {
+		t.Fatal("help missing shell init")
+	}
+}
+
+func TestShellInitZshIsCheckoutIndependent(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	if err := a.Run([]string{"shell", "init", "zsh"}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"bb()", "command bb", `eval "$_bb_output"`, `list|current|set|rm|import`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("shell init missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"BB_ROOT", "libexec", "/home/", "setup/binbox"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("shell init contains checkout coupling %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestShellInitRejectsUnsupportedShell(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	if err := a.Run([]string{"shell", "init", "bash"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("exit=%d err=%v", ExitCode(err), err)
+	}
 }
 func TestProjectAndSessionPersistInXDG(t *testing.T) {
 	a, out, config, state := testApp(t)

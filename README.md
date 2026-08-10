@@ -51,6 +51,10 @@ bb wenv import --apply
 bb wenv dev
 printf '%s' "$TOKEN" | bb sec set github token
 
+# Checkout-independent zsh integration. Add this to ~/.zshrc so `bb wenv dev`
+# changes the current shell without sourcing the legacy binbox repository.
+eval "$(bb shell init zsh)"
+
 # Terraform compatibility with account-bound apply/destroy safeguards.
 bb tfx status --json
 bb tfx init -upgrade
@@ -76,8 +80,9 @@ The MVP stores configuration under `$XDG_CONFIG_HOME/bb` and state/journals
 under `$XDG_STATE_HOME/bb` (with standard home-directory fallbacks). It does
 not require `BB_ROOT`, a `libexec` tree, or helper scripts on `PATH`.
 Interactive choices use a built-in numbered selector; fzf is not a bb runtime
-dependency. The existing shell wrapper evaluates `bb wenv <preset>` output so
-the selected environment can affect the current shell.
+dependency. `bb shell init zsh` emits the small wrapper that evaluates only
+successful `bb wenv <preset>` output in the current shell. It has no checkout,
+`BB_ROOT`, or libexec dependency.
 
 Machine-readable reads accept `--json` and return the schema-v1 envelope:
 
@@ -109,6 +114,8 @@ scripts/install.sh --github-cli --version 0.1.0
 
 See [operations](docs/operations.md) for the release and trust contract.
 
-See [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
+See the [command reference](docs/commands.md),
+[legacy comparison](docs/legacy-comparison.md),
+[architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 and [decision log](docs/decision-log.md). The legacy and installer evidence is
 preserved under `research/`.

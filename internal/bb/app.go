@@ -63,6 +63,8 @@ func (a *App) dispatch(args []string) error {
 		return a.doctor(args[1:])
 	case "setup":
 		return a.setup(args[1:])
+	case "shell":
+		return a.shell(args[1:])
 	case "project":
 		return a.project(args[1:])
 	case "session":
@@ -130,6 +132,7 @@ Commands:
   version                 Print bb version
   doctor [--json]         Check external CLI capabilities
   setup nvim ...          Plan or link a selected LazyVim config
+  shell init zsh          Print checkout-independent zsh integration
   project ...             Manage/import the local project registry
   tm [projects|sessions|--project]  Select a project or inspect local tmux sessions
   git root|branch|log    Read Git repository metadata without modifying it

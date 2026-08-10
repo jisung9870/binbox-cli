@@ -8,12 +8,12 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
 |---|---|
 | Keep/migrate into `bb` | single-command UX, doctor, project discovery/registry, bb-owned session intent, run journal, read-only integration inventory |
 | Keep outside `bb` | Orca lifecycle; LazyVim/tmux config; transitional Workbench-owned personal data until explicitly migrated |
-| Defer | credential/secret mutation, executable `wenv`, destructive Terraform/Kubernetes operations, Workbench control-plane features |
+| Defer | executable shell presets outside the declarative `wenv` subset, Workbench control-plane features, MCP mutation/proxy/install |
 | Retire/archive | libexec dispatcher, checkout-coupled setup/upgrade, authoring helpers, agent-pane inference, repo-coupled `dx`/`md2jira` launchers |
 
 ## Phases
 
-1. **MVP isolation.** Ship the Go binary beside the legacy checkout. Validate
+1. **MVP isolation (implemented).** Ship the Go binary beside the legacy checkout. Validate
    empty XDG directories, owner-only files, journal redaction, help/minimum
    behavior, and missing optional tools. Do not change aliases or source data.
 2. **Freeze public data contracts (contract v1 implemented).** The schema-v1
@@ -68,7 +68,13 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    XDG JSON and rejects secret-like variables. `sec` preserves the existing age
    ciphertext/key format without plaintext files or journal values. bb no
    longer depends on fzf.
-12. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
+12. **Personal-device cutover (implemented).** The installed binary owns the
+   `bb` command, `bb shell init zsh` replaces checkout-sourced shell startup,
+   project import is idempotently verified, and the existing LazyVim link is
+   checked through the repository/revision contract. Machines with additional
+   company data repeat check/apply locally; no machine-specific values are
+   committed.
+13. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
    below pass for a documented compatibility and rollback window.
 
 ## Compatibility stop points

@@ -29,7 +29,7 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | Surface | Current minimum behavior | State/effect |
 |---|---|---|
 | `bb version` | Prints the CLI version | None |
-| `bb doctor [--json]` | Checks `git`, `tmux`, `kubectl`, `aws`, `terraform`, and Orca availability with purpose/recovery text; JSON also exposes Workbench-compatible capabilities | Read-only PATH inspection |
+| `bb doctor [--json]` | Checks core integrations plus optional `fzf`, Docker, port, AWS session, age/jq, Trivy, and Terraform-summary tools; JSON preserves Workbench-compatible capabilities | Read-only PATH inspection |
 | `bb project add/list/remove` | Maintains a local project registry with stable `prj_` IDs | `$XDG_CONFIG_HOME/bb/projects.json`, mode `0600` |
 | `bb project import sessionizer --check` | Expands the shared parent/`=direct` grammar and reports candidates, dead paths, duplicates, and collisions | Strictly read-only; source and registry remain byte-identical |
 | `bb project import sessionizer --apply` | Adds non-conflicting candidates with stable origin metadata | Writes bb registry/recovery state only; verifies the source hash and preserves source bytes |
@@ -37,8 +37,13 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb run <command> [args]` | Executes an explicit external command | Journal stores only executable basename, argument count, exit code, and timestamp |
 | `bb run list/show/export` | Reads bb-owned run records with stable `run_` IDs and outcomes | No provider scraping or external lifecycle authority |
 | `bb session open <project-id>` | Returns an explicit backend plan | Never opens or destroys a terminal; Orca is capability-unavailable by design |
-| `bb tm projects --json` | Returns the LazyVim compatibility view at `data.projects` | Read-only normalized bb registry; each record includes `id`, `name`, and canonical `path` |
+| `bb tm projects --plain|--json` | Returns the sessionizer/LazyVim-compatible normalized project view | Read-only bb registry; never rewrites the shared legacy source |
+| `bb tm sessions --json` | Preserves legacy typed tmux session fields | Session-level observation only; no panes, commands, or scrollback |
 | `bb tm [--project <id>]` | Selects with external `fzf`, then attaches or creates `bb-<project-id>` through external `tmux` | No shell evaluation, Orca invocation, lifecycle registry, or ownership claim; explicit project selection is the non-interactive seam |
+| `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |
+| `bb port inspect` | Reports listeners through `ss`/`lsof` | Read-only; process termination is not implemented |
+| `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/state list` | Preserves the core Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; session/account/scope/plan are re-observed before apply |
+| `bb tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Preserves the Trivy workflow and fixed CI/report policies | Direct Trivy arguments; node collector requires confirmation; no config or credential mutation |
 | `bb mcp inventory/audit` | Reports candidate presence and content hashes without returning configuration content | Appends redacted metadata-only `mcp_audit` journal event; never mutates config |
 | `bb export [--output path]` | Exports journal events as JSON | Read-only journal access; optional `0600` output |
 | `bb orca status` | Calls Orca's read-only JSON status endpoint | No Orca mutation or duplicated state |
@@ -66,6 +71,12 @@ tool.
 - The `tm` selector passes registry values as direct `fzf`/`tmux` arguments and
   rejects delimiter-bearing records. It is a human terminal convenience only:
   tmux remains the owner of its sessions and Orca is never consulted.
+- Sessionizer compatibility is explicit import, not a live mirror. New tmux
+  sessions use stable `bb-<project-id>` names; basename-named legacy sessions
+  are left untouched to avoid adopting a same-name session for another path.
+- Doctor retains the versioned capability shape (including nullable `path`),
+  while applying bb's own dependency policy: Git is core and feature-specific
+  tools are optional rather than making the whole CLI unavailable.
 - Recovery-relevant state remains inspectable/exportable. Future state schema
   changes require versioned readers, backups, and non-destructive migration.
 

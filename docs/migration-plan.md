@@ -8,8 +8,8 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
 |---|---|
 | Keep/migrate into `bb` | single-command UX, doctor, project discovery/registry, bb-owned session intent, run journal, read-only integration inventory |
 | Keep outside `bb` | Orca lifecycle; LazyVim/tmux config; transitional Workbench-owned personal data until explicitly migrated |
-| Defer | interactive tmux layouts, agent-pane inference, secrets, executable `wenv`, Workbench control-plane features |
-| Retire/archive | libexec dispatcher, checkout-coupled setup/upgrade, authoring helpers, domain-specific shell glue unless separately justified |
+| Defer | credential/secret mutation, executable `wenv`, destructive Terraform/Kubernetes operations, Workbench control-plane features |
+| Retire/archive | libexec dispatcher, checkout-coupled setup/upgrade, authoring helpers, agent-pane inference, repo-coupled `dx`/`md2jira` launchers |
 
 ## Phases
 
@@ -37,7 +37,24 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    `lazyvim-config` path or immutable revision. Validate identity, XDG link
    target, lockfile, prerequisites, and headless startup without embedding the
    configuration.
-7. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
+7. **Read-only legacy tranche (implemented).** Preserve `tm projects --plain`,
+   the legacy `tm sessions --json` fields, Git repository inventory, local port
+   inspection, and the expanded dependency doctor as typed Go commands. These
+   commands call external tools directly without shell evaluation.
+8. **Terraform guarded tranche (implemented).** Preserve `tfx init`, `validate`,
+   `fmt`, guarded plan output, summaries, `state list`, and two-/three-column
+   legacy session compatibility. Session/apply/destroy retain account-suffix
+   confirmation, expiry/account/scope checks, explicit plan confirmation, and
+   immediate re-observation before mutation. Status never deletes an expired
+   file and emits only the account suffix.
+9. **Trivy tranche (implemented).** Preserve scan, CI, SBOM, report, Kubernetes,
+   cache-clean, and doctor behavior as direct Trivy arguments. Policy-owned
+   severity/exit/scanner/format flags cannot be overridden, and the Kubernetes
+   node collector remains confirmation-gated.
+10. **Remaining mutation/security tranche (decision gates).** Terraform review/
+   clean/state mutation, Kubernetes context/exec/forwarding, `assume`, `wenv`, and `sec` require
+   explicit consent, re-observation, credential, and data-format contracts.
+11. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
    below pass for a documented compatibility and rollback window.
 
 ## Compatibility stop points

@@ -131,6 +131,7 @@ func TestDoctorJSONPreservesChecksAndAddsWorkbenchCapabilities(t *testing.T) {
 				Scope       string  `json:"scope"`
 				Description string  `json:"description"`
 				Available   bool    `json:"available"`
+				Path        *string `json:"path"`
 				Recovery    *string `json:"recovery"`
 			} `json:"capabilities"`
 		} `json:"data"`
@@ -138,14 +139,17 @@ func TestDoctorJSONPreservesChecksAndAddsWorkbenchCapabilities(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.SchemaVersion != 1 || len(got.Data.Checks) != 6 || len(got.Data.Capabilities) != 6 {
+	if got.SchemaVersion != 1 || len(got.Data.Checks) != 14 || len(got.Data.Capabilities) != 14 {
 		t.Fatalf("doctor shape=%s", out.String())
 	}
-	if got.Data.Capabilities[0].Name != "git" || got.Data.Capabilities[0].Scope != "core" || !got.Data.Capabilities[0].Available || got.Data.Capabilities[0].Recovery != nil {
+	if got.Data.Capabilities[0].Name != "git" || got.Data.Capabilities[0].Scope != "core" || !got.Data.Capabilities[0].Available || got.Data.Capabilities[0].Path == nil || *got.Data.Capabilities[0].Path != "/usr/bin/git" || got.Data.Capabilities[0].Recovery != nil {
 		t.Fatalf("git capability=%+v", got.Data.Capabilities[0])
 	}
-	if got.Data.Capabilities[1].Name != "tmux" || got.Data.Capabilities[1].Scope != "optional" || got.Data.Capabilities[1].Available || got.Data.Capabilities[1].Recovery == nil {
+	if got.Data.Capabilities[1].Name != "tmux" || got.Data.Capabilities[1].Scope != "optional" || got.Data.Capabilities[1].Available || got.Data.Capabilities[1].Path != nil || got.Data.Capabilities[1].Recovery == nil {
 		t.Fatalf("tmux capability=%+v", got.Data.Capabilities[1])
+	}
+	if got.Data.Capabilities[6].Name != "fzf" || got.Data.Capabilities[13].Name != "tf-summarize" {
+		t.Fatalf("extended capabilities=%+v", got.Data.Capabilities)
 	}
 }
 

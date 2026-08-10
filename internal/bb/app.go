@@ -69,6 +69,14 @@ func (a *App) dispatch(args []string) error {
 		return a.session(args[1:])
 	case "tm":
 		return a.tm(args[1:])
+	case "git":
+		return a.git(args[1:])
+	case "port":
+		return a.port(args[1:])
+	case "tfx":
+		return a.tfx(args[1:])
+	case "tvx":
+		return a.tvx(args[1:])
 	case "agents":
 		return unavailable("agent lifecycle belongs to Orca; use the Orca app or 'orca-ide status --json'")
 	case "run":
@@ -111,7 +119,11 @@ Commands:
   doctor [--json]         Check external CLI capabilities
   setup nvim ...          Plan or link a selected LazyVim config
   project ...             Manage/import the local project registry
-  tm [projects|--project] Select a project and open a local tmux session
+  tm [projects|sessions|--project]  Select a project or inspect local tmux sessions
+  git root|branch|log    Read Git repository metadata without modifying it
+  port inspect <port>    Inspect a listening local TCP/UDP port without killing it
+  tfx ...                 Guarded Terraform compatibility workflow
+  tvx ...                 Direct Trivy compatibility adapter with fixed policies
   agents                  Explain the Orca-owned agent lifecycle boundary
   session start|stop|list Manage local session records
   run <command> [args]    Run a command and append a redacted journal event
@@ -567,6 +579,7 @@ func (a *App) doctor(args []string) error {
 		Scope       string  `json:"scope"`
 		Description string  `json:"description"`
 		Available   bool    `json:"available"`
+		Path        *string `json:"path"`
 		Recovery    *string `json:"recovery"`
 	}
 	dependencies := []struct {
@@ -579,6 +592,14 @@ func (a *App) doctor(args []string) error {
 		{"aws", "AWS integrations", "optional", []string{"aws"}},
 		{"terraform", "Terraform integrations", "optional", []string{"terraform"}},
 		{"orca", "read-only Orca status and jump pointers", "optional", []string{"orca-ide", "orca"}},
+		{"fzf", "interactive project selection", "optional", []string{"fzf"}},
+		{"docker", "container inspection integrations", "optional", []string{"docker"}},
+		{"lsof", "local port inspection fallback", "optional", []string{"lsof"}},
+		{"session-manager-plugin", "AWS session manager integrations", "optional", []string{"session-manager-plugin"}},
+		{"age", "encrypted local export integrations", "optional", []string{"age"}},
+		{"jq", "JSON query integrations", "optional", []string{"jq"}},
+		{"trivy", "security scan integrations", "optional", []string{"trivy"}},
+		{"tf-summarize", "Terraform summary integrations", "optional", []string{"tf-summarize"}},
 	}
 	checks := make([]check, 0, len(dependencies))
 	capabilities := make([]capability, 0, len(dependencies))
@@ -598,7 +619,11 @@ func (a *App) doctor(args []string) error {
 		if item.Recovery != "" {
 			recovery = &item.Recovery
 		}
-		capabilities = append(capabilities, capability{Name: dependency.name, Scope: dependency.scope, Description: dependency.purpose, Available: item.Available, Recovery: recovery})
+		var capabilityPath *string
+		if item.Path != "" {
+			capabilityPath = &item.Path
+		}
+		capabilities = append(capabilities, capability{Name: dependency.name, Scope: dependency.scope, Description: dependency.purpose, Available: item.Available, Path: capabilityPath, Recovery: recovery})
 	}
 	if jsonMode {
 		return printEnvelope(a.out, map[string]any{"checks": checks, "capabilities": capabilities}, nil)

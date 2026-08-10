@@ -24,7 +24,29 @@ bb session open prj_... --backend shell --json
 
 # Compatibility endpoint used by the current LazyVim config.
 bb tm projects --json
+bb tm projects --plain
+bb tm sessions --json
 bb tm --project prj_...
+
+# Read-only legacy replacements.
+bb git root --json
+bb git branch list --all --json
+bb git log --limit 20 --json
+bb port inspect 8080 --json
+
+# Terraform compatibility with account-bound apply/destroy safeguards.
+bb tfx status --json
+bb tfx init -upgrade
+bb tfx plan -var-file=qa.tfvars
+bb tfx sum tree
+bb tfx session 15
+bb tfx apply
+bb tfx state list
+
+# Trivy policy wrapper with fixed CI and report formats.
+bb tvx repo .
+bb tvx ci repo .
+bb tvx sbom image app:latest -o sbom.cdx.json
 
 # Validate and explicitly link an already-present LazyVim config.
 bb setup nvim --config-dir /path/to/lazyvim-config --dry-run --json

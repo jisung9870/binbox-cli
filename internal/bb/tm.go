@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -14,7 +16,8 @@ import (
 func (a *App) tm(args []string) error {
 	if helpRequested(args) {
 		_, err := fmt.Fprint(a.out, `Usage:
-  bb tm projects --json
+  bb tm projects --plain|--json
+  bb tm sessions [--json]
   bb tm [--project <project-id>]
 
 With no arguments, select a registered project with fzf and attach or create a
@@ -23,13 +26,35 @@ local tmux session. --project is an explicit non-interactive selector.
 		return err
 	}
 	args, jsonMode := takeFlag(args, "--json")
+	if len(args) > 0 && args[0] == "sessions" {
+		if len(args) != 1 {
+			return usage("tm sessions", "[--json]")
+		}
+		sessions, err := a.tmSessions()
+		if err != nil {
+			return err
+		}
+		if jsonMode {
+			return printEnvelope(a.out, map[string]any{"sessions": sessions}, nil)
+		}
+		return printJSON(a.out, sessions)
+	}
 	if len(args) > 0 && args[0] == "projects" {
-		if len(args) != 1 || !jsonMode {
-			return usage("tm projects", "--json")
+		plain := len(args) == 2 && args[1] == "--plain"
+		if (!plain && (len(args) != 1 || !jsonMode)) || (plain && jsonMode) {
+			return usage("tm projects", "--plain|--json")
 		}
 		projects, err := a.tmProjects()
 		if err != nil {
 			return err
+		}
+		if plain {
+			for _, project := range projects {
+				if _, err := fmt.Fprintln(a.out, project.Path); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		return printEnvelope(a.out, map[string]any{"projects": projects}, nil)
 	}
@@ -96,6 +121,58 @@ local tmux session. --project is an explicit non-interactive selector.
 		return fmt.Errorf("open tmux session for %s: %w", project.Name, err)
 	}
 	return nil
+}
+
+// tmSession is deliberately limited to tmux's session-level format fields.
+// bb does not scrape panes, commands, or terminal content during inventory.
+type tmSession struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Windows       int    `json:"windows"`
+	Attached      bool   `json:"attached"`
+	CreatedAtUnix int64  `json:"created_at_unix"`
+	StateSource   string `json:"state_source"`
+}
+
+func (a *App) tmSessions() ([]tmSession, error) {
+	if _, err := a.lookPath("tmux"); err != nil {
+		return nil, unavailable("tmux is not installed; install tmux to inspect local sessions")
+	}
+	cmd := a.command("tmux", "list-sessions", "-F", "#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_created}")
+	cmd.Env = a.env
+	var output, stderr bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			// tmux uses exit 1 when no server exists; that is an empty inventory.
+			return []tmSession{}, nil
+		}
+		if message := strings.TrimSpace(stderr.String()); message != "" {
+			return nil, fmt.Errorf("list tmux sessions: %s", message)
+		}
+		return nil, fmt.Errorf("list tmux sessions: %w", err)
+	}
+	return parseTMSessions(output.String()), nil
+}
+
+func parseTMSessions(output string) []tmSession {
+	sessions := []tmSession{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 5 || fields[0] == "" || fields[1] == "" {
+			continue
+		}
+		windows, windowsErr := strconv.Atoi(fields[2])
+		created, createdErr := strconv.ParseInt(fields[4], 10, 64)
+		if windowsErr != nil || createdErr != nil {
+			continue
+		}
+		item := tmSession{ID: fields[0], Name: fields[1], Windows: windows, Attached: fields[3] != "0", CreatedAtUnix: created, StateSource: "tmux"}
+		sessions = append(sessions, item)
+	}
+	return sessions
 }
 
 func (a *App) runTMux(args ...string) error {

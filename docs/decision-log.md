@@ -120,3 +120,16 @@ Reason: creating a signing credential or changing repository visibility would
 cross an explicit credential/ownership decision gate. Release production is
 still fail-closed: it requires a clean checkout, matching commit metadata, and
 an exact annotated version tag.
+
+## 2026-08-10 — Selective legacy feature migration
+
+Decision: migrate stable behavior, not the legacy libexec mechanism. Read-only
+tmux, Git, port, and Terraform surfaces are typed Go commands that invoke
+system CLIs with direct argument vectors. Terraform session status reads the
+legacy `binbox/tfsession` format without rewriting or deleting it. Credential,
+secret, and destructive infrastructure commands remain explicit decision gates.
+
+Why binbox owns it: these are portable human CLI contracts and local safety
+checks. Why Orca does not: none manages agents, worktrees, schedulers, or DAGs.
+Why LazyVim does not: it consumes only versioned project/session inventory and
+does not own Git, Terraform, or process inspection behavior.

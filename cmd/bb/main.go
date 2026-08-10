@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/binbox/bb/internal/bb"
+	"github.com/jisung9870/binbox-cli/internal/bb"
 )
 
 func main() {

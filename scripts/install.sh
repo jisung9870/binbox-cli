@@ -3,7 +3,7 @@
 set -euo pipefail
 
 PROGRAM=bb
-REPOSITORY=${BB_REPOSITORY:-binbox/bb}
+REPOSITORY=${BB_REPOSITORY:-jisung9870/binbox-cli}
 VERSION=${BB_VERSION:-}
 INSTALL_DIR=${XDG_BIN_HOME:-"${HOME:?HOME must be set}/.local/bin"}
 DRY_RUN=false

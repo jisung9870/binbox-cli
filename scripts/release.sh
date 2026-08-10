@@ -17,7 +17,7 @@ mkdir -p "$TMP_PARENT"
 
 # bb.Version, bb.Commit, and bb.BuildTime are intentionally linker-set
 # release metadata.  Keep -buildid empty and paths trimmed for reproducibility.
-LDFLAGS="-s -w -buildid= -X github.com/binbox/bb/internal/bb.Version=$VERSION -X github.com/binbox/bb/internal/bb.Commit=$COMMIT -X github.com/binbox/bb/internal/bb.BuildTime=$BUILD_TIME"
+LDFLAGS="-s -w -buildid= -X github.com/jisung9870/binbox-cli/internal/bb.Version=$VERSION -X github.com/jisung9870/binbox-cli/internal/bb.Commit=$COMMIT -X github.com/jisung9870/binbox-cli/internal/bb.BuildTime=$BUILD_TIME"
 export CGO_ENABLED=0 GOFLAGS="${GOFLAGS:-} -trimpath -buildvcs=false"
 export SOURCE_DATE_EPOCH
 

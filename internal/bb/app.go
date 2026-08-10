@@ -25,13 +25,16 @@ var (
 )
 
 type App struct {
+	in       io.Reader
 	out, err io.Writer
 	env      []string
 	now      func() time.Time
+	lookPath func(string) (string, error)
+	command  func(string, ...string) *exec.Cmd
 }
 
 func New(out, err io.Writer, env []string) *App {
-	return &App{out: out, err: err, env: env, now: time.Now}
+	return &App{in: os.Stdin, out: out, err: err, env: env, now: time.Now, lookPath: exec.LookPath, command: exec.Command}
 }
 
 func (a *App) Run(args []string) error {
@@ -64,6 +67,10 @@ func (a *App) dispatch(args []string) error {
 		return a.project(args[1:])
 	case "session":
 		return a.session(args[1:])
+	case "tm":
+		return a.tm(args[1:])
+	case "agents":
+		return unavailable("agent lifecycle belongs to Orca; use the Orca app or 'orca-ide status --json'")
 	case "run":
 		return a.run(args[1:])
 	case "mcp":
@@ -104,6 +111,8 @@ Commands:
   doctor [--json]         Check external CLI capabilities
   setup nvim ...          Plan or link a selected LazyVim config
   project ...             Manage/import the local project registry
+  tm [projects|--project] Select a project and open a local tmux session
+  agents                  Explain the Orca-owned agent lifecycle boundary
   session start|stop|list Manage local session records
   run <command> [args]    Run a command and append a redacted journal event
   mcp inventory|audit     Read-only MCP configuration inventory/audit
@@ -510,7 +519,7 @@ func (a *App) sessionOpen(args []string, jsonMode bool) error {
 		return unavailable("Orca session opening is unavailable; bb does not manage Orca lifecycles")
 	}
 	if resolved == "tmux" {
-		if _, err := exec.LookPath("tmux"); err != nil {
+		if _, err := a.lookPath("tmux"); err != nil {
 			return unavailable("tmux is not installed; choose --backend shell or install tmux")
 		}
 	}
@@ -553,22 +562,30 @@ func (a *App) doctor(args []string) error {
 		Path      string `json:"path,omitempty"`
 		Recovery  string `json:"recovery,omitempty"`
 	}
+	type capability struct {
+		Name        string  `json:"name"`
+		Scope       string  `json:"scope"`
+		Description string  `json:"description"`
+		Available   bool    `json:"available"`
+		Recovery    *string `json:"recovery"`
+	}
 	dependencies := []struct {
-		name, purpose string
-		lookups       []string
+		name, purpose, scope string
+		lookups              []string
 	}{
-		{"git", "source and project operations", []string{"git"}},
-		{"tmux", "human terminal sessions", []string{"tmux"}},
-		{"kubectl", "Kubernetes integrations", []string{"kubectl"}},
-		{"aws", "AWS integrations", []string{"aws"}},
-		{"terraform", "Terraform integrations", []string{"terraform"}},
-		{"orca", "read-only Orca status and jump pointers", []string{"orca-ide", "orca"}},
+		{"git", "source and project operations", "core", []string{"git"}},
+		{"tmux", "human terminal sessions", "optional", []string{"tmux"}},
+		{"kubectl", "Kubernetes integrations", "optional", []string{"kubectl"}},
+		{"aws", "AWS integrations", "optional", []string{"aws"}},
+		{"terraform", "Terraform integrations", "optional", []string{"terraform"}},
+		{"orca", "read-only Orca status and jump pointers", "optional", []string{"orca-ide", "orca"}},
 	}
 	checks := make([]check, 0, len(dependencies))
+	capabilities := make([]capability, 0, len(dependencies))
 	for _, dependency := range dependencies {
 		item := check{Command: dependency.name, Purpose: dependency.purpose}
 		for _, candidate := range dependency.lookups {
-			if path, lookupErr := exec.LookPath(candidate); lookupErr == nil {
+			if path, lookupErr := a.lookPath(candidate); lookupErr == nil {
 				item.Available, item.Path = true, path
 				break
 			}
@@ -577,9 +594,14 @@ func (a *App) doctor(args []string) error {
 			item.Recovery = fmt.Sprintf("install %s to use %s", dependency.name, dependency.purpose)
 		}
 		checks = append(checks, item)
+		var recovery *string
+		if item.Recovery != "" {
+			recovery = &item.Recovery
+		}
+		capabilities = append(capabilities, capability{Name: dependency.name, Scope: dependency.scope, Description: dependency.purpose, Available: item.Available, Recovery: recovery})
 	}
 	if jsonMode {
-		return printEnvelope(a.out, map[string]any{"checks": checks}, nil)
+		return printEnvelope(a.out, map[string]any{"checks": checks, "capabilities": capabilities}, nil)
 	}
 	for _, c := range checks {
 		status := "missing"

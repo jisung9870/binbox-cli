@@ -22,6 +22,10 @@ bb project import sessionizer --apply --json
 bb run list --json
 bb session open prj_... --backend shell --json
 
+# Compatibility endpoint used by the current LazyVim config.
+bb tm projects --json
+bb tm --project prj_...
+
 # Validate and explicitly link an already-present LazyVim config.
 bb setup nvim --config-dir /path/to/lazyvim-config --dry-run --json
 bb setup nvim --config-dir /path/to/lazyvim-config --apply --consent --json

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -106,6 +108,163 @@ func TestDoctorChecksDocumentedExternalDependencies(t *testing.T) {
 		if !strings.Contains(out.String(), `"command":"`+command+`"`) {
 			t.Fatalf("doctor output missing %s: %s", command, out.String())
 		}
+	}
+}
+
+func TestDoctorJSONPreservesChecksAndAddsWorkbenchCapabilities(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	a.lookPath = func(name string) (string, error) {
+		if name == "git" {
+			return "/usr/bin/git", nil
+		}
+		return "", os.ErrNotExist
+	}
+	if err := a.Run([]string{"doctor", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		SchemaVersion int `json:"schema_version"`
+		Data          struct {
+			Checks       []json.RawMessage `json:"checks"`
+			Capabilities []struct {
+				Name        string  `json:"name"`
+				Scope       string  `json:"scope"`
+				Description string  `json:"description"`
+				Available   bool    `json:"available"`
+				Recovery    *string `json:"recovery"`
+			} `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SchemaVersion != 1 || len(got.Data.Checks) != 6 || len(got.Data.Capabilities) != 6 {
+		t.Fatalf("doctor shape=%s", out.String())
+	}
+	if got.Data.Capabilities[0].Name != "git" || got.Data.Capabilities[0].Scope != "core" || !got.Data.Capabilities[0].Available || got.Data.Capabilities[0].Recovery != nil {
+		t.Fatalf("git capability=%+v", got.Data.Capabilities[0])
+	}
+	if got.Data.Capabilities[1].Name != "tmux" || got.Data.Capabilities[1].Scope != "optional" || got.Data.Capabilities[1].Available || got.Data.Capabilities[1].Recovery == nil {
+		t.Fatalf("tmux capability=%+v", got.Data.Capabilities[1])
+	}
+}
+
+func TestTMProjectsUsesLazyVimEnvelope(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	project := t.TempDir()
+	if err := a.Run([]string{"project", "add", project, "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"tm", "projects", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		SchemaVersion int  `json:"schema_version"`
+		OK            bool `json:"ok"`
+		Data          struct {
+			Projects []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+				Path string `json:"path"`
+			} `json:"projects"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.SchemaVersion != SchemaVersion || !got.OK || len(got.Data.Projects) != 1 || got.Data.Projects[0].Path != project || got.Data.Projects[0].ID != projectID(project) {
+		t.Fatalf("projects=%s", out.String())
+	}
+}
+
+func TestTMExplicitProjectUsesTmuxWithoutFZFOrOrca(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	project := t.TempDir()
+	if err := a.Run([]string{"project", "add", project, "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	var requested []string
+	a.lookPath = func(name string) (string, error) {
+		if name == "tmux" {
+			return "/test/tmux", nil
+		}
+		return "", os.ErrNotExist
+	}
+	a.command = func(name string, args ...string) *exec.Cmd {
+		requested = append([]string{name}, args...)
+		return exec.Command("true")
+	}
+	if err := a.Run([]string{"tm", "--project", projectID(project)}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"tmux", "new-session", "-A", "-s", "bb-" + projectID(project), "-c", project}
+	if strings.Join(requested, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("tmux request=%q want=%q", requested, want)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("unexpected output=%q", out.String())
+	}
+}
+
+func TestTMExplicitProjectInsideTmuxCreatesAndSwitches(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	a.env = append(a.env, "TMUX=/tmp/tmux-1/default,1,0")
+	project := t.TempDir()
+	if err := a.Run([]string{"project", "add", project, "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	var requests [][]string
+	a.lookPath = func(name string) (string, error) {
+		if name == "tmux" {
+			return "/test/tmux", nil
+		}
+		return "", os.ErrNotExist
+	}
+	a.command = func(name string, args ...string) *exec.Cmd {
+		request := append([]string{name}, args...)
+		requests = append(requests, request)
+		if len(args) > 0 && args[0] == "has-session" {
+			return exec.Command("false")
+		}
+		return exec.Command("true")
+	}
+	if err := a.Run([]string{"tm", "--project", projectID(project)}); err != nil {
+		t.Fatal(err)
+	}
+	session := "bb-" + projectID(project)
+	want := [][]string{
+		{"tmux", "has-session", "-t", session},
+		{"tmux", "new-session", "-d", "-s", session, "-c", project},
+		{"tmux", "switch-client", "-t", session},
+	}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("tmux requests=%q want=%q", requests, want)
+	}
+}
+
+func TestAgentsPointsToOrcaOwnership(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	err := a.Run([]string{"agents"})
+	if ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "Orca") {
+		t.Fatalf("agents err=%v", err)
+	}
+}
+
+func TestTMUnavailableErrorsAreActionable(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	project := t.TempDir()
+	if err := a.Run([]string{"project", "add", project, "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	a.lookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	if err := a.Run([]string{"tm"}); ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "fzf is not installed") {
+		t.Fatalf("fzf error=%v", err)
+	}
+	if err := a.Run([]string{"tm", "--project", projectID(project)}); ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "tmux is not installed") {
+		t.Fatalf("tmux error=%v", err)
 	}
 }
 

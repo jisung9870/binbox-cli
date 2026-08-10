@@ -26,7 +26,10 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    preserves exact recovery bytes, and writes only bb's registry/state.
 4. **Observed session/run migration.** Create ownership only for actions begun
    by `bb`. Existing tmux/Workbench/Orca objects remain external observations.
-   Explicit backends never silently fall back.
+   Explicit backends never silently fall back. The minimum LazyVim bridge is
+   now `bb tm projects --json`: schema-v1 `data.projects` reads only the bb
+   registry. `bb tm` is a local fzf/tmux convenience and deliberately makes no
+   Orca lifecycle claim.
 5. **Binary release migration (automation implemented).** Publish checksummed artifacts and an atomic
    installer. Detect the old checkout symlink, explain the transition, require
    `--migrate`, and never delete the source checkout automatically.
@@ -63,7 +66,10 @@ read-only/check-first and source data is preserved.
 - A source-checkout user migrates without deletion or loss of shell customization,
   config, sessionizer data, or recovery path.
 - Doctor has stable versioned JSON/exit semantics and actionable recovery for
-  every required failure while optional tools remain clearly optional.
+  every required failure while optional tools remain clearly optional. Its
+  existing `data.checks` view remains available alongside the Workbench
+  compatible `data.capabilities` records (`name`, `scope`, `description`,
+  `available`, and `recovery`).
 - `bb setup nvim` uses the separate config identity/revision contract and does
   not touch an unapproved existing path.
 - LazyVim consumes the new contract asynchronously with schema checks and a

@@ -1,0 +1,710 @@
+// Package bb implements the small, local-first bb command-line interface.
+package bb
+
+import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+const Version = "0.1.0"
+
+type App struct {
+	out, err io.Writer
+	env      []string
+	now      func() time.Time
+}
+
+func New(out, err io.Writer, env []string) *App {
+	return &App{out: out, err: err, env: env, now: time.Now}
+}
+
+func (a *App) Run(args []string) error {
+	jsonMode := jsonRequested(args)
+	err := a.dispatch(args)
+	if err == nil {
+		return nil
+	}
+	commandErr := commandError(err)
+	if jsonMode {
+		if printErr := printErrorEnvelope(a.out, commandErr); printErr == nil {
+			commandErr.Reported = true
+		}
+	}
+	return commandErr
+}
+
+func (a *App) dispatch(args []string) error {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		return a.help()
+	}
+	switch args[0] {
+	case "version":
+		return a.version(args[1:])
+	case "doctor":
+		return a.doctor(args[1:])
+	case "project":
+		return a.project(args[1:])
+	case "session":
+		return a.session(args[1:])
+	case "run":
+		return a.run(args[1:])
+	case "mcp":
+		return a.mcp(args[1:])
+	case "export":
+		return a.export(args[1:])
+	case "orca":
+		return a.orca(args[1:])
+	default:
+		return invalid(fmt.Sprintf("unknown command %q; run 'bb help'", args[0]))
+	}
+}
+
+func (a *App) version(args []string) error {
+	if helpRequested(args) {
+		_, err := fmt.Fprintln(a.out, "Usage: bb version [--json]")
+		return err
+	}
+	args, jsonMode := takeFlag(args, "--json")
+	if len(args) != 0 {
+		return usage("version", "[--json]")
+	}
+	data := map[string]any{"version": Version, "schema_version": SchemaVersion}
+	if jsonMode {
+		return printEnvelope(a.out, data, nil)
+	}
+	_, err := fmt.Fprintln(a.out, Version)
+	return err
+}
+
+func (a *App) help() error {
+	_, err := fmt.Fprint(a.out, `bb is a local-first developer workspace helper.
+
+Usage: bb <command> [arguments]
+
+Commands:
+  version                 Print bb version
+  doctor [--json]         Check external CLI capabilities
+  project ...             Manage/import the local project registry
+  session start|stop|list Manage local session records
+  run <command> [args]    Run a command and append a redacted journal event
+  mcp inventory|audit     Read-only MCP configuration inventory/audit
+  export [--output path]  Export the redacted journal as JSON
+  orca status             Read-only Orca runtime status
+`)
+	return err
+}
+
+func (a *App) paths() (string, string, error) {
+	config := a.getenv("XDG_CONFIG_HOME")
+	if config == "" {
+		var err error
+		config, err = os.UserConfigDir()
+		if err != nil {
+			return "", "", fmt.Errorf("find XDG config directory: %w", err)
+		}
+	}
+	state := a.getenv("XDG_STATE_HOME")
+	if state == "" {
+		home := a.getenv("HOME")
+		if home == "" {
+			var err error
+			home, err = os.UserHomeDir()
+			if err != nil {
+				return "", "", fmt.Errorf("find home directory for XDG state: %w", err)
+			}
+		}
+		state = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(config, "bb"), filepath.Join(state, "bb"), nil
+}
+
+func (a *App) getenv(key string) string {
+	prefix := key + "="
+	for _, entry := range a.env {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
+}
+
+type projectRecord struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	AddedAt time.Time `json:"added_at"`
+}
+type sessionRecord struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Project   string     `json:"project,omitempty"`
+	StartedAt time.Time  `json:"started_at"`
+	StoppedAt *time.Time `json:"stopped_at,omitempty"`
+}
+type journalEvent struct {
+	Time time.Time `json:"time"`
+	Type string    `json:"type"`
+	Data any       `json:"data"`
+}
+
+func (a *App) project(args []string) error {
+	if helpRequested(args) {
+		_, err := fmt.Fprint(a.out, `Usage:
+  bb project list [--json]
+  bb project add <path> [name] [--json]
+  bb project remove <id|name> [--json]
+  bb project import sessionizer --check [--file <path>] [--json]
+`)
+		return err
+	}
+	args, jsonMode := takeFlag(args, "--json")
+	config, _, err := a.paths()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(config, "projects.json")
+	if len(args) == 0 || args[0] == "list" {
+		if len(args) > 1 {
+			return usage("project list", "[--json]")
+		}
+		records, err := loadProjects(path)
+		if err != nil {
+			return err
+		}
+		if jsonMode {
+			return printEnvelope(a.out, records, nil)
+		}
+		return printJSON(a.out, records)
+	}
+	switch args[0] {
+	case "add":
+		if len(args) < 2 || len(args) > 3 {
+			return usage("project add", "<path> [name] [--json]")
+		}
+		absolute, err := a.expandPath(args[1])
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(absolute)
+		if err != nil || !info.IsDir() {
+			return fmt.Errorf("project path must be an existing directory: %s", absolute)
+		}
+		name := filepath.Base(absolute)
+		if len(args) > 2 {
+			name = args[2]
+		}
+		var added projectRecord
+		err = withFileLock(path, func() error {
+			records, loadErr := loadProjects(path)
+			if loadErr != nil {
+				return loadErr
+			}
+			for _, r := range records {
+				if r.Name == name || canonicalPath(r.Path) == absolute {
+					return fmt.Errorf("project already registered: %s", name)
+				}
+			}
+			added = projectRecord{ID: projectID(absolute), Name: name, Path: absolute, AddedAt: a.now().UTC()}
+			records = append(records, added)
+			sort.Slice(records, func(i, j int) bool { return records[i].Name < records[j].Name })
+			return writeJSONAtomic(path, records)
+		})
+		if err != nil {
+			return fmt.Errorf("write projects: %w", err)
+		}
+		if jsonMode {
+			return printEnvelope(a.out, added, nil)
+		}
+		return printJSON(a.out, added)
+	case "remove":
+		if len(args) != 2 {
+			return usage("project remove", "<id|name> [--json]")
+		}
+		removed := ""
+		err := withFileLock(path, func() error {
+			records, loadErr := loadProjects(path)
+			if loadErr != nil {
+				return loadErr
+			}
+			kept := make([]projectRecord, 0, len(records))
+			for _, r := range records {
+				if r.Name == args[1] || r.ID == args[1] {
+					removed = r.ID
+					continue
+				}
+				kept = append(kept, r)
+			}
+			if removed == "" {
+				return fmt.Errorf("project not found: %s", args[1])
+			}
+			return writeJSONAtomic(path, kept)
+		})
+		if err != nil {
+			return err
+		}
+		if jsonMode {
+			return printEnvelope(a.out, map[string]string{"removed": removed}, nil)
+		}
+		return nil
+	case "import":
+		return a.projectImport(args[1:], jsonMode, path)
+	default:
+		return invalid(fmt.Sprintf("unknown project command %q", args[0]))
+	}
+}
+
+func loadProjects(path string) ([]projectRecord, error) {
+	records := []projectRecord{}
+	if err := readJSON(path, &records); err != nil {
+		return nil, fmt.Errorf("read projects: %w", err)
+	}
+	for i := range records {
+		records[i].Path = canonicalPath(records[i].Path)
+		if records[i].ID == "" {
+			records[i].ID = projectID(records[i].Path)
+		}
+	}
+	return records, nil
+}
+
+func (a *App) projectImport(args []string, jsonMode bool, registryPath string) error {
+	if len(args) < 2 || args[0] != "sessionizer" || args[1] != "--check" {
+		return usage("project import", "sessionizer --check [--file <path>] [--json]")
+	}
+	source := ""
+	for i := 2; i < len(args); i++ {
+		if args[i] != "--file" || i+1 >= len(args) || source != "" {
+			return usage("project import", "sessionizer --check [--file <path>] [--json]")
+		}
+		source = args[i+1]
+		i++
+	}
+	records, err := loadProjects(registryPath)
+	if err != nil {
+		return err
+	}
+	check, err := a.checkSessionizer(source, records)
+	if err != nil {
+		return err
+	}
+	if jsonMode {
+		return printEnvelope(a.out, check, check.Warnings)
+	}
+	return printJSON(a.out, check)
+}
+
+func canonicalPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return resolved
+	}
+	return clean
+}
+
+func stableID(prefix, value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(sum[:6]))
+}
+
+func projectID(path string) string { return stableID("prj", canonicalPath(path)) }
+
+func (a *App) session(args []string) error {
+	if helpRequested(args) {
+		_, err := fmt.Fprint(a.out, `Usage:
+  bb session list [--json]
+  bb session start <name> [--json]
+  bb session stop <id|name> [--json]
+`)
+		return err
+	}
+	args, jsonMode := takeFlag(args, "--json")
+	_, state, err := a.paths()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(state, "sessions.json")
+	if len(args) == 0 || args[0] == "list" {
+		if len(args) > 1 {
+			return usage("session list", "[--json]")
+		}
+		records, err := loadSessions(path)
+		if err != nil {
+			return err
+		}
+		if jsonMode {
+			return printEnvelope(a.out, records, nil)
+		}
+		return printJSON(a.out, records)
+	}
+	if len(args) != 2 {
+		return usage("session", "start|stop <id|name> [--json]")
+	}
+	var changed sessionRecord
+	switch args[0] {
+	case "start":
+		err = withFileLock(path, func() error {
+			records, loadErr := loadSessions(path)
+			if loadErr != nil {
+				return loadErr
+			}
+			for _, r := range records {
+				if r.Name == args[1] && r.StoppedAt == nil {
+					return fmt.Errorf("session already running: %s", args[1])
+				}
+			}
+			started := a.now().UTC()
+			changed = sessionRecord{ID: stableID("ses", args[1]+"\x00"+started.Format(time.RFC3339Nano)), Name: args[1], StartedAt: started}
+			records = append(records, changed)
+			return writeJSONAtomic(path, records)
+		})
+	case "stop":
+		err = withFileLock(path, func() error {
+			records, loadErr := loadSessions(path)
+			if loadErr != nil {
+				return loadErr
+			}
+			now := a.now().UTC()
+			found := false
+			for i := range records {
+				if (records[i].Name == args[1] || records[i].ID == args[1]) && records[i].StoppedAt == nil {
+					records[i].StoppedAt = &now
+					changed = records[i]
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("running session not found: %s", args[1])
+			}
+			return writeJSONAtomic(path, records)
+		})
+	default:
+		return invalid(fmt.Sprintf("unknown session command %q", args[0]))
+	}
+	if err != nil {
+		return err
+	}
+	if jsonMode {
+		return printEnvelope(a.out, changed, nil)
+	}
+	return nil
+}
+
+func loadSessions(path string) ([]sessionRecord, error) {
+	records := []sessionRecord{}
+	if err := readJSON(path, &records); err != nil {
+		return nil, fmt.Errorf("read sessions: %w", err)
+	}
+	for i := range records {
+		if records[i].ID == "" {
+			records[i].ID = stableID("ses", records[i].Name+"\x00"+records[i].StartedAt.Format(time.RFC3339Nano))
+		}
+	}
+	return records, nil
+}
+
+func (a *App) doctor(args []string) error {
+	if helpRequested(args) {
+		_, err := fmt.Fprintln(a.out, "Usage: bb doctor [--json]")
+		return err
+	}
+	args, jsonMode := takeFlag(args, "--json")
+	if len(args) != 0 {
+		return usage("doctor", "[--json]")
+	}
+	type check struct {
+		Command   string `json:"command"`
+		Purpose   string `json:"purpose"`
+		Available bool   `json:"available"`
+		Path      string `json:"path,omitempty"`
+		Recovery  string `json:"recovery,omitempty"`
+	}
+	dependencies := []struct {
+		name, purpose string
+		lookups       []string
+	}{
+		{"git", "source and project operations", []string{"git"}},
+		{"tmux", "human terminal sessions", []string{"tmux"}},
+		{"kubectl", "Kubernetes integrations", []string{"kubectl"}},
+		{"aws", "AWS integrations", []string{"aws"}},
+		{"terraform", "Terraform integrations", []string{"terraform"}},
+		{"orca", "read-only Orca status and jump pointers", []string{"orca-ide", "orca"}},
+	}
+	checks := make([]check, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		item := check{Command: dependency.name, Purpose: dependency.purpose}
+		for _, candidate := range dependency.lookups {
+			if path, lookupErr := exec.LookPath(candidate); lookupErr == nil {
+				item.Available, item.Path = true, path
+				break
+			}
+		}
+		if !item.Available {
+			item.Recovery = fmt.Sprintf("install %s to use %s", dependency.name, dependency.purpose)
+		}
+		checks = append(checks, item)
+	}
+	if jsonMode {
+		return printEnvelope(a.out, map[string]any{"checks": checks}, nil)
+	}
+	for _, c := range checks {
+		status := "missing"
+		if c.Available {
+			status = c.Path
+		}
+		fmt.Fprintf(a.out, "%-10s %s\n", c.Command, status)
+	}
+	return nil
+}
+
+func (a *App) run(args []string) error {
+	if helpRequested(args) && len(args) == 1 {
+		_, err := fmt.Fprintln(a.out, "Usage: bb run [--json] <command> [args]")
+		return err
+	}
+	jsonMode := false
+	if len(args) > 0 && args[0] == "--json" {
+		jsonMode = true
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return usage("run", "[--json] <command> [args]")
+	}
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = a.env
+	if jsonMode {
+		cmd.Stdout = a.err
+	} else {
+		cmd.Stdout = a.out
+	}
+	cmd.Stderr = a.err
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		code = 1
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			code = exit.ExitCode()
+		}
+	}
+	_, state, pathErr := a.paths()
+	if pathErr != nil {
+		return pathErr
+	}
+	event := journalEvent{Time: a.now().UTC(), Type: "run", Data: map[string]any{
+		"executable":     filepath.Base(args[0]),
+		"argument_count": len(args) - 1,
+		"exit_code":      code,
+	}}
+	if journalErr := appendJournal(filepath.Join(state, "journal.ndjson"), event); journalErr != nil {
+		return fmt.Errorf("journal run: %w", journalErr)
+	}
+	if err != nil {
+		return fmt.Errorf("command failed (exit %d): %w", code, err)
+	}
+	if jsonMode {
+		return printEnvelope(a.out, event, nil)
+	}
+	return nil
+}
+
+func appendJournal(path string, event journalEvent) error {
+	return withFileLock(path, func() error {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return json.NewEncoder(f).Encode(event)
+	})
+}
+func (a *App) export(args []string) error {
+	if helpRequested(args) {
+		_, err := fmt.Fprintln(a.out, "Usage: bb export [--output path] [--json]")
+		return err
+	}
+	args, jsonMode := takeFlag(args, "--json")
+	output := ""
+	if len(args) == 2 && args[0] == "--output" {
+		output = args[1]
+	} else if len(args) != 0 {
+		return usage("export", "[--output path] [--json]")
+	}
+	_, state, err := a.paths()
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(filepath.Join(state, "journal.ndjson"))
+	if errors.Is(err, os.ErrNotExist) {
+		return writeExport(a.out, output, []journalEvent{}, jsonMode)
+	}
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var events []journalEvent
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var e journalEvent
+		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
+			return fmt.Errorf("read journal: %w", err)
+		}
+		e.Data = redact(e.Data)
+		events = append(events, e)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return writeExport(a.out, output, events, jsonMode)
+}
+func writeExport(out io.Writer, output string, events []journalEvent, jsonMode bool) error {
+	if output == "" {
+		if jsonMode {
+			return printEnvelope(out, events, nil)
+		}
+		return printJSON(out, events)
+	}
+	return writeJSON(output, events)
+}
+
+func (a *App) mcp(args []string) error {
+	if helpRequested(args) {
+		_, err := fmt.Fprintln(a.out, "Usage: bb mcp inventory|audit [--json]")
+		return err
+	}
+	args, jsonMode := takeFlag(args, "--json")
+	if len(args) != 1 || (args[0] != "inventory" && args[0] != "audit") {
+		return usage("mcp", "inventory|audit [--json]")
+	}
+	config, _, err := a.paths()
+	if err != nil {
+		return err
+	}
+	candidates := []string{filepath.Join(config, "mcp.json"), filepath.Join(a.getenv("HOME"), ".config", "Claude", "claude_desktop_config.json"), filepath.Join(a.getenv("HOME"), ".codex", "mcp.json")}
+	type item struct {
+		Path   string `json:"path"`
+		Exists bool   `json:"exists"`
+		SHA256 string `json:"sha256,omitempty"`
+	}
+	items := make([]item, 0, len(candidates))
+	for _, path := range candidates {
+		b, readErr := os.ReadFile(path)
+		if errors.Is(readErr, os.ErrNotExist) {
+			items = append(items, item{Path: path})
+			continue
+		}
+		if readErr != nil {
+			return fmt.Errorf("read MCP config %s: %w", path, readErr)
+		}
+		sum := sha256.Sum256(b)
+		i := item{Path: path, Exists: true, SHA256: hex.EncodeToString(sum[:])}
+		items = append(items, i)
+	}
+	existing := 0
+	for _, item := range items {
+		if item.Exists {
+			existing++
+		}
+	}
+	_, state, err := a.paths()
+	if err != nil {
+		return err
+	}
+	event := journalEvent{Time: a.now().UTC(), Type: "mcp_audit", Data: map[string]any{
+		"mode": args[0], "candidate_count": len(items), "existing_count": existing,
+	}}
+	if err := appendJournal(filepath.Join(state, "journal.ndjson"), event); err != nil {
+		return fmt.Errorf("journal MCP audit: %w", err)
+	}
+	data := map[string]any{"mode": args[0], "read_only": true, "content_inspected": false, "items": items}
+	if jsonMode {
+		return printEnvelope(a.out, data, nil)
+	}
+	return printJSON(a.out, data)
+}
+
+func (a *App) orca(args []string) error {
+	if helpRequested(args) {
+		_, err := fmt.Fprintln(a.out, "Usage: bb orca status [--json]")
+		return err
+	}
+	args, jsonMode := takeFlag(args, "--json")
+	if len(args) != 1 || args[0] != "status" {
+		return usage("orca", "status [--json]")
+	}
+	path, err := exec.LookPath("orca-ide")
+	if err != nil {
+		return unavailable("orca-ide not found; bb only exposes read-only Orca status")
+	}
+	cmd := exec.Command(path, "status", "--json")
+	cmd.Env = a.env
+	b, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("read Orca status: %w", err)
+	}
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return fmt.Errorf("decode Orca status: %w", err)
+	}
+	data := redact(v)
+	if jsonMode {
+		return printEnvelope(a.out, data, nil)
+	}
+	return printJSON(a.out, data)
+}
+
+var sensitiveKey = regexp.MustCompile(`(?i)(token|secret|password|authorization|api[_-]?key|cookie|credential)`)
+var assignmentSecret = regexp.MustCompile(`(?i)\b(token|password|secret|api[_-]?key)\s*([=:])\s*[^\s,]+`)
+var authorizationSecret = regexp.MustCompile(`(?i)\bauthorization\s*([=:])\s*[^,\n]+`)
+var bearerSecret = regexp.MustCompile(`(?i)\bbearer\s+(?:sk|ghp|github_pat|xox[baprs])[-_a-z0-9]+`)
+
+func redact(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			if sensitiveKey.MatchString(k) {
+				out[k] = "[REDACTED]"
+			} else {
+				out[k] = redact(val)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i := range x {
+			out[i] = redact(x[i])
+		}
+		return out
+	case []string:
+		out := make([]string, len(x))
+		for i := range x {
+			out[i] = redact(x[i]).(string)
+		}
+		return out
+	case string:
+		x = assignmentSecret.ReplaceAllString(x, "$1$2 [REDACTED]")
+		x = authorizationSecret.ReplaceAllString(x, "Authorization$1 [REDACTED]")
+		return bearerSecret.ReplaceAllString(x, "[REDACTED]")
+	default:
+		return v
+	}
+}

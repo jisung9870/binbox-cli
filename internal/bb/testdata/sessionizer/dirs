@@ -1,0 +1,6 @@
+# parent root, direct entry, duplicate, and dead path
+__ROOT__/parent
+=__ROOT__/direct
+=__ROOT__/direct
+__ROOT__/dead
+=

@@ -28,7 +28,7 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    by `bb`. Existing tmux/Workbench/Orca objects remain external observations.
    Explicit backends never silently fall back. The minimum LazyVim bridge is
    now `bb tm projects --json`: schema-v1 `data.projects` reads only the bb
-   registry. `bb tm` is a local fzf/tmux convenience and deliberately makes no
+   registry. `bb tm` is a local built-in-selector/tmux convenience and deliberately makes no
    Orca lifecycle claim.
 5. **Binary release migration (automation implemented).** Publish checksummed artifacts and an atomic
    installer. Detect the old checkout symlink, explain the transition, require
@@ -62,9 +62,12 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    fzf discovery is replaced by deterministic explicit arguments. Terraform
    review output is retained only in fresh owner-only XDG state directories;
    cleanup ignores caller-controlled artifact basenames.
-11. **Credential/data tranche (decision gates).** `assume`, `wenv`, and `sec`
-   still require explicit credential ownership, non-executable data-format, and
-   recovery decisions. No current command stores credentials or secrets.
+11. **Credential/data tranche (implemented with external ownership).** AWS CLI
+   owns SSO login, credentials, and cache while `bb profile` changes only
+   config SSO profiles. `wenv` imports an allowlisted non-executable subset into
+   XDG JSON and rejects secret-like variables. `sec` preserves the existing age
+   ciphertext/key format without plaintext files or journal values. bb no
+   longer depends on fzf.
 12. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
    below pass for a documented compatibility and rollback window.
 

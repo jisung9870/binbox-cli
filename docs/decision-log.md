@@ -139,8 +139,8 @@ does not own Git, Terraform, or process inspection behavior.
 Decision: tmux, Git, Kubernetes, AWS SSM, port termination, and Terraform
 compatibility commands are typed Go adapters that pass direct argument vectors
 to the system owner CLI. Mutating commands require explicit targets; destructive
-ones print the target and re-observe its identity before acting. Legacy fzf
-selection remains available only where selection itself is non-destructive.
+ones print the target and re-observe its identity before acting. Interactive
+selection is now implemented by bb's dependency-free numbered selector.
 
 Why binbox owns it: these are portable, human-invoked CLI safety contracts.
 Why Orca does not: none creates or manages an agent, worktree, scheduler, DAG,
@@ -150,3 +150,11 @@ the commands but does not own provider state or mutation policy.
 Credential-bearing `assume`, executable `wenv` presets, and the `sec` store are
 not included. They remain decision gates because migration would require a new
 credential or persisted-data ownership contract.
+
+## 2026-08-11 — External credential ownership and built-in selection
+
+Decision: AWS CLI owns SSO login, credentials, and cache; `bb profile` writes
+only SSO configuration. `bb sec` preserves the age key/ciphertext format and
+never journals values. `wenv` never sources legacy shell and stores only
+declarative non-secret variables. A built-in numbered selector replaces fzf in
+all bb runtime paths while the shell wrapper retains current-shell application.

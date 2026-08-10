@@ -13,8 +13,7 @@ import (
 )
 
 // tm is the narrow compatibility surface used by the current LazyVim client.
-// It reads bb's registry, and when opened interactively delegates only to fzf
-// and tmux. It never calls Orca or records ownership of the tmux session.
+// It reads bb's registry and delegates session operations only to tmux.
 func (a *App) tm(args []string) error {
 	if helpRequested(args) {
 		_, err := fmt.Fprint(a.out, `Usage:
@@ -26,7 +25,7 @@ func (a *App) tm(args []string) error {
   bb tm layout --layout <golang|k8s|terraform> --session <name> --path <dir>
   bb tm [--project <project-id>]
 
-With no arguments, select a registered project with fzf and attach or create a
+With no arguments, select a registered project with bb's built-in selector and attach or create a
 local tmux session. --project is an explicit non-interactive selector.
 `)
 		return err
@@ -94,7 +93,7 @@ local tmux session. --project is an explicit non-interactive selector.
 	projectID := ""
 	switch len(args) {
 	case 0:
-		// The fzf selection below is the normal interactive mode.
+		// The built-in selection below is the normal interactive mode.
 	case 2:
 		if args[0] != "--project" {
 			return usage("tm", "[--project <project-id>]")
@@ -223,45 +222,29 @@ func (a *App) tmProjects() ([]projectRecord, error) {
 }
 
 func (a *App) selectTMProject(projects []projectRecord) (projectRecord, error) {
-	if _, err := a.lookPath("fzf"); err != nil {
-		return projectRecord{}, unavailable("fzf is not installed; install fzf to select a project or pass --project <project-id>")
-	}
-	var input strings.Builder
+	choices := make([]selectChoice, 0, len(projects))
 	for _, project := range projects {
-		// Registry fields may be manually edited. Keep fzf's tab-delimited
-		// protocol unambiguous instead of allowing a record to select another.
-		if strings.ContainsAny(project.ID+project.Name+project.Path, "\t\n\r") {
-			continue
+		if !strings.ContainsAny(project.ID+project.Name+project.Path, "\n\r") {
+			choices = append(choices, selectChoice{project.ID, project.Name + " — " + project.Path})
 		}
-		fmt.Fprintf(&input, "%s\t%s\t%s\n", project.ID, project.Name, project.Path)
 	}
-	if input.Len() == 0 {
-		return projectRecord{}, unavailable("no selectable projects are registered; repair project records or add a project")
+	selectedID, err := a.selectOne("Project", choices)
+	if err != nil {
+		return projectRecord{}, err
 	}
-	cmd := a.command("fzf", "--delimiter=\t", "--with-nth=2,3", "--nth=2,3")
-	cmd.Env = a.env
-	cmd.Stdin = strings.NewReader(input.String())
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = a.err
-	if err := cmd.Run(); err != nil {
-		var exitErr interface{ ExitCode() int }
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 130 {
-			return projectRecord{}, fmt.Errorf("project selection cancelled")
-		}
-		return projectRecord{}, fmt.Errorf("run fzf project selector: %w", err)
+	if selectedID == "" {
+		return projectRecord{}, invalid("project selection cancelled")
 	}
-	selectedID, _, _ := strings.Cut(strings.TrimSpace(output.String()), "\t")
 	for _, project := range projects {
 		if project.ID == selectedID {
 			return project, nil
 		}
 	}
-	return projectRecord{}, fmt.Errorf("fzf returned an unknown project selection")
+	return projectRecord{}, fmt.Errorf("selector returned an unknown project selection")
 }
 
 // tmAttach attaches only to a session that has just been observed.  The second
-// lookup makes a stale fzf choice fail safely rather than sending tmux a name
+// lookup makes a stale interactive choice fail safely rather than sending tmux a name
 // that might now identify a different session.
 func (a *App) tmAttach(args []string) error {
 	sessionName := ""
@@ -586,27 +569,23 @@ func (a *App) tmExactSession(name string) (tmSession, error) {
 }
 
 func (a *App) selectTMSession(sessions []tmSession) (tmSession, error) {
-	if _, err := a.lookPath("fzf"); err != nil {
-		return tmSession{}, unavailable("fzf is not installed; install fzf to select a tmux session or pass --session <name>")
-	}
-	var input strings.Builder
+	choices := make([]selectChoice, 0, len(sessions))
 	for _, s := range sessions {
-		if validTMSessionName(s.Name) && !strings.ContainsAny(s.ID, "\t\n\r") {
-			fmt.Fprintf(&input, "%s\t%s\n", s.ID, s.Name)
+		if validTMSessionName(s.Name) {
+			choices = append(choices, selectChoice{s.ID, s.Name})
 		}
 	}
-	cmd := a.command("fzf", "--delimiter=\t", "--with-nth=2", "--nth=2")
-	cmd.Env, cmd.Stdin, cmd.Stderr = a.env, strings.NewReader(input.String()), a.err
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	if err := cmd.Run(); err != nil {
-		return tmSession{}, fmt.Errorf("run fzf tmux session selector: %w", err)
+	selectedID, err := a.selectOne("Tmux session", choices)
+	if err != nil {
+		return tmSession{}, err
 	}
-	selectedID, _, _ := strings.Cut(strings.TrimSpace(output.String()), "\t")
+	if selectedID == "" {
+		return tmSession{}, invalid("tmux session selection cancelled")
+	}
 	for _, s := range sessions {
 		if s.ID == selectedID {
 			return s, nil
 		}
 	}
-	return tmSession{}, fmt.Errorf("fzf returned an unknown tmux session selection")
+	return tmSession{}, fmt.Errorf("selector returned an unknown tmux session selection")
 }

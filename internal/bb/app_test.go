@@ -148,7 +148,7 @@ func TestDoctorJSONPreservesChecksAndAddsWorkbenchCapabilities(t *testing.T) {
 	if got.Data.Capabilities[1].Name != "tmux" || got.Data.Capabilities[1].Scope != "optional" || got.Data.Capabilities[1].Available || got.Data.Capabilities[1].Path != nil || got.Data.Capabilities[1].Recovery == nil {
 		t.Fatalf("tmux capability=%+v", got.Data.Capabilities[1])
 	}
-	if got.Data.Capabilities[6].Name != "fzf" || got.Data.Capabilities[13].Name != "tf-summarize" {
+	if got.Data.Capabilities[6].Name != "docker" || got.Data.Capabilities[13].Name != "tf-summarize" {
 		t.Fatalf("extended capabilities=%+v", got.Data.Capabilities)
 	}
 }
@@ -264,8 +264,9 @@ func TestTMUnavailableErrorsAreActionable(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.lookPath = func(string) (string, error) { return "", os.ErrNotExist }
-	if err := a.Run([]string{"tm"}); ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "fzf is not installed") {
-		t.Fatalf("fzf error=%v", err)
+	a.in = strings.NewReader("1\n")
+	if err := a.Run([]string{"tm"}); ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "tmux is not installed") {
+		t.Fatalf("tmux error=%v", err)
 	}
 	if err := a.Run([]string{"tm", "--project", projectID(project)}); ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "tmux is not installed") {
 		t.Fatalf("tmux error=%v", err)

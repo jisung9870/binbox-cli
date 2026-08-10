@@ -77,6 +77,12 @@ func (a *App) dispatch(args []string) error {
 		return a.kx(args[1:])
 	case "assm":
 		return a.assm(args[1:])
+	case "profile":
+		return a.profile(args[1:])
+	case "wenv":
+		return a.wenv(args[1:])
+	case "sec":
+		return a.sec(args[1:])
 	case "port":
 		return a.port(args[1:])
 	case "tfx":
@@ -130,6 +136,9 @@ Commands:
   gx ...                 Explicit Git workflow compatibility adapter
   kx ...                 Explicit kubectl workflow compatibility adapter
   assm ...               Explicit AWS SSM session adapter
+  profile ...            Manage AWS CLI SSO profiles (config only)
+  wenv ...               Select and run declarative environment presets
+  sec ...                Manage the existing age-encrypted secret store
   port inspect|kill ...  Inspect a local port or terminate an exact re-observed PID set
   tfx ...                 Guarded Terraform compatibility workflow
   tvx ...                 Direct Trivy compatibility adapter with fixed policies
@@ -601,11 +610,11 @@ func (a *App) doctor(args []string) error {
 		{"aws", "AWS integrations", "optional", []string{"aws"}},
 		{"terraform", "Terraform integrations", "optional", []string{"terraform"}},
 		{"orca", "read-only Orca status and jump pointers", "optional", []string{"orca-ide", "orca"}},
-		{"fzf", "interactive project selection", "optional", []string{"fzf"}},
 		{"docker", "container inspection integrations", "optional", []string{"docker"}},
 		{"lsof", "local port inspection fallback", "optional", []string{"lsof"}},
 		{"session-manager-plugin", "AWS session manager integrations", "optional", []string{"session-manager-plugin"}},
 		{"age", "encrypted local export integrations", "optional", []string{"age"}},
+		{"age-keygen", "encrypted secret key management", "optional", []string{"age-keygen"}},
 		{"jq", "JSON query integrations", "optional", []string{"jq"}},
 		{"trivy", "security scan integrations", "optional", []string{"trivy"}},
 		{"tf-summarize", "Terraform summary integrations", "optional", []string{"tf-summarize"}},

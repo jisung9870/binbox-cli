@@ -26,7 +26,7 @@ func tmTestApp(t *testing.T) (*App, *bytes.Buffer, *[][]string) {
 	a, out, _, _ := testApp(t)
 	requests := new([][]string)
 	a.lookPath = func(name string) (string, error) {
-		if name == "tmux" || name == "fzf" {
+		if name == "tmux" {
 			return "/fake/" + name, nil
 		}
 		return "", os.ErrNotExist
@@ -62,12 +62,10 @@ func TestTMAttachInsideTmuxSwitchesClient(t *testing.T) {
 
 func TestTMAttachRefusesSameNameReplacementAfterSelection(t *testing.T) {
 	a, _, _, _ := testApp(t)
+	a.in = strings.NewReader("1\n")
 	a.lookPath = func(name string) (string, error) { return "/fake/" + name, nil }
 	var listCalls int
 	a.command = func(name string, args ...string) *exec.Cmd {
-		if name == "fzf" {
-			return exec.Command("printf", "$1\talpha\n")
-		}
 		if name == "tmux" && len(args) > 0 && args[0] == "list-sessions" {
 			listCalls++
 			id := "$1"

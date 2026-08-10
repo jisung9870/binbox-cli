@@ -29,7 +29,7 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | Surface | Current minimum behavior | State/effect |
 |---|---|---|
 | `bb version` | Prints the CLI version | None |
-| `bb doctor [--json]` | Checks core integrations plus optional `fzf`, Docker, port, AWS session, age/jq, Trivy, and Terraform-summary tools; JSON preserves Workbench-compatible capabilities | Read-only PATH inspection |
+| `bb doctor [--json]` | Checks core integrations plus optional Docker, port, AWS session, age, Trivy, and Terraform-summary tools | Read-only PATH inspection; fzf is not required |
 | `bb project add/list/remove` | Maintains a local project registry with stable `prj_` IDs | `$XDG_CONFIG_HOME/bb/projects.json`, mode `0600` |
 | `bb project import sessionizer --check` | Expands the shared parent/`=direct` grammar and reports candidates, dead paths, duplicates, and collisions | Strictly read-only; source and registry remain byte-identical |
 | `bb project import sessionizer --apply` | Adds non-conflicting candidates with stable origin metadata | Writes bb registry/recovery state only; verifies the source hash and preserves source bytes |
@@ -39,7 +39,10 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb session open <project-id>` | Returns an explicit backend plan | Never opens or destroys a terminal; Orca is capability-unavailable by design |
 | `bb tm projects --plain|--json` | Returns the sessionizer/LazyVim-compatible normalized project view | Read-only bb registry; never rewrites the shared legacy source |
 | `bb tm sessions --json` | Preserves legacy typed tmux session fields | Session-level observation only; no panes, commands, or scrollback |
-| `bb tm [--project <id>]` | Selects with external `fzf`, then attaches or creates `bb-<project-id>` through external `tmux` | No shell evaluation, Orca invocation, lifecycle registry, or ownership claim; explicit project selection is the non-interactive seam |
+| `bb tm [--project <id>]` | Selects with bb's numbered selector, then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
+| `bb profile ...` | Manages AWS SSO profiles and delegates login | Writes only `~/.aws/config` atomically with backups; credentials/cache remain AWS CLI-owned |
+| `bb wenv ...` | Imports an allowlisted non-executable legacy subset and exports/runs declarative environments | XDG JSON, secret-like key rejection, built-in selector |
+| `bb sec ...` | Uses the existing age-encrypted JSON/key format | Plaintext remains in memory/pipes; ciphertext mutation is locked, atomic, and backed up |
 | `bb tm attach/kill/dirs/layout` | Operates on an exact tmux session or bb project registry entry; layouts are fixed Go-owned recipes | Destructive actions show targets and re-observe before direct tmux argv; no legacy directory-file writes |
 | `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |
 | `bb gx ...` | Provides explicit Git branch/root/log compatibility without shell or fzf dependence | Branch deletion shows and re-observes the exact ref and refuses the current branch |
@@ -74,8 +77,8 @@ tool.
 - Git, Kubernetes, AWS SSM, process, and Terraform adapters accept structured
   targets and invoke their owner CLI with a direct argument vector. They never
   evaluate shell strings or persist provider credentials.
-- The `tm` selector passes registry values as direct `fzf`/`tmux` arguments and
-  rejects delimiter-bearing records. It is a human terminal convenience only:
+- The built-in selector writes UI to stderr and keeps stdout machine/eval-safe.
+  The tm selector passes only the selected value as a direct tmux argument:
   tmux remains the owner of its sessions and Orca is never consulted.
 - Sessionizer compatibility is explicit import, not a live mirror. New tmux
   sessions use stable `bb-<project-id>` names; basename-named legacy sessions

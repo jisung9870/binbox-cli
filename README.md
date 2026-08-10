@@ -43,6 +43,14 @@ bb kx log api-pod -n staging --tail 100
 bb kx port-forward api-pod 8080:80 -n staging
 bb assm shell i-0123456789abcdef0
 
+# AWS SSO, declarative environments, and the existing age store.
+bb profile add dev --sso-session corp --account-id 123456789012 --role-name Admin
+bb profile login dev
+bb wenv import --check
+bb wenv import --apply
+bb wenv dev
+printf '%s' "$TOKEN" | bb sec set github token
+
 # Terraform compatibility with account-bound apply/destroy safeguards.
 bb tfx status --json
 bb tfx init -upgrade
@@ -67,6 +75,9 @@ bb doctor nvim --config-dir /path/to/lazyvim-config --json
 The MVP stores configuration under `$XDG_CONFIG_HOME/bb` and state/journals
 under `$XDG_STATE_HOME/bb` (with standard home-directory fallbacks). It does
 not require `BB_ROOT`, a `libexec` tree, or helper scripts on `PATH`.
+Interactive choices use a built-in numbered selector; fzf is not a bb runtime
+dependency. The existing shell wrapper evaluates `bb wenv <preset>` output so
+the selected environment can affect the current shell.
 
 Machine-readable reads accept `--json` and return the schema-v1 envelope:
 

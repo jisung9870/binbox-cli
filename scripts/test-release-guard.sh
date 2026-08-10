@@ -16,7 +16,9 @@ make_repo() {
   git -C "$repo" config user.name 'bb release guard test'
   git -C "$repo" config user.email 'bb-release-guard@example.invalid'
   git -C "$repo" add scripts/release.sh
-  git -C "$repo" commit -qm 'test release guard'
+  # Keep every fixture on a fresh commit even when the cloned script already
+  # matches HEAD (the normal case when this test runs from a release tag).
+  git -C "$repo" commit --allow-empty -qm 'test release guard'
 }
 expect_failure() {
   pattern=$1

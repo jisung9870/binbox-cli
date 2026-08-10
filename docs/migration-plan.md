@@ -8,7 +8,7 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
 |---|---|
 | Keep/migrate into `bb` | single-command UX, doctor, project discovery/registry, bb-owned session intent, run journal, read-only integration inventory |
 | Keep outside `bb` | Orca lifecycle; LazyVim/tmux config; transitional Workbench-owned personal data until explicitly migrated |
-| Defer | executable shell presets outside the declarative `wenv` subset, Workbench control-plane features, MCP mutation/proxy/install |
+| Defer | executable shell presets outside the declarative `wenv` subset, MCP mutation/proxy/install |
 | Retire/archive | libexec dispatcher, checkout-coupled setup/upgrade, authoring helpers, agent-pane inference, repo-coupled `dx`/`md2jira` launchers |
 
 ## Phases
@@ -74,8 +74,11 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    checked through the repository/revision contract. Machines with additional
    company data repeat check/apply locally; no machine-specific values are
    committed.
-13. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
-   below pass for a documented compatibility and rollback window.
+13. **Consumer retirement (implemented on the personal device).** LazyVim's
+   Workbench project/agent/worktree/doctor UI is removed. Project selection uses
+   bb first with a read-only sessionizer fallback; lifecycle stays in Orca.
+14. **Repository retirement (decision gate).** Archive setup/workbench only
+   after the criteria below pass for each machine with retained personal data.
 
 ## Compatibility stop points
 
@@ -116,6 +119,7 @@ read-only/check-first and source data is preserved.
 - CI contains negative migration tests, and a documented rollback window plus
   user/usage evidence shows no remaining legacy-only dependency.
 
-Workbench may then be archived after any intentionally retained personal data
-has an explicit owner/export. The top-level setup repository may be retired
-when every surviving repository has an independent install and doctor story.
+The LazyVim Workbench consumer is retired. The Workbench repository may be
+archived after any intentionally retained personal data has an explicit
+owner/export. The top-level setup repository may be retired when every
+surviving repository has an independent install and doctor story.

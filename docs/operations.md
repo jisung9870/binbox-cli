@@ -18,7 +18,7 @@ fixture tests; it must not be used for a release.
 Local verification:
 
 ```sh
-ALLOW_UNTAGGED_BUILD=1 VERSION=0.1.0 COMMIT=$(git rev-parse HEAD) \
+ALLOW_UNTAGGED_BUILD=1 VERSION=0.4.1 COMMIT=$(git rev-parse HEAD) \
   SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) scripts/release.sh
 (cd dist && sha256sum -c checksums.txt)
 ```
@@ -26,8 +26,8 @@ ALLOW_UNTAGGED_BUILD=1 VERSION=0.1.0 COMMIT=$(git rev-parse HEAD) \
 ## Install and recovery
 
 ```sh
-scripts/install.sh --version 0.1.0 --dry-run
-scripts/install.sh --version 0.1.0
+scripts/install.sh --version 0.4.1 --dry-run
+scripts/install.sh --version 0.4.1
 ```
 
 For this private repository, use the authenticated GitHub CLI mode instead of
@@ -35,7 +35,7 @@ unauthenticated release URLs:
 
 ```sh
 gh auth status
-scripts/install.sh --github-cli --version 0.1.0
+scripts/install.sh --github-cli --version 0.4.1
 ```
 
 This mode delegates download authorization to `gh`; the installer neither
@@ -108,8 +108,8 @@ the selected config, bootstrap plugins, or perform network restoration.
 
 ## Remaining cutover gate
 
-The new repository is ready to produce release candidates, but setup/workbench
-retirement is intentionally not automatic. It requires writing consumer/fallback
-changes in the existing binbox or LazyVim repositories and observing at least
-one compatibility window. That crosses the project's explicit stop boundary and
-must be separately authorized after a published candidate is exercised.
+The personal-device LazyVim consumer now uses bb directly and no longer exposes
+Workbench lifecycle commands. Archiving setup/workbench remains intentionally
+non-automatic: repeat the data inventory and rollback checks on every machine
+that has additional state, especially the company device, before archiving its
+local checkout or remote repository.

@@ -69,8 +69,21 @@ stable public contract.
 - Whether `lazyvim-config` ever needs a managed clone path; local path,
   repository, revision, lockfile, and explicit link consent are implemented.
 - Compatibility duration for the legacy sessionizer fallback.
-- Compatibility duration for Workbench-only agent/worktree/doctor UI before
-  Orca-native replacements or retirement.
+- Whether the retained Workbench repository contains personal data that needs
+  an explicit export before that repository is archived. Its LazyVim UI is
+  retired; Orca remains the lifecycle interface.
+
+## 2026-08-11 — LazyVim Workbench UI retired
+
+Decision: LazyVim keeps only the asynchronous `bb tm projects --json` consumer
+and a read-only sessionizer fallback. The Workbench project alias and its
+agent/worktree/doctor commands are removed without replacement in bb or
+LazyVim.
+
+Why binbox owns project inventory: it is portable local workspace metadata.
+Why Orca owns lifecycle: agents, worktrees, terminals, schedulers, and DAGs
+require one live authority. Why LazyVim owns only the picker: it presents paths
+for a human editor session and does not mutate lifecycle state.
 
 Each deferred item that breaks a command/data contract, stores credentials,
 mutates MCP, or requires legacy-repository writes is a decision gate, not an

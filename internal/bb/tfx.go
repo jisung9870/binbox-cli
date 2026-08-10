@@ -3,11 +3,14 @@ package bb
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -385,7 +388,94 @@ func (a *App) revalidateTFXMutation(expected tfxSession, requiredScope string) e
 	return nil
 }
 
-func (a *App) tfxApply(args []string) error {
+// tfxPlanSnapshot is a private, owner-only copy of a Terraform plan. Terraform
+// receives only Path; Source is retained solely for the human confirmation.
+// Keeping the original descriptor open while copying makes a rename or replace
+// of Source after opening irrelevant to the bytes Terraform later applies.
+type tfxPlanSnapshot struct {
+	Source string
+	Path   string
+	SHA256 string
+	dir    string
+}
+
+func (s tfxPlanSnapshot) cleanup() error {
+	if err := os.Remove(s.Path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove private Terraform plan snapshot: %w", err)
+	}
+	if err := os.Remove(s.dir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove private Terraform plan directory: %w", err)
+	}
+	return nil
+}
+
+// snapshotTFXPlan opens the user-selected source without following symlinks,
+// verifies that the opened object is regular, then copies its already-open
+// descriptor to a bb-owned state directory. It deliberately never reopens the
+// source by pathname.
+func (a *App) snapshotTFXPlan(source string) (tfxPlanSnapshot, error) {
+	fd, err := syscall.Open(source, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		if err == syscall.ELOOP {
+			return tfxPlanSnapshot{}, invalid(fmt.Sprintf("Terraform plan source must not be a symlink: %s", source))
+		}
+		if os.IsNotExist(err) {
+			return tfxPlanSnapshot{}, fmt.Errorf("plan file not found: %s (run 'bb tfx plan' first)", source)
+		}
+		return tfxPlanSnapshot{}, fmt.Errorf("open Terraform plan source %s: %w", source, err)
+	}
+	sourceFile := os.NewFile(uintptr(fd), source)
+	defer sourceFile.Close()
+	info, err := sourceFile.Stat()
+	if err != nil {
+		return tfxPlanSnapshot{}, fmt.Errorf("inspect Terraform plan source %s: %w", source, err)
+	}
+	if !info.Mode().IsRegular() {
+		return tfxPlanSnapshot{}, invalid(fmt.Sprintf("Terraform plan source must be a regular file: %s", source))
+	}
+	_, state, err := a.paths()
+	if err != nil {
+		return tfxPlanSnapshot{}, err
+	}
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		return tfxPlanSnapshot{}, fmt.Errorf("create bb state directory for Terraform plan: %w", err)
+	}
+	dir, err := os.MkdirTemp(state, "tfx-plan-")
+	if err != nil {
+		return tfxPlanSnapshot{}, fmt.Errorf("create private Terraform plan directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		_ = os.Remove(dir)
+		return tfxPlanSnapshot{}, fmt.Errorf("secure private Terraform plan directory: %w", err)
+	}
+	path := filepath.Join(dir, "plan")
+	destination, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		_ = os.Remove(dir)
+		return tfxPlanSnapshot{}, fmt.Errorf("create private Terraform plan snapshot: %w", err)
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(destination, hash), sourceFile); err != nil {
+		_ = destination.Close()
+		_ = os.Remove(path)
+		_ = os.Remove(dir)
+		return tfxPlanSnapshot{}, fmt.Errorf("copy Terraform plan into private snapshot: %w", err)
+	}
+	if err := destination.Sync(); err != nil {
+		_ = destination.Close()
+		_ = os.Remove(path)
+		_ = os.Remove(dir)
+		return tfxPlanSnapshot{}, fmt.Errorf("sync private Terraform plan snapshot: %w", err)
+	}
+	if err := destination.Close(); err != nil {
+		_ = os.Remove(path)
+		_ = os.Remove(dir)
+		return tfxPlanSnapshot{}, fmt.Errorf("close private Terraform plan snapshot: %w", err)
+	}
+	return tfxPlanSnapshot{Source: source, Path: path, SHA256: fmt.Sprintf("%x", hash.Sum(nil)), dir: dir}, nil
+}
+
+func (a *App) tfxApply(args []string) (err error) {
 	s, err := a.requireTFXSession()
 	if err != nil {
 		return err
@@ -401,13 +491,16 @@ func (a *App) tfxApply(args []string) error {
 	if plan == "" {
 		plan = "tfplan"
 	}
-	if _, err := os.Stat(plan); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("plan file not found: %s (run 'bb tfx plan' first)", plan)
-		}
-		return fmt.Errorf("inspect plan file %s: %w", plan, err)
+	snapshot, err := a.snapshotTFXPlan(plan)
+	if err != nil {
+		return err
 	}
-	ok, err := a.confirmTFX("Apply saved plan " + plan + "?")
+	defer func() {
+		if cleanupErr := snapshot.cleanup(); cleanupErr != nil && err == nil {
+			err = cleanupErr
+		}
+	}()
+	ok, err := a.confirmTFX(fmt.Sprintf("Apply saved plan %q (sha256 %s)?", snapshot.Source, snapshot.SHA256))
 	if err != nil {
 		return err
 	}
@@ -418,10 +511,10 @@ func (a *App) tfxApply(args []string) error {
 	if err := a.revalidateTFXMutation(s, ""); err != nil {
 		return err
 	}
-	return a.tfxTerraform("apply", append(args, plan)...)
+	return a.tfxTerraform("apply", append(args, snapshot.Path)...)
 }
 
-func (a *App) tfxDestroy(args []string) error {
+func (a *App) tfxDestroy(args []string) (err error) {
 	for _, arg := range args {
 		if arg == "-auto-approve" || arg == "--auto-approve" || strings.HasPrefix(arg, "-auto-approve=") || strings.HasPrefix(arg, "--auto-approve=") {
 			return invalid("bb tfx destroy does not allow -auto-approve")
@@ -454,10 +547,16 @@ func (a *App) tfxDestroy(args []string) error {
 	if err := a.tfxTerraformWithoutInput("plan", append([]string{"-destroy", "-out=" + plan}, args...)...); err != nil {
 		return err
 	}
-	if _, err := os.Stat(plan); err != nil {
-		return fmt.Errorf("destroy plan was not created at %s: %w", plan, err)
+	snapshot, err := a.snapshotTFXPlan(plan)
+	if err != nil {
+		return fmt.Errorf("snapshot destroy plan %s: %w", plan, err)
 	}
-	ok, err := a.confirmTFX("Apply destroy plan " + plan + "?")
+	defer func() {
+		if cleanupErr := snapshot.cleanup(); cleanupErr != nil && err == nil {
+			err = cleanupErr
+		}
+	}()
+	ok, err := a.confirmTFX(fmt.Sprintf("Apply destroy plan %q (sha256 %s)?", snapshot.Source, snapshot.SHA256))
 	if err != nil {
 		return err
 	}
@@ -468,7 +567,7 @@ func (a *App) tfxDestroy(args []string) error {
 	if err := a.revalidateTFXMutation(s, "destroy"); err != nil {
 		return err
 	}
-	return a.tfxTerraform("apply", plan)
+	return a.tfxTerraform("apply", snapshot.Path)
 }
 
 func (a *App) tfxEnd(args []string) error {

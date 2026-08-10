@@ -44,9 +44,12 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
 8. **Terraform guarded tranche (implemented).** Preserve `tfx init`, `validate`,
    `fmt`, guarded plan output, summaries, `state list`, and two-/three-column
    legacy session compatibility. Session/apply/destroy retain account-suffix
-   confirmation, expiry/account/scope checks, explicit plan confirmation, and
-   immediate re-observation before mutation. Status never deletes an expired
-   file and emits only the account suffix.
+   confirmation, expiry/account/scope checks, explicit source-name and
+   SHA-256 plan confirmation, and immediate re-observation before mutation.
+   Apply/destroy copy only an opened regular plan file into a temporary,
+   owner-only bb-state snapshot and Terraform receives that immutable handoff,
+   not the caller-controlled pathname. Status never deletes an expired file and
+   emits only the account suffix.
 9. **Trivy tranche (implemented).** Preserve scan, CI, SBOM, report, Kubernetes,
    cache-clean, and doctor behavior as direct Trivy arguments. Policy-owned
    severity/exit/scanner/format flags cannot be overridden, and the Kubernetes

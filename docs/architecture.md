@@ -42,7 +42,7 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb tm [--project <id>]` | Selects with external `fzf`, then attaches or creates `bb-<project-id>` through external `tmux` | No shell evaluation, Orca invocation, lifecycle registry, or ownership claim; explicit project selection is the non-interactive seam |
 | `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |
 | `bb port inspect` | Reports listeners through `ss`/`lsof` | Read-only; process termination is not implemented |
-| `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/state list` | Preserves the core Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; session/account/scope/plan are re-observed before apply |
+| `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/state list` | Preserves the core Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; mutation snapshots an opened regular plan into owner-only bb state, confirms its SHA-256, then re-observes session/account/scope before apply |
 | `bb tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Preserves the Trivy workflow and fixed CI/report policies | Direct Trivy arguments; node collector requires confirmation; no config or credential mutation |
 | `bb mcp inventory/audit` | Reports candidate presence and content hashes without returning configuration content | Appends redacted metadata-only `mcp_audit` journal event; never mutates config |
 | `bb export [--output path]` | Exports journal events as JSON | Read-only journal access; optional `0600` output |
@@ -77,6 +77,13 @@ tool.
 - Doctor retains the versioned capability shape (including nullable `path`),
   while applying bb's own dependency policy: Git is core and feature-specific
   tools are optional rather than making the whole CLI unavailable.
+- Terraform apply and destroy never hand Terraform the caller-controlled plan
+  pathname. `bb` rejects symlink/non-regular plan sources, copies the
+  already-open file descriptor to a synced `0700` state subdirectory with a
+  `0600` snapshot, presents the source name and SHA-256 to the user, and passes
+  only that private snapshot to Terraform after revalidation. The snapshot is
+  removed on confirmation cancel, revalidation failure, Terraform return, or
+  other error; the caller's plan source is never changed by `bb`.
 - Recovery-relevant state remains inspectable/exportable. Future state schema
   changes require versioned readers, backups, and non-destructive migration.
 

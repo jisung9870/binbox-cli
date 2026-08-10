@@ -65,8 +65,56 @@ func TestTFXHelperProcess(t *testing.T) {
 		fmt.Fprintf(os.Stdout, "tf-summarize args=%s input=%s", strings.Join(argv, ","), input)
 		os.Exit(0)
 	}
+	if name == "terraform" && len(argv) >= 2 && argv[0] == "apply" {
+		plan, err := os.ReadFile(argv[len(argv)-1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read applied plan: %v", err)
+			os.Exit(95)
+		}
+		fmt.Fprintf(os.Stdout, "terraform args=%s plan-content=%s", strings.Join(argv, ","), plan)
+		if os.Getenv("GO_WANT_BB_TFX_FAIL_APPLY") == "1" {
+			os.Exit(96)
+		}
+		os.Exit(0)
+	}
 	fmt.Fprintf(os.Stdout, "%s args=%s", name, strings.Join(argv, ","))
 	os.Exit(0)
+}
+
+// replaceOnFirstRead models an attacker or concurrent process replacing the
+// source path after bb has made its private copy, but before the user answers.
+type replaceOnFirstRead struct {
+	reader      *strings.Reader
+	source      string
+	replacement []byte
+	done        bool
+}
+
+func (r *replaceOnFirstRead) Read(p []byte) (int, error) {
+	if !r.done {
+		r.done = true
+		tmp := r.source + ".replacement"
+		if err := os.WriteFile(tmp, r.replacement, 0o600); err != nil {
+			return 0, err
+		}
+		if err := os.Rename(tmp, r.source); err != nil {
+			return 0, err
+		}
+	}
+	return r.reader.Read(p)
+}
+
+func assertNoTFXSnapshotArtifacts(t *testing.T, state string) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(state, "bb"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "tfx-plan-") {
+			t.Fatalf("private snapshot artifact remains: %s", entry.Name())
+		}
+	}
 }
 
 func TestTFXHelpAndSafeBoundary(t *testing.T) {
@@ -142,9 +190,10 @@ func TestTFXApplyGuardsAndDirectArgv(t *testing.T) {
 	if err := a.Run([]string{"tfx", "apply", "-no-color"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "terraform args=apply,-no-color,"+plan) {
+	if !strings.Contains(out.String(), "terraform args=apply,-no-color,") || strings.Contains(out.String(), "terraform args=apply,-no-color,"+plan) || !strings.Contains(out.String(), "plan-content=") {
 		t.Fatalf("apply=%q", out.String())
 	}
+	assertNoTFXSnapshotArtifacts(t, state)
 	// Expiry rejects without deleting the cross-version legacy session.
 	out.Reset()
 	if err := os.WriteFile(path, []byte("1\t123456789012\n"), 0o600); err != nil {
@@ -180,9 +229,10 @@ func TestTFXDestroyGuardsPlanAndConfirms(t *testing.T) {
 	if err := a.Run([]string{"tfx", "destroy", "-var-file=qa.tfvars"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "terraform args=plan,-destroy,-out="+plan+",-var-file=qa.tfvars") || !strings.Contains(out.String(), "terraform args=apply,"+plan) {
+	if !strings.Contains(out.String(), "terraform args=plan,-destroy,-out="+plan+",-var-file=qa.tfvars") || !strings.Contains(out.String(), "terraform args=apply,") || strings.Contains(out.String(), "terraform args=apply,"+plan) || !strings.Contains(out.String(), "plan-content=plan") {
 		t.Fatalf("destroy=%q", out.String())
 	}
+	assertNoTFXSnapshotArtifacts(t, state)
 	out.Reset()
 	if err := a.Run([]string{"tfx", "destroy", "-auto-approve"}); ExitCode(err) != ExitInvalidInvocation {
 		t.Fatalf("auto approve=%v", err)
@@ -192,6 +242,94 @@ func TestTFXDestroyGuardsPlanAndConfirms(t *testing.T) {
 			t.Fatalf("owned flag %q err=%v", arg, err)
 		}
 	}
+}
+
+func TestTFXApplyUsesImmutablePrivateSnapshotAfterSourceReplacement(t *testing.T) {
+	a, out, state := tfxTestApp(t)
+	writeTFXSession(t, state, a.now().Add(time.Minute).Unix(), "123456789012", "apply")
+	plan := filepath.Join(t.TempDir(), "apply.tfplan")
+	if err := os.WriteFile(plan, []byte("trusted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.env = append(a.env, "TFPLAN_FILE="+plan)
+	a.in = &replaceOnFirstRead{reader: strings.NewReader("yes\n"), source: plan, replacement: []byte("evil")}
+	if err := a.Run([]string{"tfx", "apply"}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Apply saved plan \""+plan+"\" (sha256 ") || !strings.Contains(got, "plan-content=trusted") || strings.Contains(got, "terraform args=apply,"+plan) {
+		t.Fatalf("immutable apply handoff failed: %q", got)
+	}
+	if b, err := os.ReadFile(plan); err != nil || string(b) != "evil" {
+		t.Fatalf("source was not replaced as expected: %q err=%v", b, err)
+	}
+	assertNoTFXSnapshotArtifacts(t, state)
+}
+
+func TestTFXApplyRejectsSymlinkPlanWithoutSnapshotArtifacts(t *testing.T) {
+	a, _, state := tfxTestApp(t)
+	writeTFXSession(t, state, a.now().Add(time.Minute).Unix(), "123456789012", "apply")
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.tfplan")
+	link := filepath.Join(dir, "linked.tfplan")
+	if err := os.WriteFile(target, []byte("trusted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	a.env = append(a.env, "TFPLAN_FILE="+link)
+	if err := a.Run([]string{"tfx", "apply"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("symlink err=%v", err)
+	}
+	assertNoTFXSnapshotArtifacts(t, state)
+}
+
+func TestTFXApplyCleansPrivateSnapshotOnCancelAndTerraformFailure(t *testing.T) {
+	plan := filepath.Join(t.TempDir(), "apply.tfplan")
+	if err := os.WriteFile(plan, []byte("trusted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cancelled, _, cancelState := tfxTestApp(t)
+	writeTFXSession(t, cancelState, cancelled.now().Add(time.Minute).Unix(), "123456789012", "apply")
+	cancelled.env = append(cancelled.env, "TFPLAN_FILE="+plan)
+	cancelled.in = strings.NewReader("no\n")
+	if err := cancelled.Run([]string{"tfx", "apply"}); err != nil {
+		t.Fatalf("cancelled apply: %v", err)
+	}
+	assertNoTFXSnapshotArtifacts(t, cancelState)
+
+	failing, _, failState := tfxTestApp(t)
+	writeTFXSession(t, failState, failing.now().Add(time.Minute).Unix(), "123456789012", "apply")
+	failing.env = append(failing.env, "TFPLAN_FILE="+plan, "GO_WANT_BB_TFX_FAIL_APPLY=1")
+	failing.in = strings.NewReader("yes\n")
+	if err := failing.Run([]string{"tfx", "apply"}); err == nil {
+		t.Fatal("expected Terraform failure")
+	}
+	assertNoTFXSnapshotArtifacts(t, failState)
+	if b, err := os.ReadFile(plan); err != nil || string(b) != "trusted" {
+		t.Fatalf("source changed during handoff: %q err=%v", b, err)
+	}
+}
+
+func TestTFXDestroyUsesImmutablePrivateSnapshotAfterSourceReplacement(t *testing.T) {
+	a, out, state := tfxTestApp(t)
+	writeTFXSession(t, state, a.now().Add(time.Minute).Unix(), "123456789012", "destroy")
+	plan := filepath.Join(t.TempDir(), "destroy.tfplan")
+	a.env = append(a.env, "TFDESTROY_PLAN_FILE="+plan)
+	a.in = &replaceOnFirstRead{reader: strings.NewReader("y\n"), source: plan, replacement: []byte("evil")}
+	if err := a.Run([]string{"tfx", "destroy"}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Apply destroy plan \""+plan+"\" (sha256 ") || !strings.Contains(got, "plan-content=plan") || strings.Contains(got, "terraform args=apply,"+plan) {
+		t.Fatalf("immutable destroy handoff failed: %q", got)
+	}
+	if b, err := os.ReadFile(plan); err != nil || string(b) != "evil" {
+		t.Fatalf("destroy source was not replaced as expected: %q err=%v", b, err)
+	}
+	assertNoTFXSnapshotArtifacts(t, state)
 }
 
 func TestTFXDestroyRequiresDestroyScopeAndEndDeletes(t *testing.T) {

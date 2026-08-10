@@ -20,21 +20,21 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    JSON envelope, structured error classes, exit codes, stable IDs, and atomic
    locked state writes now form the test-backed baseline. Backward readers are
    still required before any future persisted-record shape changes.
-3. **Project compatibility (check-only implemented).** The non-evaluating
+3. **Project compatibility (check/apply implemented).** The non-evaluating
    sessionizer importer compares canonical IDs/paths, duplicates, stale paths,
-   and registry collisions without rewriting either source or registry. An
-   apply mode remains deliberately deferred until fixture evidence is reviewed.
+   and registry collisions. Apply is idempotent, verifies source continuity,
+   preserves exact recovery bytes, and writes only bb's registry/state.
 4. **Observed session/run migration.** Create ownership only for actions begun
    by `bb`. Existing tmux/Workbench/Orca objects remain external observations.
    Explicit backends never silently fall back.
-5. **Binary release migration.** Publish checksummed artifacts and an atomic
+5. **Binary release migration (automation implemented).** Publish checksummed artifacts and an atomic
    installer. Detect the old checkout symlink, explain the transition, require
    `--migrate`, and never delete the source checkout automatically.
-6. **LazyVim contract.** Implement `bb setup nvim` against a separately versioned
+6. **LazyVim contract (local setup/doctor implemented).** `bb setup nvim` accepts a separately versioned
    `lazyvim-config` path or immutable revision. Validate identity, XDG link
    target, lockfile, prerequisites, and headless startup without embedding the
    configuration.
-7. **Retirement.** Archive setup/workbench functionality only after the criteria
+7. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
    below pass for a documented compatibility and rollback window.
 
 ## Compatibility stop points

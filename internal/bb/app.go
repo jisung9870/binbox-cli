@@ -18,7 +18,11 @@ import (
 	"time"
 )
 
-const Version = "0.1.0"
+var (
+	Version   = "0.1.0"
+	Commit    = "unknown"
+	BuildTime = "unknown"
+)
 
 type App struct {
 	out, err io.Writer
@@ -54,6 +58,8 @@ func (a *App) dispatch(args []string) error {
 		return a.version(args[1:])
 	case "doctor":
 		return a.doctor(args[1:])
+	case "setup":
+		return a.setup(args[1:])
 	case "project":
 		return a.project(args[1:])
 	case "session":
@@ -80,7 +86,7 @@ func (a *App) version(args []string) error {
 	if len(args) != 0 {
 		return usage("version", "[--json]")
 	}
-	data := map[string]any{"version": Version, "schema_version": SchemaVersion}
+	data := map[string]any{"version": Version, "commit": Commit, "build_time": BuildTime, "schema_version": SchemaVersion}
 	if jsonMode {
 		return printEnvelope(a.out, data, nil)
 	}
@@ -96,6 +102,7 @@ Usage: bb <command> [arguments]
 Commands:
   version                 Print bb version
   doctor [--json]         Check external CLI capabilities
+  setup nvim ...          Plan or link a selected LazyVim config
   project ...             Manage/import the local project registry
   session start|stop|list Manage local session records
   run <command> [args]    Run a command and append a redacted journal event
@@ -141,10 +148,20 @@ func (a *App) getenv(key string) string {
 }
 
 type projectRecord struct {
-	ID      string    `json:"id"`
-	Name    string    `json:"name"`
-	Path    string    `json:"path"`
-	AddedAt time.Time `json:"added_at"`
+	ID      string        `json:"id"`
+	Name    string        `json:"name"`
+	Path    string        `json:"path"`
+	AddedAt time.Time     `json:"added_at"`
+	Origin  projectOrigin `json:"origin"`
+}
+
+// projectOrigin records how a registry entry was discovered. It is metadata only:
+// bb never treats a legacy source as a writable registry.
+type projectOrigin struct {
+	Kind       string `json:"kind"`
+	Source     string `json:"source,omitempty"`
+	SourceLine int    `json:"source_line,omitempty"`
+	Mode       string `json:"mode,omitempty"`
 }
 type sessionRecord struct {
 	ID        string     `json:"id"`
@@ -154,9 +171,11 @@ type sessionRecord struct {
 	StoppedAt *time.Time `json:"stopped_at,omitempty"`
 }
 type journalEvent struct {
-	Time time.Time `json:"time"`
-	Type string    `json:"type"`
-	Data any       `json:"data"`
+	ID      string    `json:"id,omitempty"`
+	Time    time.Time `json:"time"`
+	Type    string    `json:"type"`
+	Outcome string    `json:"outcome,omitempty"`
+	Data    any       `json:"data"`
 }
 
 func (a *App) project(args []string) error {
@@ -165,7 +184,8 @@ func (a *App) project(args []string) error {
   bb project list [--json]
   bb project add <path> [name] [--json]
   bb project remove <id|name> [--json]
-  bb project import sessionizer --check [--file <path>] [--json]
+  bb project show <id|name> [--json]
+  bb project import sessionizer --check|--apply [--file <path>] [--json]
 `)
 		return err
 	}
@@ -216,7 +236,7 @@ func (a *App) project(args []string) error {
 					return fmt.Errorf("project already registered: %s", name)
 				}
 			}
-			added = projectRecord{ID: projectID(absolute), Name: name, Path: absolute, AddedAt: a.now().UTC()}
+			added = projectRecord{ID: projectID(absolute), Name: name, Path: absolute, AddedAt: a.now().UTC(), Origin: projectOrigin{Kind: "bb"}}
 			records = append(records, added)
 			sort.Slice(records, func(i, j int) bool { return records[i].Name < records[j].Name })
 			return writeJSONAtomic(path, records)
@@ -258,8 +278,36 @@ func (a *App) project(args []string) error {
 			return printEnvelope(a.out, map[string]string{"removed": removed}, nil)
 		}
 		return nil
+	case "show":
+		if len(args) != 2 {
+			return usage("project show", "<id|name> [--json]")
+		}
+		records, err := loadProjects(path)
+		if err != nil {
+			return err
+		}
+		matches := make([]projectRecord, 0, 1)
+		for _, record := range records {
+			if record.ID == args[1] || record.Name == args[1] {
+				matches = append(matches, record)
+			}
+		}
+		if len(matches) == 0 {
+			return fmt.Errorf("project not found: %s", args[1])
+		}
+		if len(matches) > 1 {
+			return invalid(fmt.Sprintf("project reference is ambiguous: %s", args[1]))
+		}
+		if jsonMode {
+			return printEnvelope(a.out, matches[0], nil)
+		}
+		return printJSON(a.out, matches[0])
 	case "import":
-		return a.projectImport(args[1:], jsonMode, path)
+		_, state, err := a.paths()
+		if err != nil {
+			return err
+		}
+		return a.projectImport(args[1:], jsonMode, path, state)
 	default:
 		return invalid(fmt.Sprintf("unknown project command %q", args[0]))
 	}
@@ -275,18 +323,22 @@ func loadProjects(path string) ([]projectRecord, error) {
 		if records[i].ID == "" {
 			records[i].ID = projectID(records[i].Path)
 		}
+		if records[i].Origin.Kind == "" {
+			records[i].Origin = projectOrigin{Kind: "bb"}
+		}
 	}
 	return records, nil
 }
 
-func (a *App) projectImport(args []string, jsonMode bool, registryPath string) error {
-	if len(args) < 2 || args[0] != "sessionizer" || args[1] != "--check" {
-		return usage("project import", "sessionizer --check [--file <path>] [--json]")
+func (a *App) projectImport(args []string, jsonMode bool, registryPath, state string) error {
+	if len(args) < 2 || args[0] != "sessionizer" || (args[1] != "--check" && args[1] != "--apply") {
+		return usage("project import", "sessionizer --check|--apply [--file <path>] [--json]")
 	}
+	apply := args[1] == "--apply"
 	source := ""
 	for i := 2; i < len(args); i++ {
 		if args[i] != "--file" || i+1 >= len(args) || source != "" {
-			return usage("project import", "sessionizer --check [--file <path>] [--json]")
+			return usage("project import", "sessionizer --check|--apply [--file <path>] [--json]")
 		}
 		source = args[i+1]
 		i++
@@ -298,6 +350,12 @@ func (a *App) projectImport(args []string, jsonMode bool, registryPath string) e
 	check, err := a.checkSessionizer(source, records)
 	if err != nil {
 		return err
+	}
+	if apply {
+		check, err = a.applySessionizer(check, registryPath, state)
+		if err != nil {
+			return err
+		}
 	}
 	if jsonMode {
 		return printEnvelope(a.out, check, check.Warnings)
@@ -329,6 +387,7 @@ func (a *App) session(args []string) error {
   bb session list [--json]
   bb session start <name> [--json]
   bb session stop <id|name> [--json]
+  bb session open <project-id> [--backend auto|tmux|orca|shell] [--json]
 `)
 		return err
 	}
@@ -350,6 +409,9 @@ func (a *App) session(args []string) error {
 			return printEnvelope(a.out, records, nil)
 		}
 		return printJSON(a.out, records)
+	}
+	if args[0] == "open" {
+		return a.sessionOpen(args[1:], jsonMode)
 	}
 	if len(args) != 2 {
 		return usage("session", "start|stop <id|name> [--json]")
@@ -405,6 +467,60 @@ func (a *App) session(args []string) error {
 	return nil
 }
 
+// sessionOpen deliberately produces an opening plan, never an external session.
+// In particular it does not invoke Orca, tmux, or a shell, so it cannot create a
+// duplicate lifecycle or alter an external workspace.
+func (a *App) sessionOpen(args []string, jsonMode bool) error {
+	if len(args) != 1 && len(args) != 3 {
+		return usage("session open", "<project-id> [--backend auto|tmux|orca|shell] [--json]")
+	}
+	backend := "auto"
+	if len(args) == 3 {
+		if args[1] != "--backend" {
+			return usage("session open", "<project-id> [--backend auto|tmux|orca|shell] [--json]")
+		}
+		backend = args[2]
+	}
+	if backend != "auto" && backend != "tmux" && backend != "orca" && backend != "shell" {
+		return invalid(fmt.Sprintf("unknown session backend %q", backend))
+	}
+	config, _, err := a.paths()
+	if err != nil {
+		return err
+	}
+	projects, err := loadProjects(filepath.Join(config, "projects.json"))
+	if err != nil {
+		return err
+	}
+	var project *projectRecord
+	for i := range projects {
+		if projects[i].ID == args[0] {
+			project = &projects[i]
+			break
+		}
+	}
+	if project == nil {
+		return fmt.Errorf("project not found: %s", args[0])
+	}
+	resolved := backend
+	if resolved == "auto" {
+		resolved = "shell"
+	}
+	if resolved == "orca" {
+		return unavailable("Orca session opening is unavailable; bb does not manage Orca lifecycles")
+	}
+	if resolved == "tmux" {
+		if _, err := exec.LookPath("tmux"); err != nil {
+			return unavailable("tmux is not installed; choose --backend shell or install tmux")
+		}
+	}
+	data := map[string]any{"project": project, "requested_backend": backend, "backend": resolved, "planned": true, "external_action": "none", "next_step": "open the project manually using the selected backend"}
+	if jsonMode {
+		return printEnvelope(a.out, data, nil)
+	}
+	return printJSON(a.out, data)
+}
+
 func loadSessions(path string) ([]sessionRecord, error) {
 	records := []sessionRecord{}
 	if err := readJSON(path, &records); err != nil {
@@ -419,8 +535,11 @@ func loadSessions(path string) ([]sessionRecord, error) {
 }
 
 func (a *App) doctor(args []string) error {
+	if len(args) > 0 && args[0] == "nvim" {
+		return a.doctorNvim(args[1:])
+	}
 	if helpRequested(args) {
-		_, err := fmt.Fprintln(a.out, "Usage: bb doctor [--json]")
+		_, err := fmt.Fprintln(a.out, "Usage: bb doctor [--json] | bb doctor nvim --config-dir <path> [options]")
 		return err
 	}
 	args, jsonMode := takeFlag(args, "--json")
@@ -474,8 +593,20 @@ func (a *App) doctor(args []string) error {
 
 func (a *App) run(args []string) error {
 	if helpRequested(args) && len(args) == 1 {
-		_, err := fmt.Fprintln(a.out, "Usage: bb run [--json] <command> [args]")
+		_, err := fmt.Fprintln(a.out, "Usage: bb run list|show|export [options] | bb run [--json] <command> [args]")
 		return err
+	}
+	if len(args) > 0 && args[0] == "list" {
+		subargs, jsonMode := takeFlag(args[1:], "--json")
+		return a.runList(subargs, jsonMode)
+	}
+	if len(args) > 0 && args[0] == "show" {
+		subargs, jsonMode := takeFlag(args[1:], "--json")
+		return a.runShow(subargs, jsonMode)
+	}
+	if len(args) > 0 && args[0] == "export" {
+		subargs, jsonMode := takeFlag(args[1:], "--json")
+		return a.runExport(subargs, jsonMode)
 	}
 	jsonMode := false
 	if len(args) > 0 && args[0] == "--json" {
@@ -506,12 +637,15 @@ func (a *App) run(args []string) error {
 	if pathErr != nil {
 		return pathErr
 	}
-	event := journalEvent{Time: a.now().UTC(), Type: "run", Data: map[string]any{
+	event := journalEvent{Time: a.now().UTC(), Type: "run", Outcome: "succeeded", Data: map[string]any{
 		"executable":     filepath.Base(args[0]),
 		"argument_count": len(args) - 1,
 		"exit_code":      code,
 	}}
-	if journalErr := appendJournal(filepath.Join(state, "journal.ndjson"), event); journalErr != nil {
+	if err != nil {
+		event.Outcome = "failed"
+	}
+	if journalErr := appendRun(filepath.Join(state, "journal.ndjson"), &event); journalErr != nil {
 		return fmt.Errorf("journal run: %w", journalErr)
 	}
 	if err != nil {
@@ -521,6 +655,111 @@ func (a *App) run(args []string) error {
 		return printEnvelope(a.out, event, nil)
 	}
 	return nil
+}
+
+func appendRun(path string, event *journalEvent) error {
+	return withFileLock(path, func() error {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		existing, err := readJournal(path)
+		if err != nil {
+			return err
+		}
+		base := stableID("run", event.Time.Format(time.RFC3339Nano)+"\x00"+fmt.Sprint(event.Data))
+		used := make(map[string]bool, len(existing))
+		for _, item := range existing {
+			used[item.ID] = true
+		}
+		event.ID = base
+		for n := 2; used[event.ID]; n++ {
+			event.ID = fmt.Sprintf("%s_%d", base, n)
+		}
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return json.NewEncoder(f).Encode(event)
+	})
+}
+
+func readJournal(path string) ([]journalEvent, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return []journalEvent{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	events := []journalEvent{}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var event journalEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return nil, fmt.Errorf("read journal: %w", err)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func (a *App) runList(args []string, jsonMode bool) error {
+	if len(args) != 0 {
+		return usage("run list", "[--json]")
+	}
+	_, state, err := a.paths()
+	if err != nil {
+		return err
+	}
+	events, err := readJournal(filepath.Join(state, "journal.ndjson"))
+	if err != nil {
+		return err
+	}
+	runs := make([]journalEvent, 0)
+	for _, event := range events {
+		if event.Type == "run" {
+			event.Data = redact(event.Data)
+			runs = append(runs, event)
+		}
+	}
+	if jsonMode {
+		return printEnvelope(a.out, runs, nil)
+	}
+	return printJSON(a.out, runs)
+}
+func (a *App) runShow(args []string, jsonMode bool) error {
+	if len(args) != 1 {
+		return usage("run show", "<run-id> [--json]")
+	}
+	_, state, err := a.paths()
+	if err != nil {
+		return err
+	}
+	events, err := readJournal(filepath.Join(state, "journal.ndjson"))
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		if event.Type == "run" && event.ID == args[0] {
+			event.Data = redact(event.Data)
+			if jsonMode {
+				return printEnvelope(a.out, event, nil)
+			}
+			return printJSON(a.out, event)
+		}
+	}
+	return fmt.Errorf("run not found: %s", args[0])
+}
+func (a *App) runExport(args []string, jsonMode bool) error {
+	if len(args) != 0 && (len(args) != 2 || args[0] != "--format" || args[1] != "json") {
+		return usage("run export", "[--format json] [--json]")
+	}
+	return a.runList(nil, jsonMode)
 }
 
 func appendJournal(path string, event journalEvent) error {

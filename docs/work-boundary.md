@@ -23,3 +23,12 @@ performed in the read-only references. Their initial branches were observed as:
 
 The target path did not exist when work began on 2026-08-10 (Asia/Seoul). It was
 created as a new Git repository with initial branch `main`.
+
+## Boundary audit
+
+During installer-test development, one test briefly resolved its default install
+directory as `/home/ubuntu/bin`. The test-created files and directory were removed
+immediately, and the test was changed to keep HOME, install targets, downloads,
+and fixtures below this repository's ignored `.tmp/` directory. No read-only
+reference repository was modified. Final verification includes an explicit path
+and Git-status audit.

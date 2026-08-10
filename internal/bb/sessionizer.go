@@ -2,11 +2,16 @@ package bb
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 type importCandidate struct {
@@ -19,11 +24,22 @@ type importCandidate struct {
 }
 
 type sessionizerCheck struct {
-	Source     string            `json:"source"`
-	Mode       string            `json:"mode"`
-	ReadOnly   bool              `json:"read_only"`
-	Candidates []importCandidate `json:"candidates"`
-	Warnings   []string          `json:"warnings"`
+	Source         string            `json:"source"`
+	Mode           string            `json:"mode"`
+	ReadOnly       bool              `json:"read_only"`
+	Candidates     []importCandidate `json:"candidates"`
+	Warnings       []string          `json:"warnings"`
+	Imported       int               `json:"imported,omitempty"`
+	AlreadyPresent int               `json:"already_present,omitempty"`
+	Backup         string            `json:"backup,omitempty"`
+	SourceSHA256   string            `json:"source_sha256"`
+}
+
+type sessionizerRecovery struct {
+	Source       string    `json:"source"`
+	SourceSHA256 string    `json:"source_sha256"`
+	Backup       string    `json:"backup"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (a *App) checkSessionizer(source string, records []projectRecord) (sessionizerCheck, error) {
@@ -38,15 +54,15 @@ func (a *App) checkSessionizer(source string, records []projectRecord) (sessioni
 	if err != nil {
 		return sessionizerCheck{}, err
 	}
-	f, err := os.Open(source)
+	legacy, err := os.ReadFile(source)
 	if err != nil {
 		return sessionizerCheck{}, fmt.Errorf("read sessionizer source %s: %w", source, err)
 	}
-	defer f.Close()
+	sourceSum := sha256.Sum256(legacy)
 
-	result := sessionizerCheck{Source: source, Mode: "check", ReadOnly: true, Candidates: []importCandidate{}, Warnings: []string{}}
+	result := sessionizerCheck{Source: source, Mode: "check", ReadOnly: true, Candidates: []importCandidate{}, Warnings: []string{}, SourceSHA256: hex.EncodeToString(sourceSum[:])}
 	seen := map[string]bool{}
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(bytes.NewReader(legacy))
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
@@ -106,6 +122,68 @@ func (a *App) checkSessionizer(source string, records []projectRecord) (sessioni
 	}
 	sort.Slice(result.Candidates, func(i, j int) bool { return result.Candidates[i].Path < result.Candidates[j].Path })
 	return result, nil
+}
+
+// applySessionizer owns only bb's XDG records. It reads the legacy input once,
+// copies those exact bytes to bb state for recovery, and never writes the input.
+func (a *App) applySessionizer(check sessionizerCheck, registryPath, state string) (sessionizerCheck, error) {
+	legacy, err := os.ReadFile(check.Source)
+	if err != nil {
+		return check, fmt.Errorf("read sessionizer source for backup: %w", err)
+	}
+	sum := sha256.Sum256(legacy)
+	if hex.EncodeToString(sum[:]) != check.SourceSHA256 {
+		return check, errors.New("sessionizer source changed after check; rerun the import")
+	}
+	backup := filepath.Join(state, "migration-backups", "sessionizer-"+hex.EncodeToString(sum[:8])+".dirs")
+	metadata := filepath.Join(state, "migration-backups", "sessionizer-recovery.json")
+	// Persist exact recovery bytes before changing bb-owned registry state.
+	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+		return check, err
+	}
+	if _, err := os.Stat(backup); os.IsNotExist(err) {
+		if err := writeBytesAtomic(backup, legacy); err != nil {
+			return check, fmt.Errorf("write sessionizer backup: %w", err)
+		}
+	} else if err != nil {
+		return check, err
+	}
+	// Lock the registry so check/apply additions cannot race other project writes.
+	err = withFileLock(registryPath, func() error {
+		records, err := loadProjects(registryPath)
+		if err != nil {
+			return err
+		}
+		present := make(map[string]bool, len(records))
+		for _, record := range records {
+			present[canonicalPath(record.Path)] = true
+		}
+		for _, candidate := range check.Candidates {
+			if present[candidate.Path] || candidate.Conflict != "" {
+				check.AlreadyPresent++
+				if candidate.Conflict == "registered_identity_collision" {
+					check.Warnings = append(check.Warnings, fmt.Sprintf("not imported due to identity collision: %s", candidate.Path))
+				}
+				continue
+			}
+			records = append(records, projectRecord{ID: candidate.ID, Name: candidate.Name, Path: candidate.Path, AddedAt: a.now().UTC(), Origin: projectOrigin{Kind: "sessionizer", Source: check.Source, SourceLine: candidate.SourceLine, Mode: candidate.Mode}})
+			present[candidate.Path] = true
+			check.Imported++
+		}
+		sort.Slice(records, func(i, j int) bool {
+			return records[i].Name < records[j].Name || (records[i].Name == records[j].Name && records[i].ID < records[j].ID)
+		})
+		return writeJSONAtomic(registryPath, records)
+	})
+	if err != nil {
+		return check, fmt.Errorf("apply sessionizer registry: %w", err)
+	}
+	recovery := sessionizerRecovery{Source: check.Source, SourceSHA256: hex.EncodeToString(sum[:]), Backup: backup, CreatedAt: a.now().UTC()}
+	if err := writeJSON(metadata, recovery); err != nil {
+		return check, fmt.Errorf("write sessionizer recovery metadata: %w", err)
+	}
+	check.Mode, check.ReadOnly, check.Backup = "apply", false, backup
+	return check, nil
 }
 
 func appendCandidate(candidates []importCandidate, seen map[string]bool, records []projectRecord, path string, line int, mode string) ([]importCandidate, bool) {

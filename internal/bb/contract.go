@@ -112,7 +112,13 @@ func hasFlag(args []string, flag string) bool {
 
 func jsonRequested(args []string) bool {
 	if len(args) > 0 && args[0] == "run" {
-		return len(args) > 1 && args[1] == "--json"
+		if len(args) > 1 && args[1] == "--json" {
+			return true
+		}
+		if len(args) > 2 && (args[1] == "list" || args[1] == "show" || args[1] == "export") {
+			return hasFlag(args[2:], "--json")
+		}
+		return false
 	}
 	return hasFlag(args, "--json")
 }

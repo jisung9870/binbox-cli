@@ -167,6 +167,21 @@ func TestJSONEnvelopeAndInvalidExitCode(t *testing.T) {
 	}
 }
 
+func TestRunSubcommandJSONErrorUsesEnvelope(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	err := a.Run([]string{"run", "show", "missing", "--json"})
+	if err == nil || ExitCode(err) != ExitOperational || !Reported(err) {
+		t.Fatalf("err=%v exit=%d reported=%v", err, ExitCode(err), Reported(err))
+	}
+	var got envelope
+	if decodeErr := json.Unmarshal(out.Bytes(), &got); decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if got.OK || got.Error == nil || got.Error.Code != "operational_error" {
+		t.Fatalf("envelope=%+v", got)
+	}
+}
+
 func TestSubcommandHelp(t *testing.T) {
 	commands := [][]string{{"version"}, {"doctor"}, {"project"}, {"session"}, {"run"}, {"mcp"}, {"export"}, {"orca"}}
 	for _, command := range commands {
@@ -310,5 +325,192 @@ func TestSessionizerCheckFixtureIsReadOnly(t *testing.T) {
 	registryAfter, _ := os.ReadFile(registry)
 	if !bytes.Equal(sourceAfter, fixture) || !bytes.Equal(registryAfter, registryBefore) {
 		t.Fatal("check-only import mutated source or registry")
+	}
+}
+
+func TestSessionizerApplyIsIdempotentAndKeepsLegacyBytes(t *testing.T) {
+	a, out, config, state := testApp(t)
+	root := t.TempDir()
+	for _, name := range []string{"one", "two"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := filepath.Join(root, "dirs")
+	legacy := []byte("# untouched legacy grammar\n" + root + "\n")
+	if err := os.WriteFile(source, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		out.Reset()
+		if err := a.Run([]string{"project", "import", "sessionizer", "--apply", "--file", source, "--json"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := os.ReadFile(source); err != nil || !bytes.Equal(got, legacy) {
+		t.Fatalf("legacy changed: %q err=%v", got, err)
+	}
+	records, err := loadProjects(filepath.Join(config, "bb", "projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || records[0].Origin.Kind != "sessionizer" || records[0].Origin.Source != source {
+		t.Fatalf("records=%+v", records)
+	}
+	backups, err := filepath.Glob(filepath.Join(state, "bb", "migration-backups", "*.dirs"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups=%v err=%v", backups, err)
+	}
+	if got, _ := os.ReadFile(backups[0]); !bytes.Equal(got, legacy) {
+		t.Fatal("backup is not byte-identical")
+	}
+	if _, err := os.Stat(filepath.Join(state, "bb", "migration-backups", "sessionizer-recovery.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProjectShowSessionOpenAndRunJournalCommands(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	project := t.TempDir()
+	if err := a.Run([]string{"project", "add", project, "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"project", "show", projectID(project), "--json"}); err != nil || !strings.Contains(out.String(), `"name":"demo"`) {
+		t.Fatalf("show=%s err=%v", out, err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"session", "open", projectID(project), "--backend", "shell", "--json"}); err != nil || !strings.Contains(out.String(), `"external_action":"none"`) {
+		t.Fatalf("open=%s err=%v", out, err)
+	}
+	if err := a.Run([]string{"session", "open", projectID(project), "--backend", "orca"}); ExitCode(err) != ExitCapabilityUnavailable {
+		t.Fatalf("orca err=%v", err)
+	}
+	if err := a.Run([]string{"run", "true"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"run", "list", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	var listed envelope
+	if err := json.Unmarshal(out.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	runs := listed.Data.([]any)
+	if len(runs) != 1 {
+		t.Fatalf("runs=%v", runs)
+	}
+	id := runs[0].(map[string]any)["id"].(string)
+	out.Reset()
+	if err := a.Run([]string{"run", "show", id, "--json"}); err != nil || !strings.Contains(out.String(), id) {
+		t.Fatalf("show run=%s err=%v", out, err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"run", "export", "--format", "json"}); err != nil || !strings.Contains(out.String(), id) {
+		t.Fatalf("export=%s err=%v", out, err)
+	}
+}
+
+func TestSessionizerMalformedInputIsWarningOnlyDuringCheck(t *testing.T) {
+	a, out, config, _ := testApp(t)
+	source := filepath.Join(t.TempDir(), "dirs")
+	if err := os.WriteFile(source, []byte("~other-user/work\n=\n/path/that/does/not/exist\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run([]string{"project", "import", "sessionizer", "--check", "--file", source, "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"warnings"`) || strings.Contains(out.String(), `"candidates":[{`) {
+		t.Fatalf("check=%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(config, "bb", "projects.json")); !os.IsNotExist(err) {
+		t.Fatalf("check wrote registry: %v", err)
+	}
+}
+
+func TestConcurrentSessionizerApplyAndRunsKeepUniqueRecords(t *testing.T) {
+	config, state, home := t.TempDir(), t.TempDir(), t.TempDir()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "project"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "dirs")
+	if err := os.WriteFile(source, []byte(root+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"XDG_CONFIG_HOME=" + config, "XDG_STATE_HOME=" + state, "HOME=" + home, "PATH=" + os.Getenv("PATH")}
+	var wg sync.WaitGroup
+	errs := make(chan error, 12)
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- New(io.Discard, io.Discard, env).Run([]string{"project", "import", "sessionizer", "--apply", "--file", source})
+		}()
+	}
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- New(io.Discard, io.Discard, env).Run([]string{"run", "true"}) }()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := loadProjects(filepath.Join(config, "bb", "projects.json"))
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records=%+v err=%v", records, err)
+	}
+	events, err := readJournal(filepath.Join(state, "bb", "journal.ndjson"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, event := range events {
+		if event.Type == "run" {
+			if event.ID == "" || ids[event.ID] {
+				t.Fatalf("duplicate/empty run id %q", event.ID)
+			}
+			ids[event.ID] = true
+		}
+	}
+	if len(ids) != 6 {
+		t.Fatalf("run ids=%v", ids)
+	}
+}
+
+func TestSessionizerApplyRejectsSourceChangedAfterCheck(t *testing.T) {
+	a, _, config, state := testApp(t)
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "project"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "dirs")
+	if err := os.WriteFile(source, []byte(root+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	check, err := a.checkSessionizer(source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("# changed\n"+root+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.applySessionizer(check, filepath.Join(config, "bb", "projects.json"), filepath.Join(state, "bb"))
+	if err == nil || !strings.Contains(err.Error(), "source changed") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(config, "bb", "projects.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("registry changed: %v", statErr)
+	}
+}
+
+func TestRunPreservesCommandJSONArgument(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	if err := a.Run([]string{"run", "sh", "-c", `test "$1" = --json`, "sh", "--json"}); err != nil {
+		t.Fatal(err)
 	}
 }

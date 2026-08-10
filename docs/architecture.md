@@ -32,8 +32,11 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb doctor [--json]` | Checks `git`, `tmux`, `kubectl`, `aws`, `terraform`, and Orca availability with purpose/recovery text | Read-only PATH inspection |
 | `bb project add/list/remove` | Maintains a local project registry with stable `prj_` IDs | `$XDG_CONFIG_HOME/bb/projects.json`, mode `0600` |
 | `bb project import sessionizer --check` | Expands the shared parent/`=direct` grammar and reports candidates, dead paths, duplicates, and collisions | Strictly read-only; source and registry remain byte-identical |
+| `bb project import sessionizer --apply` | Adds non-conflicting candidates with stable origin metadata | Writes bb registry/recovery state only; verifies the source hash and preserves source bytes |
 | `bb session start/stop/list` | Maintains bb-owned session intent records with stable `ses_` IDs; it does not claim a tmux/Orca session | `$XDG_STATE_HOME/bb/sessions.json`, mode `0600` |
 | `bb run <command> [args]` | Executes an explicit external command | Journal stores only executable basename, argument count, exit code, and timestamp |
+| `bb run list/show/export` | Reads bb-owned run records with stable `run_` IDs and outcomes | No provider scraping or external lifecycle authority |
+| `bb session open <project-id>` | Returns an explicit backend plan | Never opens or destroys a terminal; Orca is capability-unavailable by design |
 | `bb mcp inventory/audit` | Reports candidate presence and content hashes without returning configuration content | Appends redacted metadata-only `mcp_audit` journal event; never mutates config |
 | `bb export [--output path]` | Exports journal events as JSON | Read-only journal access; optional `0600` output |
 | `bb orca status` | Calls Orca's read-only JSON status endpoint | No Orca mutation or duplicated state |
@@ -63,17 +66,18 @@ tool.
 
 ## Distribution and `bb setup nvim`
 
-Release CI should build `linux`/`darwin` for `amd64`/`arm64`, publish SHA-256
-checksums plus provenance/SBOM, and install atomically to a configurable path
-(default `~/.local/bin/bb`). Verification occurs before replacement and the
-previous executable remains recoverable until `bb version` succeeds. A foreign
-file or checkout symlink is never replaced without explicit migration consent.
+Release CI builds `linux`/`darwin` for `amd64`/`arm64` and publishes SHA-256
+checksums plus provenance/SBOM. The installer uses an atomic replacement at a
+configurable path (default `~/.local/bin/bb`). Verification occurs before
+replacement and the previous executable remains recoverable until `bb version`
+succeeds. A foreign file or checkout symlink is never replaced without explicit
+migration consent.
 
-`bb setup nvim` is designed but not implemented in this MVP. Its contract has
-four separately confirmable steps: acquire or select a `lazyvim-config` revision,
-install prerequisites with dry-run support, link `$XDG_CONFIG_HOME/nvim` after
-identity/conflict checks, and validate with doctor/headless Neovim. Acquisition
-and link mutation require explicit flags; plugin/network restoration is separate.
+`bb setup nvim` now implements local selection, dry-run, identity/conflict
+validation, and consent-gated linking for an already-present `lazyvim-config`.
+`bb doctor nvim` validates the same contract. Network acquisition, prerequisite
+package installation, and plugin restoration remain separate and unimplemented;
+the binary never embeds or silently clones the configuration.
 
 ## Explicit non-goals
 

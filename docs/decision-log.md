@@ -66,23 +66,42 @@ stable public contract.
 
 ## Deferred decisions
 
-- Final module/repository import path and public JSON schema/version envelope.
-- Stable exit-code taxonomy beyond the MVP's generic operational failure.
-- Release signing/provenance provider and supported-platform policy.
 - Exact `lazyvim-config` identity marker, managed clone path, and consent UX.
 - Compatibility duration for legacy `bb tm`, aliases, and sessionizer fallback.
 - Whether deferred secrets and typed environment presets ever belong in `bb`.
+- Long-term release signing policy beyond GitHub provenance attestations.
 
 Each deferred item that breaks a command/data contract, stores credentials,
 mutates MCP, or requires legacy-repository writes is a decision gate, not an
 implicit implementation detail.
 
-## 2026-08-10 — Contract v1 and check-only migration
+## 2026-08-10 — Apply owns only bb state
+
+Decision: sessionizer apply is permitted because it never writes the legacy
+source. It verifies the bytes observed during check, stores a content-addressed
+recovery copy, and atomically changes only bb's XDG registry.
+
+Why binbox owns it: the destination registry and recovery journal are bb state.
+Why Orca does not: no worktree or agent lifecycle changes. Why LazyVim does not:
+the shared source remains untouched and available to its fallback parser.
+
+## 2026-08-10 — Local-only LazyVim setup
+
+Decision: `bb setup nvim` validates and links a user-selected local checkout
+only after explicit apply and consent. It does not clone, install packages,
+restore plugins, or overwrite an existing target. `doctor nvim --headless`
+uses `-u NONE` to avoid config-triggered network activity.
+
+Reason: this completes the safe install/link contract without taking ownership
+of LazyVim content or crossing the credential/network decision boundary.
+
+## 2026-08-10 — Contract v1 and check-first migration
 
 Decision: machine-readable commands use envelope schema v1 and stable project/
 session IDs. Registry mutations use process-safe locks and atomic replacement.
-The first legacy adapter is only `bb project import sessionizer --check`; it
-reports the established grammar and conflicts without offering `--apply`.
+The legacy adapter defaults to explicit `--check`. Its separately requested
+`--apply` mode imports only non-conflicting records into bb-owned XDG state,
+after preserving the source bytes for recovery; it never changes the source.
 
 Why binbox owns it: these are bb's public API and bb-owned XDG state. Why Orca
 does not: no lifecycle object is created or controlled. Why LazyVim does not:

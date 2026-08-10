@@ -40,9 +40,12 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb tm projects --plain|--json` | Returns the sessionizer/LazyVim-compatible normalized project view | Read-only bb registry; never rewrites the shared legacy source |
 | `bb tm sessions --json` | Preserves legacy typed tmux session fields | Session-level observation only; no panes, commands, or scrollback |
 | `bb tm [--project <id>]` | Selects with external `fzf`, then attaches or creates `bb-<project-id>` through external `tmux` | No shell evaluation, Orca invocation, lifecycle registry, or ownership claim; explicit project selection is the non-interactive seam |
+| `bb tm attach/kill/dirs/layout` | Operates on an exact tmux session or bb project registry entry; layouts are fixed Go-owned recipes | Destructive actions show targets and re-observe before direct tmux argv; no legacy directory-file writes |
 | `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |
-| `bb port inspect` | Reports listeners through `ss`/`lsof` | Read-only; process termination is not implemented |
-| `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/state list` | Preserves the core Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; mutation snapshots an opened regular plan into owner-only bb state, confirms its SHA-256, then re-observes session/account/scope before apply |
+| `bb gx ...` | Provides explicit Git branch/root/log compatibility without shell or fzf dependence | Branch deletion shows and re-observes the exact ref and refuses the current branch |
+| `bb kx ...` / `bb assm ...` | Streams explicit kubectl and AWS SSM operations | Direct argv only; identifiers/ports are validated and no credentials are read or persisted |
+| `bb port inspect/kill` | Reports listeners and optionally sends SIGTERM to an exact PID set | Kill requires lsof, prints/optionally confirms, then re-observes before mutation |
+| `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/review/clean/state ...` | Preserves the guarded Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; review output uses fresh owner-only XDG state; every destructive path is bounded, confirmed, and re-observed; plan mutation uses a private immutable snapshot |
 | `bb tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Preserves the Trivy workflow and fixed CI/report policies | Direct Trivy arguments; node collector requires confirmation; no config or credential mutation |
 | `bb mcp inventory/audit` | Reports candidate presence and content hashes without returning configuration content | Appends redacted metadata-only `mcp_audit` journal event; never mutates config |
 | `bb export [--output path]` | Exports journal events as JSON | Read-only journal access; optional `0600` output |
@@ -68,6 +71,9 @@ tool.
   terminal output, credentials, and MCP configuration contents are not stored.
 - External resources are observed before action; local records never establish
   ownership of tmux, Workbench, or Orca objects.
+- Git, Kubernetes, AWS SSM, process, and Terraform adapters accept structured
+  targets and invoke their owner CLI with a direct argument vector. They never
+  evaluate shell strings or persist provider credentials.
 - The `tm` selector passes registry values as direct `fzf`/`tmux` arguments and
   rejects delimiter-bearing records. It is a human terminal convenience only:
   tmux remains the owner of its sessions and Orca is never consulted.
@@ -84,6 +90,11 @@ tool.
   only that private snapshot to Terraform after revalidation. The snapshot is
   removed on confirmation cancel, revalidation failure, Terraform return, or
   other error; the caller's plan source is never changed by `bb`.
+- Terraform review logs and plan JSON are written to a fresh
+  `${XDG_STATE_HOME}/bb/tfx-review-*` directory with `0700`/`0600` permissions
+  through an anchored filesystem root. They are never placed in a repository.
+  Cleanup recognizes only fixed bb artifact names; caller-controlled plan
+  environment variables cannot authorize deletion of source files.
 - Recovery-relevant state remains inspectable/exportable. Future state schema
   changes require versioned readers, backups, and non-destructive migration.
 

@@ -8,16 +8,16 @@ forwarded through a checkout or embedded shell script.
 |---|---|---|
 | `tm go`, `tm projects` | XDG project registry, `--plain`/`--json`, direct tmux open | Migrated with cutover contract |
 | `tm sessions --json` | Same schema-v1 session fields, no pane scraping | Migrated |
-| `tm attach/layout/kill/dirs` | Needs exact-session/destructive and shared-file contracts | Gated |
-| `gx root/br/log` | `bb git root`, `branch list`, `log` read models | Partially migrated |
-| `gx new/clean/switch` | Git mutation and interactive-selection contract | Gated |
+| `tm attach/layout/kill/dirs` | Exact session re-observation, built-in layouts, and bb-registry-only directory changes | Migrated |
+| `gx root/br/log` | `bb git` typed reads and `bb gx` direct compatibility commands | Migrated |
+| `gx new/switch/clean` | Explicit branch create/switch/delete; destructive delete confirms and re-observes the exact ref | Migrated with explicit-argument contract |
 | `tfx init/validate/fmt/plan/sum` | Direct Terraform/tf-summarize execution | Migrated |
 | `tfx session/status/apply/destroy/end` | Exact legacy TSV, account/scope/expiry/plan revalidation, explicit confirmation | Migrated |
 | `tfx state list` | Direct Terraform execution | Migrated |
-| `tfx review/clean/state mutation` | Requires bounded deletion and state-address revalidation | Gated |
-| `portcheck` | `bb port inspect`; no process termination | Partially migrated |
+| `tfx review/clean/state mutation` | Bounded review/clean plus exact state-address confirmation and revalidation | Migrated |
+| `portcheck` | `bb port inspect`; kill prints, confirms, and re-observes the exact sorted PID set before SIGTERM | Migrated |
 | `tvx` | Direct Trivy adapter with fixed CI/report policy and guarded node collector | Migrated |
-| `kx`, `assm` | External state mutation/streaming contract | Gated |
+| `kx`, `assm` | Explicit context/namespace/pod/instance arguments, direct kubectl/AWS argv, validated ports and JSON SSM parameters | Migrated with explicit-argument contract |
 | `assume` | Reads/mutates AWS config and emits credentials | Credential gate |
 | `wenv` | Legacy presets are executable shell | Data-format gate |
 | `sec` | Existing encrypted store and key ownership | Secret gate |
@@ -27,6 +27,11 @@ forwarded through a checkout or embedded shell script.
 The legacy repositories and shared sessionizer file remain read-only throughout
 migration. No gated command may be declared migrated until its old data and
 failure semantics have fixtures and a rollback path.
+
+Interactive fzf discovery in legacy `gx`, `kx`, and `assm` is intentionally not
+part of the stable replacement contract. The new commands require targets such
+as branch, pod, context, and instance ID to be explicit; this keeps automation
+deterministic and prevents a stale selection from becoming a mutation target.
 
 The tmux cutover is intentionally not a live mirror. `bb tm projects` reads the
 bb registry after explicit sessionizer import; later edits to the legacy dirs

@@ -27,12 +27,21 @@ bb tm projects --json
 bb tm projects --plain
 bb tm sessions --json
 bb tm --project prj_...
+bb tm attach --session dev
+bb tm layout --layout golang --session dev --path "$PWD"
 
 # Read-only legacy replacements.
 bb git root --json
 bb git branch list --all --json
 bb git log --limit 20 --json
 bb port inspect 8080 --json
+bb port kill 8080
+
+# Explicit Git, Kubernetes, and AWS SSM compatibility adapters.
+bb gx branch switch feature/example
+bb kx log api-pod -n staging --tail 100
+bb kx port-forward api-pod 8080:80 -n staging
+bb assm shell i-0123456789abcdef0
 
 # Terraform compatibility with account-bound apply/destroy safeguards.
 bb tfx status --json
@@ -42,6 +51,7 @@ bb tfx sum tree
 bb tfx session 15
 bb tfx apply
 bb tfx state list
+bb tfx review
 
 # Trivy policy wrapper with fixed CI and report formats.
 bb tvx repo .

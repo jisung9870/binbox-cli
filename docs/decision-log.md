@@ -133,3 +133,20 @@ Why binbox owns it: these are portable human CLI contracts and local safety
 checks. Why Orca does not: none manages agents, worktrees, schedulers, or DAGs.
 Why LazyVim does not: it consumes only versioned project/session inventory and
 does not own Git, Terraform, or process inspection behavior.
+
+## 2026-08-10 — Explicit targets replace legacy interactive mutation
+
+Decision: tmux, Git, Kubernetes, AWS SSM, port termination, and Terraform
+compatibility commands are typed Go adapters that pass direct argument vectors
+to the system owner CLI. Mutating commands require explicit targets; destructive
+ones print the target and re-observe its identity before acting. Legacy fzf
+selection remains available only where selection itself is non-destructive.
+
+Why binbox owns it: these are portable, human-invoked CLI safety contracts.
+Why Orca does not: none creates or manages an agent, worktree, scheduler, DAG,
+or terminal lifecycle. Why LazyVim does not: editor configuration may invoke
+the commands but does not own provider state or mutation policy.
+
+Credential-bearing `assume`, executable `wenv` presets, and the `sec` store are
+not included. They remain decision gates because migration would require a new
+credential or persisted-data ownership contract.

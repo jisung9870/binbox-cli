@@ -1,11 +1,13 @@
 package bb
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -153,12 +155,21 @@ func (a *App) gitLog(limit int) ([]gitLogEntry, error) {
 
 func (a *App) port(args []string) error {
 	if helpRequested(args) {
-		_, err := fmt.Fprintln(a.out, "Usage: bb port inspect <1..65535> [--json]")
+		_, err := fmt.Fprint(a.out, `Usage:
+  bb port inspect <1..65535> [--json]
+  bb port kill <1..65535> [--yes]
+`)
 		return err
 	}
 	args, jsonMode := takeFlag(args, "--json")
+	if len(args) >= 1 && args[0] == "kill" {
+		if jsonMode {
+			return usage("port kill", "<1..65535> [--yes]")
+		}
+		return a.portKill(args[1:])
+	}
 	if len(args) != 2 || args[0] != "inspect" {
-		return usage("port inspect", "<1..65535> [--json]")
+		return usage("port", "inspect <1..65535> [--json] | kill <1..65535> [--yes]")
 	}
 	port, err := strconv.Atoi(args[1])
 	if err != nil || port < 1 || port > 65535 {
@@ -173,6 +184,82 @@ func (a *App) port(args []string) error {
 		return printEnvelope(a.out, data, nil)
 	}
 	return printJSON(a.out, data)
+}
+
+func (a *App) portKill(args []string) error {
+	args, yes := takeFlag(args, "--yes")
+	if len(args) != 1 {
+		return usage("port kill", "<1..65535> [--yes]")
+	}
+	port, err := validPort(args[0])
+	if err != nil {
+		return err
+	}
+	pids, err := a.observePortPIDs(port)
+	if err != nil {
+		return err
+	}
+	if len(pids) == 0 {
+		_, err := fmt.Fprintf(a.out, "No processes found on port %d.\n", port)
+		return err
+	}
+	fmt.Fprintf(a.out, "Processes using port %d: %s\n", port, strings.Join(pids, ", "))
+	if !yes {
+		fmt.Fprint(a.out, "Send SIGTERM to exactly these processes? [y/N] ")
+		answer, readErr := bufio.NewReader(a.in).ReadString('\n')
+		if readErr != nil && strings.TrimSpace(answer) == "" {
+			return fmt.Errorf("read confirmation: %w", readErr)
+		}
+		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+			return invalid("port kill cancelled")
+		}
+	}
+	current, err := a.observePortPIDs(port)
+	if err != nil {
+		return err
+	}
+	if strings.Join(current, ",") != strings.Join(pids, ",") {
+		return unavailable("processes using the port changed during confirmation; inspect and retry")
+	}
+	return a.runExternal("kill", append([]string{"-TERM", "--"}, pids...)...)
+}
+
+func (a *App) observePortPIDs(port int) ([]string, error) {
+	if _, err := a.lookPath("lsof"); err != nil {
+		return nil, unavailable("lsof is required for exact PID observation before port termination")
+	}
+	cmd := a.command("lsof", "-nP", "-t", "-i", ":"+strconv.Itoa(port))
+	cmd.Env = a.env
+	var output, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return []string{}, nil
+		}
+		if message := strings.TrimSpace(stderr.String()); message != "" {
+			return nil, fmt.Errorf("observe port %d processes: %s", port, message)
+		}
+		return nil, fmt.Errorf("observe port %d processes: %w", port, err)
+	}
+	seen := map[int]bool{}
+	for _, field := range strings.Fields(output.String()) {
+		pid, parseErr := strconv.Atoi(field)
+		if parseErr != nil || pid < 1 {
+			return nil, fmt.Errorf("lsof returned an invalid PID %q", field)
+		}
+		seen[pid] = true
+	}
+	values := make([]int, 0, len(seen))
+	for pid := range seen {
+		values = append(values, pid)
+	}
+	sort.Ints(values)
+	pids := make([]string, 0, len(values))
+	for _, pid := range values {
+		pids = append(pids, strconv.Itoa(pid))
+	}
+	return pids, nil
 }
 
 type portListener struct {

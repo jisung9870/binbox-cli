@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,11 +36,16 @@ func (a *App) tfx(args []string) error {
 
   bb tfx end
   bb tfx state list [terraform state list arguments...]
+  bb tfx state show [address]
+  bb tfx state mv <source> <destination> [--yes]
+  bb tfx state rm <address...> [--yes]
+  bb tfx review [--all] [--repo path] [root ...]
+  bb tfx clean [--all|-r] [--deep] [--repo path] [root ...] [--yes]
 
 The plan command always writes to TFPLAN_FILE (default: tfplan), and refuses a
 caller-provided -out flag. apply and destroy require an account-bound session
-and an interactive confirmation. review, clean, and state show/mv/rm remain
-unimplemented.
+and an interactive confirmation. Review and clean intentionally accept explicit
+roots (or --all) only; they never invoke an interactive selector.
 `)
 		return err
 	}
@@ -60,6 +68,10 @@ unimplemented.
 		return a.tfxEnd(args[1:])
 	case "state":
 		return a.tfxState(args[1:])
+	case "review":
+		return a.tfxReview(args[1:])
+	case "clean":
+		return a.tfxClean(args[1:])
 	default:
 		return invalid(fmt.Sprintf("unsupported tfx command %q; run 'bb tfx help'", args[0]))
 	}
@@ -663,8 +675,642 @@ func last4(value string) string {
 }
 
 func (a *App) tfxState(args []string) error {
-	if len(args) == 0 || args[0] != "list" {
-		return invalid("only 'bb tfx state list' is available in the safe tranche")
+	if len(args) == 0 {
+		return usage("tfx state", "list|show|mv|rm [arguments]")
 	}
-	return a.tfxTerraform("state", append([]string{"list"}, args[1:]...)...)
+	switch args[0] {
+	case "list":
+		return a.tfxTerraform("state", append([]string{"list"}, args[1:]...)...)
+	case "show":
+		if len(args) != 2 || !validTFXAddress(args[1]) {
+			return usage("tfx state show", "<address>")
+		}
+		return a.tfxTerraform("state", "show", args[1])
+	case "mv":
+		args, yes := takeFlag(args[1:], "--yes")
+		if len(args) != 2 {
+			return usage("tfx state mv", "<source> <destination> [--yes]")
+		}
+		return a.tfxStateMutate("mv", args, yes)
+	case "rm":
+		args, yes := takeFlag(args[1:], "--yes")
+		if len(args) == 0 {
+			return usage("tfx state rm", "<address...> [--yes]")
+		}
+		return a.tfxStateMutate("rm", args, yes)
+	default:
+		return invalid("unknown tfx state command; use list, show, mv, or rm")
+	}
+}
+
+// tfxStateAddresses obtains Terraform's current view immediately before a
+// mutation.  Addresses are treated as opaque argv values, never shell text.
+func (a *App) tfxStateAddresses() (map[string]bool, error) {
+	if _, err := a.lookPath("terraform"); err != nil {
+		return nil, unavailable("terraform is not installed; install terraform to use bb tfx state")
+	}
+	cmd := a.command("terraform", "state", "list")
+	cmd.Env, cmd.Stderr = a.env, a.err
+	b, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("terraform state list: %w", err)
+	}
+	result := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			result[line] = true
+		}
+	}
+	return result, nil
+}
+
+func (a *App) tfxStateMutate(operation string, addresses []string, yes bool) error {
+	for _, address := range addresses {
+		if !validTFXAddress(address) {
+			return invalid("Terraform state addresses must be explicit non-option values")
+		}
+	}
+	current, err := a.tfxStateAddresses()
+	if err != nil {
+		return err
+	}
+	// For mv only the source is an existing address. rm requires every target.
+	selected := addresses
+	if operation == "mv" {
+		selected = addresses[:1]
+	}
+	for _, address := range selected {
+		if !current[address] {
+			return invalid(fmt.Sprintf("Terraform state address is not present: %s", address))
+		}
+	}
+	if operation == "mv" && current[addresses[1]] {
+		return invalid(fmt.Sprintf("Terraform state destination already exists: %s", addresses[1]))
+	}
+	// Re-observe exact selected addresses after the user has had a chance to
+	// inspect the operation, preventing a stale list from authorising a change.
+	if !yes {
+		if _, err := fmt.Fprintf(a.out, "Terraform state %s targets:\n", operation); err != nil {
+			return err
+		}
+		for _, address := range addresses {
+			if _, err := fmt.Fprintf(a.out, "  %s\n", address); err != nil {
+				return err
+			}
+		}
+		ok, err := a.confirmTFX("Proceed with this Terraform state mutation?")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			_, err = fmt.Fprintln(a.out, "Cancelled.")
+			return err
+		}
+	}
+	fresh, err := a.tfxStateAddresses()
+	if err != nil {
+		return err
+	}
+	for _, address := range selected {
+		if !fresh[address] {
+			return unavailable(fmt.Sprintf("Terraform state changed; selected address is no longer present: %s", address))
+		}
+	}
+	if operation == "mv" && fresh[addresses[1]] {
+		return unavailable(fmt.Sprintf("Terraform state changed; destination is now present: %s", addresses[1]))
+	}
+	if _, err := fmt.Fprintf(a.out, "Executing terraform state %s for:\n", operation); err != nil {
+		return err
+	}
+	for _, address := range addresses {
+		if _, err := fmt.Fprintf(a.out, "  %s\n", address); err != nil {
+			return err
+		}
+	}
+	return a.tfxTerraform("state", append([]string{operation}, addresses...)...)
+}
+
+func validTFXAddress(address string) bool {
+	return address != "" && !strings.HasPrefix(address, "-") && !strings.ContainsAny(address, "\x00\r\n")
+}
+
+type tfxReviewRules struct {
+	AllowPaths   []string `json:"allow_paths"`
+	AllowActions []string `json:"allow_actions"`
+	Match        string   `json:"match"`
+}
+
+func defaultTFXReviewRules() tfxReviewRules {
+	return tfxReviewRules{AllowPaths: []string{"tags", "tags_all", "tag", "tag_specifications"}, AllowActions: []string{"update"}, Match: "prefix"}
+}
+
+func readTFXReviewRules(root string) (tfxReviewRules, error) {
+	rules := defaultTFXReviewRules()
+	path := filepath.Join(root, ".tf-review.json")
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return rules, nil
+	}
+	if err != nil {
+		return rules, fmt.Errorf("read review rules %s: %w", path, err)
+	}
+	var configured tfxReviewRules
+	if err := json.Unmarshal(b, &configured); err != nil {
+		return rules, invalid(fmt.Sprintf("parse review rules %s: %v", path, err))
+	}
+	if configured.AllowPaths != nil {
+		rules.AllowPaths = configured.AllowPaths
+	}
+	if configured.AllowActions != nil {
+		rules.AllowActions = configured.AllowActions
+	}
+	if configured.Match != "" {
+		rules.Match = configured.Match
+	}
+	if rules.Match != "prefix" && rules.Match != "glob" {
+		return rules, invalid("review rules match must be prefix or glob")
+	}
+	return rules, nil
+}
+
+func pathAllowed(path string, rules tfxReviewRules) bool {
+	for _, allowed := range rules.AllowPaths {
+		if rules.Match == "glob" {
+			parts, want := strings.Split(path, "."), strings.Split(allowed, ".")
+			if len(parts) < len(want) {
+				continue
+			}
+			good := true
+			for i := range want {
+				if want[i] != "*" && want[i] != parts[i] {
+					good = false
+					break
+				}
+			}
+			if good {
+				return true
+			}
+		} else if path == allowed || strings.HasPrefix(path, allowed+".") {
+			return true
+		}
+	}
+	return false
+}
+
+func scalarPaths(v any, prefix string, into *[]string) {
+	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			p := k
+			if prefix != "" {
+				p = prefix + "." + k
+			}
+			scalarPaths(x[k], p, into)
+		}
+	case []any:
+		for i, item := range x {
+			p := strconv.Itoa(i)
+			if prefix != "" {
+				p = prefix + "." + p
+			}
+			scalarPaths(item, p, into)
+		}
+	default:
+		if prefix != "" {
+			*into = append(*into, prefix)
+		}
+	}
+}
+
+func valueAtPath(v any, dotted string) any {
+	cur := v
+	for _, part := range strings.Split(dotted, ".") {
+		switch x := cur.(type) {
+		case map[string]any:
+			cur = x[part]
+		case []any:
+			i, err := strconv.Atoi(part)
+			if err != nil || i < 0 || i >= len(x) {
+				return nil
+			}
+			cur = x[i]
+		default:
+			return nil
+		}
+	}
+	return cur
+}
+
+func classifyTFXPlan(data []byte, rules tfxReviewRules) (string, string, error) {
+	var plan struct {
+		ResourceChanges []struct {
+			Address string `json:"address"`
+			Change  struct {
+				Actions []string `json:"actions"`
+				Before  any      `json:"before"`
+				After   any      `json:"after"`
+			} `json:"change"`
+		} `json:"resource_changes"`
+	}
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return "", "", fmt.Errorf("parse terraform plan JSON: %w", err)
+	}
+	allowedActions := map[string]bool{}
+	for _, action := range rules.AllowActions {
+		allowedActions[action] = true
+	}
+	var reviews []string
+	changed := false
+	for _, resource := range plan.ResourceChanges {
+		if len(resource.Change.Actions) == 1 && (resource.Change.Actions[0] == "no-op" || resource.Change.Actions[0] == "read") {
+			continue
+		}
+		changed = true
+		unsafe := false
+		for _, action := range resource.Change.Actions {
+			if !allowedActions[action] {
+				unsafe = true
+			}
+		}
+		var paths []string
+		scalarPaths(resource.Change.Before, "", &paths)
+		scalarPaths(resource.Change.After, "", &paths)
+		seen := map[string]bool{}
+		var differences []string
+		for _, path := range paths {
+			if !seen[path] && fmt.Sprintf("%#v", valueAtPath(resource.Change.Before, path)) != fmt.Sprintf("%#v", valueAtPath(resource.Change.After, path)) {
+				seen[path] = true
+				differences = append(differences, path)
+			}
+		}
+		if len(resource.Change.Actions) == 1 && resource.Change.Actions[0] == "update" {
+			for _, path := range differences {
+				if !pathAllowed(path, rules) {
+					unsafe = true
+				}
+			}
+		}
+		if unsafe {
+			reviews = append(reviews, fmt.Sprintf("%s [%s] paths=%s", resource.Address, strings.Join(resource.Change.Actions, ","), strings.Join(differences, ",")))
+		}
+	}
+	if !changed {
+		return "NOCHANGE", "", nil
+	}
+	if len(reviews) == 0 {
+		return "EXPECTED", "", nil
+	}
+	return "REVIEW", strings.Join(reviews, "; "), nil
+}
+
+func canonicalTFXBase(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve repository path %s: %w", path, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", invalid(fmt.Sprintf("repository path is not a directory: %s", path))
+	}
+	return resolved, nil
+}
+
+func tfxContainedPath(base, candidate string) (string, error) {
+	abs, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve path %s: %w", candidate, err)
+	}
+	rel, err := filepath.Rel(base, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", invalid(fmt.Sprintf("path escapes repository base: %s", candidate))
+	}
+	return resolved, nil
+}
+
+func (a *App) tfxReview(args []string) error {
+	base := a.getenv("TF_REPO")
+	if base == "" {
+		var err error
+		base, err = os.Getwd()
+		if err != nil {
+			return err
+		}
+	}
+	all := false
+	var roots []string
+	for len(args) > 0 {
+		switch args[0] {
+		case "--all":
+			all = true
+			args = args[1:]
+		case "--repo":
+			if len(args) < 2 {
+				return usage("tfx review", "[--all] [--repo path] [root ...]")
+			}
+			base, args = args[1], args[2:]
+		default:
+			if strings.HasPrefix(args[0], "-") {
+				return usage("tfx review", "[--all] [--repo path] [root ...]")
+			}
+			roots = append(roots, args[0])
+			args = args[1:]
+		}
+	}
+	if len(roots) == 0 && !all {
+		return invalid("tfx review requires explicit roots or --all (interactive selection is not supported)")
+	}
+	canonical, err := canonicalTFXBase(base)
+	if err != nil {
+		return err
+	}
+	if len(roots) == 0 {
+		err = filepath.WalkDir(canonical, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.IsDir() && entry.Name() == ".terraform" {
+				return filepath.SkipDir
+			}
+			if !entry.IsDir() && entry.Name() == "backend.tf" {
+				roots = append(roots, filepath.Dir(path))
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("discover Terraform roots: %w", err)
+		}
+	} else {
+		resolved := make([]string, 0, len(roots))
+		for _, root := range roots {
+			p, err := tfxContainedPath(canonical, filepath.Join(canonical, root))
+			if err != nil {
+				return err
+			}
+			resolved = append(resolved, p)
+		}
+		roots = resolved
+	}
+	if len(roots) == 0 {
+		return invalid("no Terraform roots containing backend.tf were found")
+	}
+	sort.Strings(roots)
+	if _, err := a.lookPath("terraform"); err != nil {
+		return unavailable("terraform is not installed; install terraform to use bb tfx review")
+	}
+	needAttention := false
+	for _, root := range roots {
+		if _, err := os.Stat(filepath.Join(root, "backend.tf")); err != nil {
+			return invalid(fmt.Sprintf("backend.tf is required for review: %s", root))
+		}
+		_, state, err := a.paths()
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(state, 0o700); err != nil {
+			return fmt.Errorf("create bb state directory: %w", err)
+		}
+		if err := os.Chmod(state, 0o700); err != nil {
+			return fmt.Errorf("secure bb state directory: %w", err)
+		}
+		outdir, err := os.MkdirTemp(state, "tfx-review-")
+		if err != nil {
+			return fmt.Errorf("create private review output directory: %w", err)
+		}
+		if err := os.Chmod(outdir, 0o700); err != nil {
+			return fmt.Errorf("secure review output directory: %w", err)
+		}
+		if err := a.tfxReviewRun(root, outdir, "init", []string{"-input=false", "-reconfigure"}, "init.log", false); err != nil {
+			fmt.Fprintf(a.out, "%s => ERROR (init; log: %s)\n", root, filepath.Join(outdir, "init.log"))
+			needAttention = true
+			continue
+		}
+		planPath := filepath.Join(outdir, "plan.bin")
+		planErr := a.tfxReviewRun(root, outdir, "plan", []string{"-input=false", "-lock=false", "-detailed-exitcode", "-out=" + planPath}, "plan.log", true)
+		if planErr != nil {
+			fmt.Fprintf(a.out, "%s => ERROR (plan; log: %s)\n", root, filepath.Join(outdir, "plan.log"))
+			needAttention = true
+			continue
+		}
+		if err := a.tfxReviewRun(root, outdir, "show", []string{"-json", planPath}, "plan.json", false); err != nil {
+			fmt.Fprintf(a.out, "%s => ERROR (show; log: %s)\n", root, filepath.Join(outdir, "plan.log"))
+			needAttention = true
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(outdir, "plan.json"))
+		if err != nil {
+			return err
+		}
+		rules, err := readTFXReviewRules(root)
+		if err != nil {
+			return err
+		}
+		status, detail, err := classifyTFXPlan(data, rules)
+		if err != nil {
+			fmt.Fprintf(a.out, "%s => ERROR (classify: %v)\n", root, err)
+			needAttention = true
+			continue
+		}
+		fmt.Fprintf(a.out, "%s => %s", root, status)
+		if detail != "" {
+			fmt.Fprintf(a.out, " %s", detail)
+		}
+		fmt.Fprintln(a.out)
+		if status == "REVIEW" {
+			needAttention = true
+		}
+	}
+	if needAttention {
+		return &CommandError{Code: "review_required", Message: "Terraform review requires attention", Exit: ExitInvalidInvocation, Reported: true}
+	}
+	return nil
+}
+
+func (a *App) tfxReviewRun(root, outdir, command string, args []string, output string, detailed bool) error {
+	cmd := a.command("terraform", append([]string{"-chdir=" + root, command}, args...)...)
+	cmd.Env = a.env
+	privateRoot, err := os.OpenRoot(outdir)
+	if err != nil {
+		return fmt.Errorf("open private review output directory: %w", err)
+	}
+	defer privateRoot.Close()
+	file, err := privateRoot.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return fmt.Errorf("secure review output %s: %w", output, err)
+	}
+	cmd.Stdout, cmd.Stderr = file, file
+	err = cmd.Run()
+	if detailed {
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 2 {
+			return nil
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("terraform %s: %w", command, err)
+	}
+	return nil
+}
+
+func (a *App) tfxClean(args []string) error {
+	base := a.getenv("TF_REPO")
+	if base == "" {
+		var err error
+		base, err = os.Getwd()
+		if err != nil {
+			return err
+		}
+	}
+	all, deep, yes := false, false, false
+	var roots []string
+	for len(args) > 0 {
+		switch args[0] {
+		case "-r", "--all":
+			all = true
+			args = args[1:]
+		case "--deep":
+			deep = true
+			args = args[1:]
+		case "--yes":
+			yes = true
+			args = args[1:]
+		case "--repo":
+			if len(args) < 2 {
+				return usage("tfx clean", "[--all|-r] [--deep] [--repo path] [root ...] [--yes]")
+			}
+			base, args = args[1], args[2:]
+		default:
+			if strings.HasPrefix(args[0], "-") {
+				return usage("tfx clean", "[--all|-r] [--deep] [--repo path] [root ...] [--yes]")
+			}
+			roots = append(roots, args[0])
+			args = args[1:]
+		}
+	}
+	canonical, err := canonicalTFXBase(base)
+	if err != nil {
+		return err
+	}
+	scopes := []string{}
+	if len(roots) > 0 {
+		for _, root := range roots {
+			p, err := tfxContainedPath(canonical, filepath.Join(canonical, root))
+			if err != nil {
+				return err
+			}
+			scopes = append(scopes, p)
+		}
+	} else {
+		scopes = []string{canonical}
+	}
+	// Cleanup recognizes only bb's fixed legacy artifact names. Environment
+	// variables are caller-controlled and therefore cannot authorize deletion
+	// of an arbitrary source basename such as backend.tf.
+	planNames := map[string]bool{"tfplan": true, "tfdestroyplan": true}
+	targets := map[string]os.FileInfo{}
+	for _, scope := range scopes {
+		err := filepath.WalkDir(scope, func(path string, e os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if path != scope && filepath.Dir(path) != scope && e.IsDir() && !all {
+				return filepath.SkipDir
+			}
+			if e.Type()&os.ModeSymlink != 0 {
+				if e.Name() == ".tf-review" || e.Name() == ".terraform" || planNames[e.Name()] {
+					return invalid(fmt.Sprintf("refuse symlink cleanup target: %s", path))
+				}
+				if e.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if e.IsDir() && e.Name() == ".terraform" && !deep {
+				return filepath.SkipDir
+			}
+			hit := e.Name() == ".tf-review" || (deep && e.Name() == ".terraform") || (!e.IsDir() && planNames[e.Name()])
+			if hit {
+				p, err := tfxContainedPath(canonical, path)
+				if err != nil {
+					return err
+				}
+				info, err := e.Info()
+				if err != nil {
+					return fmt.Errorf("inspect cleanup target %s: %w", path, err)
+				}
+				targets[p] = info
+				if e.IsDir() {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("enumerate clean targets: %w", err)
+		}
+	}
+	ordered := make([]string, 0, len(targets))
+	for target := range targets {
+		ordered = append(ordered, target)
+	}
+	sort.Strings(ordered)
+	if len(ordered) == 0 {
+		_, err := fmt.Fprintln(a.out, "No Terraform artifacts to clean.")
+		return err
+	}
+	fmt.Fprintln(a.out, "Terraform cleanup targets:")
+	for _, target := range ordered {
+		fmt.Fprintf(a.out, "  %s\n", target)
+	}
+	if !yes {
+		ok, err := a.confirmTFX("Remove these exact Terraform artifacts?")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			_, err = fmt.Fprintln(a.out, "Cancelled.")
+			return err
+		}
+	}
+	for _, target := range ordered {
+		info, err := os.Lstat(target)
+		if err != nil {
+			return fmt.Errorf("re-observe cleanup target %s: %w", target, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return invalid(fmt.Sprintf("refuse symlink cleanup target: %s", target))
+		}
+		if !os.SameFile(targets[target], info) {
+			return unavailable(fmt.Sprintf("cleanup target changed during confirmation: %s", target))
+		}
+		if err := os.RemoveAll(target); err != nil {
+			return fmt.Errorf("remove cleanup target %s: %w", target, err)
+		}
+	}
+	_, err = fmt.Fprintf(a.out, "Removed %d Terraform artifact(s).\n", len(ordered))
+	return err
 }

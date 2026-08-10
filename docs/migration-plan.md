@@ -54,10 +54,18 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    cache-clean, and doctor behavior as direct Trivy arguments. Policy-owned
    severity/exit/scanner/format flags cannot be overridden, and the Kubernetes
    node collector remains confirmation-gated.
-10. **Remaining mutation/security tranche (decision gates).** Terraform review/
-   clean/state mutation, Kubernetes context/exec/forwarding, `assume`, `wenv`, and `sec` require
-   explicit consent, re-observation, credential, and data-format contracts.
-11. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
+10. **Bounded mutation tranche (implemented).** tmux attach/layout/kill/dirs,
+   Git branch workflows, port SIGTERM, Terraform review/clean/state mutation,
+   Kubernetes context/namespace/log/exec/forwarding, and AWS SSM sessions use
+   explicit targets and direct argument vectors. Destructive operations show
+   targets and re-observe exact identity immediately before mutation. Legacy
+   fzf discovery is replaced by deterministic explicit arguments. Terraform
+   review output is retained only in fresh owner-only XDG state directories;
+   cleanup ignores caller-controlled artifact basenames.
+11. **Credential/data tranche (decision gates).** `assume`, `wenv`, and `sec`
+   still require explicit credential ownership, non-executable data-format, and
+   recovery decisions. No current command stores credentials or secrets.
+12. **Retirement (decision gate).** Archive setup/workbench functionality only after the criteria
    below pass for a documented compatibility and rollback window.
 
 ## Compatibility stop points

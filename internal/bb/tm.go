@@ -1,9 +1,11 @@
 package bb
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -18,6 +20,10 @@ func (a *App) tm(args []string) error {
 		_, err := fmt.Fprint(a.out, `Usage:
   bb tm projects --plain|--json
   bb tm sessions [--json]
+  bb tm attach [--session <name>]
+  bb tm kill --session <name> [--yes]
+  bb tm dirs [list|add <path>|remove <id|name>|prune] [--direct] [--yes]
+  bb tm layout --layout <golang|k8s|terraform> --session <name> --path <dir>
   bb tm [--project <project-id>]
 
 With no arguments, select a registered project with fzf and attach or create a
@@ -26,6 +32,30 @@ local tmux session. --project is an explicit non-interactive selector.
 		return err
 	}
 	args, jsonMode := takeFlag(args, "--json")
+	if len(args) > 0 {
+		switch args[0] {
+		case "attach":
+			if jsonMode {
+				return usage("tm attach", "[--session <name>]")
+			}
+			return a.tmAttach(args[1:])
+		case "kill":
+			if jsonMode {
+				return usage("tm kill", "--session <name> [--yes]")
+			}
+			return a.tmKill(args[1:])
+		case "dirs":
+			if jsonMode {
+				return usage("tm dirs", "[list|add <path>|remove <id|name>|prune] [--direct] [--yes]")
+			}
+			return a.tmDirs(args[1:])
+		case "layout":
+			if jsonMode {
+				return usage("tm layout", "--layout <golang|k8s|terraform> --session <name> --path <dir>")
+			}
+			return a.tmLayout(args[1:])
+		}
+	}
 	if len(args) > 0 && args[0] == "sessions" {
 		if len(args) != 1 {
 			return usage("tm sessions", "[--json]")
@@ -228,4 +258,355 @@ func (a *App) selectTMProject(projects []projectRecord) (projectRecord, error) {
 		}
 	}
 	return projectRecord{}, fmt.Errorf("fzf returned an unknown project selection")
+}
+
+// tmAttach attaches only to a session that has just been observed.  The second
+// lookup makes a stale fzf choice fail safely rather than sending tmux a name
+// that might now identify a different session.
+func (a *App) tmAttach(args []string) error {
+	sessionName := ""
+	expectedID := ""
+	if len(args) == 0 {
+		sessions, err := a.tmSessions()
+		if err != nil {
+			return err
+		}
+		if len(sessions) == 0 {
+			return unavailable("no local tmux sessions are available to attach")
+		}
+		selected, err := a.selectTMSession(sessions)
+		if err != nil {
+			return err
+		}
+		sessionName, expectedID = selected.Name, selected.ID
+	} else if len(args) == 2 && args[0] == "--session" && validTMSessionName(args[1]) {
+		sessionName = args[1]
+	} else {
+		return usage("tm attach", "[--session <name>]")
+	}
+	fresh, err := a.tmExactSession(sessionName)
+	if err != nil {
+		return err
+	}
+	if expectedID != "" && fresh.ID != expectedID {
+		return unavailable("tmux session changed after selection; inspect sessions and retry")
+	}
+	if a.getenv("TMUX") != "" {
+		if err := a.runTMux("switch-client", "-t", sessionName); err != nil {
+			return fmt.Errorf("switch tmux session %q: %w", sessionName, err)
+		}
+		return nil
+	}
+	if err := a.runTMux("attach-session", "-t", sessionName); err != nil {
+		return fmt.Errorf("attach tmux session %q: %w", sessionName, err)
+	}
+	return nil
+}
+
+func (a *App) tmKill(args []string) error {
+	args, yes := takeFlag(args, "--yes")
+	if len(args) != 2 || args[0] != "--session" || !validTMSessionName(args[1]) {
+		return usage("tm kill", "--session <name> [--yes]")
+	}
+	target, err := a.tmExactSession(args[1])
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.out, "Target tmux session: %s\n", target.Name); err != nil {
+		return err
+	}
+	if !yes {
+		ok, err := a.confirmTM("Kill tmux session " + target.Name + "?")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("tmux session kill cancelled")
+		}
+	}
+	// Re-observe both name and tmux's opaque session ID after a human has had a
+	// chance to act. A same-name replacement must not inherit authorization.
+	fresh, err := a.tmExactSession(target.Name)
+	if err != nil || fresh.ID != target.ID {
+		return unavailable("tmux session changed before kill; inspect sessions and retry")
+	}
+	if err := a.runTMux("kill-session", "-t", target.Name); err != nil {
+		return fmt.Errorf("kill tmux session %q: %w", target.Name, err)
+	}
+	return nil
+}
+
+// tmDirs is a compatibility spelling for the bb project registry.  It never
+// reads or writes a sessionizer dirs file.
+func (a *App) tmDirs(args []string) error {
+	args, direct := takeFlag(args, "--direct")
+	args, yes := takeFlag(args, "--yes")
+	_ = direct // accepted for legacy callers; bb records direct paths identically.
+	if len(args) == 0 || (len(args) == 1 && args[0] == "list") {
+		if yes {
+			return usage("tm dirs", "[list|add <path>|remove <id|name>|prune] [--direct] [--yes]")
+		}
+		projects, err := a.tmProjects()
+		if err != nil {
+			return err
+		}
+		for _, p := range projects {
+			if _, err := fmt.Fprintln(a.out, p.Path); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(args) == 2 && args[0] == "add" {
+		if yes {
+			return usage("tm dirs add", "<path> [--direct]")
+		}
+		return a.project([]string{"add", args[1]})
+	}
+	if len(args) == 2 && args[0] == "remove" {
+		return a.tmRemoveProject(args[1], yes)
+	}
+	if len(args) == 1 && args[0] == "prune" {
+		return a.tmPruneProjects(yes)
+	}
+	return usage("tm dirs", "[list|add <path>|remove <id|name>|prune] [--direct] [--yes]")
+}
+
+func (a *App) tmRemoveProject(ref string, yes bool) error {
+	config, _, err := a.paths()
+	if err != nil {
+		return err
+	}
+	registry := filepath.Join(config, "projects.json")
+	var target projectRecord
+	if err := withFileLock(registry, func() error {
+		projects, err := loadProjects(registry)
+		if err != nil {
+			return err
+		}
+		matches := matchingTMProjects(projects, ref)
+		if len(matches) == 0 {
+			return fmt.Errorf("project not found: %s", ref)
+		}
+		if len(matches) > 1 {
+			return invalid(fmt.Sprintf("project reference is ambiguous: %s", ref))
+		}
+		target = matches[0]
+		return nil
+	}); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.out, "Target project: %s (%s)\n", target.Name, target.Path); err != nil {
+		return err
+	}
+	if !yes {
+		ok, err := a.confirmTM("Remove project " + target.Name + " from bb registry?")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("project removal cancelled")
+		}
+	}
+	return withFileLock(registry, func() error {
+		projects, err := loadProjects(registry)
+		if err != nil {
+			return err
+		}
+		matches := matchingTMProjects(projects, ref)
+		if len(matches) != 1 || matches[0].ID != target.ID {
+			return unavailable("project registry changed before removal; inspect it and retry")
+		}
+		kept := make([]projectRecord, 0, len(projects))
+		for _, p := range projects {
+			if p.ID != target.ID {
+				kept = append(kept, p)
+			}
+		}
+		return writeJSONAtomic(registry, kept)
+	})
+}
+
+func (a *App) tmPruneProjects(yes bool) error {
+	config, _, err := a.paths()
+	if err != nil {
+		return err
+	}
+	registry := filepath.Join(config, "projects.json")
+	projects, err := loadProjects(registry)
+	if err != nil {
+		return err
+	}
+	stale := make([]projectRecord, 0)
+	for _, p := range projects {
+		info, statErr := os.Stat(p.Path)
+		if statErr != nil || !info.IsDir() {
+			stale = append(stale, p)
+		}
+	}
+	if len(stale) == 0 {
+		_, err := fmt.Fprintln(a.out, "No stale bb project paths.")
+		return err
+	}
+	if _, err := fmt.Fprintln(a.out, "Stale bb project paths:"); err != nil {
+		return err
+	}
+	for _, p := range stale {
+		if _, err := fmt.Fprintf(a.out, "- %s\t%s\n", p.Name, p.Path); err != nil {
+			return err
+		}
+	}
+	if !yes {
+		ok, err := a.confirmTM("Remove the listed stale projects from bb registry?")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("project prune cancelled")
+		}
+	}
+	return withFileLock(registry, func() error {
+		current, err := loadProjects(registry)
+		if err != nil {
+			return err
+		}
+		staleIDs := make(map[string]bool, len(stale))
+		for _, p := range stale {
+			staleIDs[p.ID] = true
+		}
+		kept := make([]projectRecord, 0, len(current))
+		for _, p := range current {
+			if staleIDs[p.ID] {
+				info, statErr := os.Stat(p.Path)
+				if statErr != nil || !info.IsDir() {
+					continue
+				}
+			}
+			kept = append(kept, p)
+		}
+		return writeJSONAtomic(registry, kept)
+	})
+}
+
+func matchingTMProjects(projects []projectRecord, ref string) []projectRecord {
+	var matches []projectRecord
+	for _, p := range projects {
+		if p.ID == ref || p.Name == ref {
+			matches = append(matches, p)
+		}
+	}
+	return matches
+}
+
+func (a *App) confirmTM(question string) (bool, error) {
+	if _, err := fmt.Fprintf(a.out, "%s [y/N]: ", question); err != nil {
+		return false, err
+	}
+	answer, err := bufio.NewReader(a.in).ReadString('\n')
+	if err != nil && len(answer) == 0 {
+		return false, fmt.Errorf("read confirmation: %w", err)
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes", nil
+}
+
+func (a *App) tmLayout(args []string) error {
+	flags, err := tmLayoutFlags(args)
+	if err != nil {
+		return err
+	}
+	if _, err := a.lookPath("tmux"); err != nil {
+		return unavailable("tmux is not installed; install tmux to create a built-in layout")
+	}
+	info, err := os.Stat(flags.path)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("layout path must be an existing directory: %s", flags.path)
+	}
+	if _, err := a.tmExactSession(flags.session); err == nil {
+		return invalid(fmt.Sprintf("tmux session already exists: %s", flags.session))
+	} else if ExitCode(err) != ExitOperational {
+		return err
+	}
+	if err := a.runTMux("new-session", "-d", "-s", flags.session, "-c", flags.path, "-n", flags.layout); err != nil {
+		return fmt.Errorf("create tmux layout %q: %w", flags.layout, err)
+	}
+	layout := map[string]string{"golang": "even-horizontal", "k8s": "main-vertical", "terraform": "tiled"}[flags.layout]
+	if err := a.runTMux("split-window", "-h", "-t", flags.session+":0", "-c", flags.path); err != nil {
+		return fmt.Errorf("add tmux layout pane: %w", err)
+	}
+	if err := a.runTMux("select-layout", "-t", flags.session+":0", layout); err != nil {
+		return fmt.Errorf("set tmux layout: %w", err)
+	}
+	_, err = fmt.Fprintf(a.out, "Created %s tmux layout in session %s\n", flags.layout, flags.session)
+	return err
+}
+
+type tmLayoutOptions struct{ layout, session, path string }
+
+func tmLayoutFlags(args []string) (tmLayoutOptions, error) {
+	var out tmLayoutOptions
+	for len(args) > 0 {
+		if len(args) < 2 {
+			return out, usage("tm layout", "--layout <golang|k8s|terraform> --session <name> --path <dir>")
+		}
+		key, value := args[0], args[1]
+		args = args[2:]
+		switch key {
+		case "--layout":
+			out.layout = value
+		case "--session":
+			out.session = value
+		case "--path":
+			out.path = value
+		default:
+			return out, usage("tm layout", "--layout <golang|k8s|terraform> --session <name> --path <dir>")
+		}
+	}
+	if (out.layout != "golang" && out.layout != "k8s" && out.layout != "terraform") || !validTMSessionName(out.session) || out.path == "" {
+		return out, usage("tm layout", "--layout <golang|k8s|terraform> --session <name> --path <dir>")
+	}
+	return out, nil
+}
+
+func validTMSessionName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, "\x00\n\r")
+}
+
+func (a *App) tmExactSession(name string) (tmSession, error) {
+	sessions, err := a.tmSessions()
+	if err != nil {
+		return tmSession{}, err
+	}
+	for _, s := range sessions {
+		if s.Name == name {
+			return s, nil
+		}
+	}
+	return tmSession{}, fmt.Errorf("tmux session not found: %s", name)
+}
+
+func (a *App) selectTMSession(sessions []tmSession) (tmSession, error) {
+	if _, err := a.lookPath("fzf"); err != nil {
+		return tmSession{}, unavailable("fzf is not installed; install fzf to select a tmux session or pass --session <name>")
+	}
+	var input strings.Builder
+	for _, s := range sessions {
+		if validTMSessionName(s.Name) && !strings.ContainsAny(s.ID, "\t\n\r") {
+			fmt.Fprintf(&input, "%s\t%s\n", s.ID, s.Name)
+		}
+	}
+	cmd := a.command("fzf", "--delimiter=\t", "--with-nth=2", "--nth=2")
+	cmd.Env, cmd.Stdin, cmd.Stderr = a.env, strings.NewReader(input.String()), a.err
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	if err := cmd.Run(); err != nil {
+		return tmSession{}, fmt.Errorf("run fzf tmux session selector: %w", err)
+	}
+	selectedID, _, _ := strings.Cut(strings.TrimSpace(output.String()), "\t")
+	for _, s := range sessions {
+		if s.ID == selectedID {
+			return s, nil
+		}
+	}
+	return tmSession{}, fmt.Errorf("fzf returned an unknown tmux session selection")
 }

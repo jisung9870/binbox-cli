@@ -71,6 +71,12 @@ func (a *App) dispatch(args []string) error {
 		return a.tm(args[1:])
 	case "git":
 		return a.git(args[1:])
+	case "gx":
+		return a.gx(args[1:])
+	case "kx":
+		return a.kx(args[1:])
+	case "assm":
+		return a.assm(args[1:])
 	case "port":
 		return a.port(args[1:])
 	case "tfx":
@@ -121,7 +127,10 @@ Commands:
   project ...             Manage/import the local project registry
   tm [projects|sessions|--project]  Select a project or inspect local tmux sessions
   git root|branch|log    Read Git repository metadata without modifying it
-  port inspect <port>    Inspect a listening local TCP/UDP port without killing it
+  gx ...                 Explicit Git workflow compatibility adapter
+  kx ...                 Explicit kubectl workflow compatibility adapter
+  assm ...               Explicit AWS SSM session adapter
+  port inspect|kill ...  Inspect a local port or terminate an exact re-observed PID set
   tfx ...                 Guarded Terraform compatibility workflow
   tvx ...                 Direct Trivy compatibility adapter with fixed policies
   agents                  Explain the Orca-owned agent lifecycle boundary

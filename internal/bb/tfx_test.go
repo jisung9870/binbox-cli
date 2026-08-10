@@ -39,8 +39,14 @@ func TestTFXHelperProcess(t *testing.T) {
 		os.Exit(92)
 	}
 	name, argv := args[start], args[start+1:]
-	if name == "terraform" && len(argv) > 0 && argv[0] == "plan" {
-		for _, arg := range argv[1:] {
+	tfargv := argv
+	hadChdir := false
+	if len(tfargv) > 0 && strings.HasPrefix(tfargv[0], "-chdir=") {
+		hadChdir = true
+		tfargv = tfargv[1:]
+	}
+	if name == "terraform" && len(tfargv) > 0 && tfargv[0] == "plan" {
+		for _, arg := range tfargv[1:] {
 			if strings.HasPrefix(arg, "-out=") {
 				path := strings.TrimPrefix(arg, "-out=")
 				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -52,8 +58,16 @@ func TestTFXHelperProcess(t *testing.T) {
 			}
 		}
 	}
-	if name == "terraform" && len(argv) >= 2 && argv[0] == "show" && argv[1] == "-json" {
-		fmt.Fprint(os.Stdout, `{"planned_values":{}}`)
+	if name == "terraform" && len(argv) >= 2 && argv[0] == "state" && argv[1] == "list" {
+		fmt.Fprint(os.Stdout, "aws_instance.example\naws_s3_bucket.logs\n")
+		os.Exit(0)
+	}
+	if name == "terraform" && len(tfargv) >= 2 && tfargv[0] == "show" && tfargv[1] == "-json" {
+		if hadChdir {
+			fmt.Fprint(os.Stdout, `{"resource_changes":[]}`)
+		} else {
+			fmt.Fprint(os.Stdout, `{"planned_values":{}}`)
+		}
 		os.Exit(0)
 	}
 	if name == "aws" && len(argv) >= 2 && argv[0] == "sts" && argv[1] == "get-caller-identity" {
@@ -446,15 +460,187 @@ func TestTFXPlainStatusPreservesLegacyFailureExit(t *testing.T) {
 	}
 }
 
-func TestTFXStateListOnly(t *testing.T) {
+func TestTFXStateCommandsReobserveAndUseDirectArgv(t *testing.T) {
 	a, out, _ := tfxTestApp(t)
 	if err := a.Run([]string{"tfx", "state", "list", "-state=remote.tfstate"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); got != "terraform args=state,list,-state=remote.tfstate" {
+	if got := out.String(); got != "aws_instance.example\naws_s3_bucket.logs\n" {
 		t.Fatalf("state list=%q", got)
 	}
-	if err := a.Run([]string{"tfx", "state", "rm", "aws_x.y"}); ExitCode(err) != ExitInvalidInvocation {
-		t.Fatalf("state rm err=%v exit=%d", err, ExitCode(err))
+	out.Reset()
+	if err := a.Run([]string{"tfx", "state", "show", "aws_instance.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "terraform args=state,show,aws_instance.example" {
+		t.Fatalf("state show=%q", got)
+	}
+	out.Reset()
+	if err := a.Run([]string{"tfx", "state", "mv", "aws_instance.example", "aws_instance.renamed", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Executing terraform state mv") || !strings.Contains(out.String(), "terraform args=state,mv,aws_instance.example,aws_instance.renamed") {
+		t.Fatalf("state mv=%q", out.String())
+	}
+	out.Reset()
+	a.in = strings.NewReader("no\n")
+	if err := a.Run([]string{"tfx", "state", "rm", "aws_s3_bucket.logs"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Terraform state rm targets") || strings.Contains(out.String(), "terraform args=state,rm") {
+		t.Fatalf("cancelled state rm=%q", out.String())
+	}
+	if err := a.Run([]string{"tfx", "state", "rm", "missing", "--yes"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("missing state rm err=%v exit=%d", err, ExitCode(err))
+	}
+}
+
+func TestTFXCleanUsesExactTargetsAndRejectsSymlinks(t *testing.T) {
+	a, out, _ := tfxTestApp(t)
+	root := t.TempDir()
+	for _, path := range []string{".tf-review/log", "tfplan", "sub/.tf-review/log", ".terraform/cache", ".terraform/modules/example/tfplan"} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Run([]string{"tfx", "clean", "--repo", root, "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".tf-review")); !os.IsNotExist(err) {
+		t.Fatalf("review remains: %v output=%q", err, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "tfplan")); !os.IsNotExist(err) {
+		t.Fatalf("plan remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "sub", ".tf-review")); err != nil {
+		t.Fatalf("nested scope cleaned unexpectedly: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".terraform")); err != nil {
+		t.Fatalf("terraform cleaned without deep: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".terraform", "modules", "example", "tfplan")); err != nil {
+		t.Fatalf("plan inside .terraform cleaned without deep: %v", err)
+	}
+	if !strings.Contains(out.String(), "Terraform cleanup targets") {
+		t.Fatalf("clean output=%q", out.String())
+	}
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(filepath.Join(root, "sub", ".tf-review"), link); err == nil {
+		if err := os.Rename(link, filepath.Join(root, ".tf-review")); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.Run([]string{"tfx", "clean", "--repo", root, "--yes"}); ExitCode(err) != ExitInvalidInvocation {
+			t.Fatalf("symlink clean=%v", err)
+		}
+	}
+}
+
+func TestTFXReviewAllSkipsTerraformModuleRoots(t *testing.T) {
+	a, out, state := tfxTestApp(t)
+	root := t.TempDir()
+	for _, path := range []string{"backend.tf", ".terraform/modules/copied/backend.tf"} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("terraform {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Run([]string{"tfx", "review", "--all", "--repo", root}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "=>") != 1 || !strings.Contains(out.String(), root+" => NOCHANGE") {
+		t.Fatalf("review output=%q", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, ".tf-review")); !os.IsNotExist(err) {
+		t.Fatalf("review wrote project-local output: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(state, "bb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewDir string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "tfx-review-") {
+			reviewDir = filepath.Join(state, "bb", entry.Name())
+		}
+	}
+	if reviewDir == "" {
+		t.Fatal("private review directory not created")
+	}
+	info, err := os.Stat(reviewDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("review dir mode=%v", info.Mode())
+	}
+	for _, name := range []string{"init.log", "plan.log", "plan.json"} {
+		info, err := os.Stat(filepath.Join(reviewDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode=%v", name, info.Mode())
+		}
+	}
+}
+
+func TestTFXCleanRefusesTargetReplacementDuringConfirmation(t *testing.T) {
+	a, _, _ := tfxTestApp(t)
+	root := t.TempDir()
+	plan := filepath.Join(root, "tfplan")
+	if err := os.WriteFile(plan, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.in = &replaceOnFirstRead{reader: strings.NewReader("y\n"), source: plan, replacement: []byte("new")}
+	err := a.Run([]string{"tfx", "clean", "--repo", root})
+	if ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "changed during confirmation") {
+		t.Fatalf("err=%v", err)
+	}
+	contents, readErr := os.ReadFile(plan)
+	if readErr != nil || string(contents) != "new" {
+		t.Fatalf("replacement changed: %q err=%v", contents, readErr)
+	}
+}
+
+func TestTFXCleanIgnoresCallerControlledPlanBasename(t *testing.T) {
+	a, _, _ := tfxTestApp(t)
+	a.env = append(a.env, "TFPLAN_FILE=backend.tf", "TFDESTROY_PLAN_FILE=main.tf")
+	root := t.TempDir()
+	for _, name := range []string{"backend.tf", "main.tf"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("source"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Run([]string{"tfx", "clean", "--repo", root, "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"backend.tf", "main.tf"} {
+		if contents, err := os.ReadFile(filepath.Join(root, name)); err != nil || string(contents) != "source" {
+			t.Fatalf("%s contents=%q err=%v", name, contents, err)
+		}
+	}
+}
+
+func TestClassifyTFXPlanDefaultsAndTypedRules(t *testing.T) {
+	update := []byte(`{"resource_changes":[{"address":"aws_instance.x","change":{"actions":["update"],"before":{"tags":{"Name":"old"}},"after":{"tags":{"Name":"new"}}}}]}`)
+	status, _, err := classifyTFXPlan(update, defaultTFXReviewRules())
+	if err != nil || status != "EXPECTED" {
+		t.Fatalf("status=%s err=%v", status, err)
+	}
+	create := []byte(`{"resource_changes":[{"address":"aws_instance.x","change":{"actions":["create"],"before":null,"after":{"name":"new"}}}]}`)
+	status, _, err = classifyTFXPlan(create, defaultTFXReviewRules())
+	if err != nil || status != "REVIEW" {
+		t.Fatalf("status=%s err=%v", status, err)
+	}
+	status, _, err = classifyTFXPlan(create, tfxReviewRules{AllowActions: []string{"create"}, AllowPaths: nil, Match: "prefix"})
+	if err != nil || status != "EXPECTED" {
+		t.Fatalf("configured status=%s err=%v", status, err)
 	}
 }

@@ -105,6 +105,39 @@ func TestPortInspectPrefersSSAndNeverInvokesKill(t *testing.T) {
 	}
 }
 
+func TestPortKillReobservesExactSortedPIDsAndUsesSIGTERM(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	a.lookPath = func(name string) (string, error) { return "/test/" + name, nil }
+	var requests [][]string
+	a.command = outputCommand("22\n11\n22\n", &requests)
+	if err := a.Run([]string{"port", "kill", "4321", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"lsof", "-nP", "-t", "-i", ":4321"},
+		{"lsof", "-nP", "-t", "-i", ":4321"},
+		{"kill", "-TERM", "--", "11", "22"},
+	}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%q want=%q", requests, want)
+	}
+	if !strings.Contains(out.String(), "11, 22") {
+		t.Fatalf("out=%q", out.String())
+	}
+}
+
+func TestPortKillCancellationDoesNotMutate(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	a.in = strings.NewReader("n\n")
+	a.lookPath = func(name string) (string, error) { return "/test/" + name, nil }
+	var requests [][]string
+	a.command = outputCommand("99\n", &requests)
+	err := a.Run([]string{"port", "kill", "4321"})
+	if ExitCode(err) != ExitInvalidInvocation || len(requests) != 1 {
+		t.Fatalf("err=%v requests=%q", err, requests)
+	}
+}
+
 func TestPortAndGitHelpAreAvailable(t *testing.T) {
 	for _, command := range [][]string{{"git", "--help"}, {"port", "--help"}, {"tm", "--help"}} {
 		a, out, _, _ := testApp(t)

@@ -39,8 +39,28 @@ cat > "$TEST_ROOT/bin/file" <<EOF
 #!/bin/sh
 echo '$file_kind'
 EOF
-chmod 755 "$TEST_ROOT/bin/curl" "$TEST_ROOT/bin/file"
+cat > "$TEST_ROOT/bin/gh" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  auth) exit 0;;
+  release)
+    case "${2:-}" in
+      view) printf '%s\n' 'v1.2.3'; exit 0;;
+      download)
+        out=''
+        while [ "$#" -gt 0 ]; do
+          case "$1" in --dir) out=$2; shift 2;; *) shift;; esac
+        done
+        cp "$BB_TEST_ASSETS/$BB_TEST_ARCHIVE" "$out/$BB_TEST_ARCHIVE"
+        cp "$BB_TEST_ASSETS/checksums.txt" "$out/checksums.txt"
+        exit 0;;
+    esac;;
+esac
+exit 1
+EOF
+chmod 755 "$TEST_ROOT/bin/curl" "$TEST_ROOT/bin/file" "$TEST_ROOT/bin/gh"
 export PATH="$TEST_ROOT/bin:$PATH" BB_TEST_ASSETS="$TEST_ROOT/assets" BB_DOWNLOAD_BASE='https://example.invalid/release'
+export BB_TEST_ARCHIVE="$archive"
 
 "$ROOT/scripts/install.sh" --version "$version" --install-dir "$XDG_BIN_HOME"
 [ -x "$XDG_BIN_HOME/bb" ]
@@ -58,4 +78,11 @@ if "$ROOT/scripts/install.sh" --version "$version" --install-dir "$XDG_BIN_HOME"
 "$ROOT/scripts/install.sh" --version "$version" --install-dir "$XDG_BIN_HOME" --migrate
 [ -L "$XDG_BIN_HOME/bb" ] && exit 1
 [ "$("$XDG_BIN_HOME/bb" version)" = "$version" ]
+rm -f "$XDG_BIN_HOME/bb"
+"$ROOT/scripts/install.sh" --version "$version" --install-dir "$XDG_BIN_HOME" --github-cli
+[ "$("$XDG_BIN_HOME/bb" version)" = "$version" ]
+rm -f "$XDG_BIN_HOME/bb"
+"$ROOT/scripts/install.sh" --install-dir "$XDG_BIN_HOME" --github-cli
+[ "$("$XDG_BIN_HOME/bb" version)" = "$version" ]
+"$ROOT/scripts/install.sh" --github-cli --dry-run --install-dir "$XDG_BIN_HOME" >/dev/null
 printf '%s\n' 'installer tests passed'

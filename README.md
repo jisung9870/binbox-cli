@@ -1,6 +1,6 @@
-# binbox-next
+# binbox-cli
 
-`binbox-next` is the prototype of the installable, single-binary `bb` CLI. It
+`binbox-cli` is the installable, single-binary `bb` CLI. It
 consolidates stateful local workspace behavior in Go while leaving live agent,
 worktree, scheduler, and DAG ownership with Orca and editor configuration with
 the separate `lazyvim-config` repository.
@@ -57,7 +57,14 @@ content-addressed recovery copy; the legacy source remains untouched.
 
 Release assets are produced with `scripts/release.sh`. The verified installer
 defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
-`--migrate` for protected existing targets. See [operations](docs/operations.md).
+`--migrate` for protected existing targets. Private releases are downloaded
+through the existing authenticated GitHub CLI session:
+
+```sh
+scripts/install.sh --github-cli --version 0.1.0
+```
+
+See [operations](docs/operations.md) for the release and trust contract.
 
 See [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 and [decision log](docs/decision-log.md). The legacy and installer evidence is

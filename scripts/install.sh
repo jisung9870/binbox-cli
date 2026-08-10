@@ -9,14 +9,17 @@ INSTALL_DIR=${XDG_BIN_HOME:-"${HOME:?HOME must be set}/.local/bin"}
 DRY_RUN=false
 FORCE=false
 MIGRATE=false
+GITHUB_CLI=false
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--version VERSION] [--install-dir DIR] [--dry-run] [--force] [--migrate]
+Usage: install.sh [--version VERSION] [--install-dir DIR] [--dry-run] [--force] [--migrate] [--github-cli]
 
 Install a verified bb release into a user-owned directory.  --force permits
 replacement of a regular file or non-checkout symlink; --migrate permits
-replacement of a symlink into a Git checkout.  No option uses sudo.
+replacement of a symlink into a Git checkout.  --github-cli downloads a private
+release through an already-authenticated gh CLI; it never reads or stores a
+token. No option uses sudo.
 EOF
 }
 die() { printf '%s\n' "install: $*" >&2; exit 1; }
@@ -29,6 +32,7 @@ while [ "$#" -gt 0 ]; do
     --dry-run) DRY_RUN=true; shift;;
     --force) FORCE=true; shift;;
     --migrate) MIGRATE=true; shift;;
+    --github-cli) GITHUB_CLI=true; shift;;
     -h|--help) usage; exit 0;;
     *) die "unknown option: $1";;
   esac
@@ -69,13 +73,26 @@ link_target() {
   target=$(readlink "$1") || return 1
   case "$target" in /*) printf '%s\n' "$target";; *) printf '%s/%s\n' "$(unset CDPATH; cd -- "$(dirname "$1")" && pwd -P)" "$target";; esac
 }
+require_github_cli() {
+  command -v gh >/dev/null 2>&1 || die '--github-cli requires gh on PATH'
+  gh auth status -h github.com >/dev/null 2>&1 || die '--github-cli requires an authenticated GitHub CLI (run: gh auth login)'
+}
 
 if [ -z "$VERSION" ]; then
-  latest_url="https://api.github.com/repos/$REPOSITORY/releases/latest"
   if [ "$DRY_RUN" = true ]; then
-    note "dry-run: would resolve latest version from $latest_url"
+    if [ "$GITHUB_CLI" = true ]; then
+      note "dry-run: would resolve latest version through authenticated gh for $REPOSITORY"
+    else
+      note "dry-run: would resolve latest version from https://api.github.com/repos/$REPOSITORY/releases/latest"
+    fi
     VERSION='latest'
+  elif [ "$GITHUB_CLI" = true ]; then
+    require_github_cli
+    VERSION=$(gh release view --repo "$REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+    VERSION=${VERSION#v}
+    [ -n "$VERSION" ] || die 'could not resolve the latest private release; pass --version for an explicit release'
   else
+    latest_url="https://api.github.com/repos/$REPOSITORY/releases/latest"
     latest=$(mktemp "${TMPDIR:-/tmp}/bb-latest.XXXXXX")
     trap 'rm -f "$latest"' EXIT
     fetch "$latest_url" "$latest" || die 'could not resolve the latest release; pass --version for an explicit release'
@@ -94,7 +111,11 @@ destination="$INSTALL_DIR/$PROGRAM"
 
 note "target: $OS/$ARCH, version: $VERSION"
 if [ "$DRY_RUN" = true ]; then
-  note "dry-run: would download $archive_url and verify $checksums_url"
+  if [ "$GITHUB_CLI" = true ]; then
+    note "dry-run: would download $archive and checksums.txt through authenticated gh release v$VERSION"
+  else
+    note "dry-run: would download $archive_url and verify $checksums_url"
+  fi
   note "dry-run: would atomically install $destination"
   exit 0
 fi
@@ -122,8 +143,16 @@ fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/bb-install.XXXXXX")
 cleanup() { rm -rf "$work"; }
 trap cleanup EXIT HUP INT TERM
-fetch "$archive_url" "$work/$archive" || die "download failed: $archive_url"
-fetch "$checksums_url" "$work/checksums.txt" || die "download failed: $checksums_url"
+if [ "$GITHUB_CLI" = true ]; then
+  require_github_cli
+  gh release download "v$VERSION" --repo "$REPOSITORY" \
+    --pattern "$archive" --pattern checksums.txt --dir "$work" || die "private release download failed: v$VERSION"
+  [ -f "$work/$archive" ] || die "private release did not contain $archive"
+  [ -f "$work/checksums.txt" ] || die 'private release did not contain checksums.txt'
+else
+  fetch "$archive_url" "$work/$archive" || die "download failed: $archive_url"
+  fetch "$checksums_url" "$work/checksums.txt" || die "download failed: $checksums_url"
+fi
 expected=$(awk -v f="$archive" '$2 == f || $2 == "*" f {print $1; exit}' "$work/checksums.txt")
 [ -n "$expected" ] || die "checksum entry missing for $archive"
 actual=$(sha256_of "$work/$archive")

@@ -69,7 +69,6 @@ stable public contract.
 - Exact `lazyvim-config` identity marker, managed clone path, and consent UX.
 - Compatibility duration for legacy `bb tm`, aliases, and sessionizer fallback.
 - Whether deferred secrets and typed environment presets ever belong in `bb`.
-- Long-term release signing policy beyond GitHub provenance attestations.
 
 Each deferred item that breaks a command/data contract, stores credentials,
 mutates MCP, or requires legacy-repository writes is a decision gate, not an
@@ -107,3 +106,17 @@ Why binbox owns it: these are bb's public API and bb-owned XDG state. Why Orca
 does not: no lifecycle object is created or controlled. Why LazyVim does not:
 it remains a consumer of the shared sessionizer compatibility grammar, while
 the source file stays machine-local and untouched.
+
+## 2026-08-10 — Private release trust boundary
+
+Decision: private releases are installed through an already-authenticated
+GitHub CLI session. The installer never reads or persists its token. GitHub
+repository access control, that authenticated session, and TLS are the approved
+trust boundary for this single-user private repository. The co-hosted SHA-256
+manifest detects corruption but is not treated as an independent signature.
+Public repositories additionally receive GitHub build provenance attestations.
+
+Reason: creating a signing credential or changing repository visibility would
+cross an explicit credential/ownership decision gate. Release production is
+still fail-closed: it requires a clean checkout, matching commit metadata, and
+an exact annotated version tag.

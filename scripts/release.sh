@@ -10,6 +10,31 @@ SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEA
 BUILD_TIME=${BUILD_TIME:-$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$SOURCE_DATE_EPOCH" +%Y-%m-%dT%H:%M:%SZ)}
 
 case "$VERSION" in ''|*[!0-9A-Za-z._-]*) echo "invalid VERSION: $VERSION" >&2; exit 2;; esac
+
+# A release archive must describe one committed, annotated tag.  Local
+# reproducibility experiments may opt out deliberately, but CI/release use
+# must never set this escape hatch.
+if [ "${ALLOW_UNTAGGED_BUILD:-}" != 1 ]; then
+  HEAD=$(git -C "$ROOT" rev-parse --verify HEAD)
+  [ "$COMMIT" = "$HEAD" ] || {
+    echo "COMMIT must equal HEAD for a release (COMMIT=$COMMIT, HEAD=$HEAD)" >&2
+    exit 2
+  }
+  [ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ] || {
+    echo "release checkout must be clean" >&2
+    exit 2
+  }
+  TAG="v$VERSION"
+  [ "$(git -C "$ROOT" cat-file -t "refs/tags/$TAG" 2>/dev/null || true)" = tag ] || {
+    echo "release requires annotated tag $TAG" >&2
+    exit 2
+  }
+  git -C "$ROOT" tag --points-at "$HEAD" | grep -Fx "$TAG" >/dev/null || {
+    echo "release tag $TAG must point at HEAD" >&2
+    exit 2
+  }
+fi
+
 mkdir -p "$DIST"
 rm -f "$DIST"/bb_*.tar.gz "$DIST"/checksums.txt
 TMP_PARENT="$ROOT/.tmp"

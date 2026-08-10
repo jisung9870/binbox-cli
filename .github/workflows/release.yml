@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # A manual rerun can only publish an already-created release tag.
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -28,11 +30,11 @@ jobs:
       - name: Build reproducible release archives
         env:
           VERSION: ${{ inputs.version || github.ref_name }}
-          COMMIT: ${{ github.sha }}
         run: |
           VERSION="${VERSION#v}"
+          COMMIT=$(git rev-parse HEAD)
           SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
-          export VERSION SOURCE_DATE_EPOCH
+          export VERSION COMMIT SOURCE_DATE_EPOCH
           scripts/release.sh
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@v0
@@ -48,13 +50,14 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ]; then TAG="v${INPUT_VERSION}"; fi
+          TARGET_COMMIT=$(git rev-parse HEAD)
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/*.tar.gz dist/checksums.txt dist/*.spdx.json --clobber
           else
             PRERELEASE_FLAG=""
             case "$TAG" in *-*) PRERELEASE_FLAG="--prerelease";; esac
             gh release create "$TAG" dist/*.tar.gz dist/checksums.txt dist/*.spdx.json \
-              --target "$GITHUB_SHA" --generate-notes $PRERELEASE_FLAG
+              --target "$TARGET_COMMIT" --generate-notes $PRERELEASE_FLAG
           fi
       - name: Attest release artifacts
         if: github.event.repository.private == false

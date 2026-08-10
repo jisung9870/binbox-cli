@@ -10,10 +10,15 @@ an SPDX SBOM. GitHub build provenance attestation is also emitted when the
 repository is public; GitHub does not support attestations for user-owned
 private repositories.
 
+Release builds refuse a dirty checkout, a `COMMIT` other than `HEAD`, or
+anything except an exact annotated `vVERSION` tag pointing at `HEAD`.
+`ALLOW_UNTAGGED_BUILD=1` exists solely for local reproducibility and installer
+fixture tests; it must not be used for a release.
+
 Local verification:
 
 ```sh
-VERSION=0.1.0 COMMIT=$(git rev-parse HEAD) \
+ALLOW_UNTAGGED_BUILD=1 VERSION=0.1.0 COMMIT=$(git rev-parse HEAD) \
   SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) scripts/release.sh
 (cd dist && sha256sum -c checksums.txt)
 ```
@@ -24,6 +29,22 @@ VERSION=0.1.0 COMMIT=$(git rev-parse HEAD) \
 scripts/install.sh --version 0.1.0 --dry-run
 scripts/install.sh --version 0.1.0
 ```
+
+For this private repository, use the authenticated GitHub CLI mode instead of
+unauthenticated release URLs:
+
+```sh
+gh auth status
+scripts/install.sh --github-cli --version 0.1.0
+```
+
+This mode delegates download authorization to `gh`; the installer neither
+reads nor stores a GitHub token. GitHub repository ACLs, the authenticated
+`gh` session, and TLS are the private-release trust boundary. `checksums.txt`
+detects accidental corruption or an incomplete download, but is not an
+independent signature because it is fetched from the same release. Public
+releases add GitHub build provenance attestation; private user-owned releases
+cannot use that GitHub attestation service.
 
 The installer selects the host OS/architecture, downloads the archive and
 checksum manifest, verifies SHA-256 and the staged binary's reported version,
@@ -36,6 +57,7 @@ Installer contract tests use only `.tmp/` under this repository:
 
 ```sh
 scripts/test-install.sh
+scripts/test-release-guard.sh
 ```
 
 ## Sessionizer migration

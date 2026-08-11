@@ -18,8 +18,8 @@ forwarded through a checkout or embedded shell script.
 | `portcheck` | `bb port inspect`; kill prints, confirms, and re-observes the exact sorted PID set before SIGTERM | Migrated |
 | `tvx` | Direct Trivy adapter with fixed CI/report policy and guarded node collector | Migrated |
 | `kx`, `assm` | Explicit context/namespace/pod/instance arguments, direct kubectl/AWS argv, validated ports and JSON SSM parameters | Migrated with explicit-argument contract |
-| `assume profile` | `bb profile` manages config-only SSO profiles; AWS CLI owns login/cache/credentials | Migrated with narrower SSO-only contract |
-| `wenv` | Strict non-executing import into declarative XDG JSON; shell wrapper compatibility | Migrated |
+| `assume`, `assume profile` | AWS CLI-owned credential resolution plus current-shell/unset/current/exec UX; `bb profile` manages config-only SSO profiles | Migrated without bb credential cache or static/role profile authoring |
+| `wenv` | Strict non-executing import into declarative XDG JSON; show/apply preview and shell wrapper compatibility | Migrated; implicit kubectl mutation retired |
 | `sec` | Existing age key/ciphertext format with in-memory CRUD and ciphertext backups | Migrated; full plaintext editor retired |
 | `agents` | Orca is the lifecycle owner | Retired from bb |
 | `dx`, `md2jira`, `bb new/upgrade/check` | Checkout/developer/environment-specific behavior | Retire/archive |

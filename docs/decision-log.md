@@ -162,7 +162,7 @@ Why Orca does not: none creates or manages an agent, worktree, scheduler, DAG,
 or terminal lifecycle. Why LazyVim does not: editor configuration may invoke
 the commands but does not own provider state or mutation policy.
 
-Credential-bearing `assume` is not reproduced: AWS CLI continues to own SSO
+At this stage credential-bearing `assume` was not reproduced: AWS CLI continued to own SSO
 login, credentials, and cache. Executable legacy `wenv` syntax remains retired;
 the declarative non-secret subset and the existing age ciphertext format are
 implemented by the contracts recorded below.
@@ -187,12 +187,26 @@ selector rollout.
 
 Decision: `bb shell init zsh` prints a checkout-independent wrapper. It invokes
 the binary directly for all commands and evaluates stdout only for successful
-environment-selection forms of `bb wenv`; management commands are never
-evaluated. Shell startup may evaluate this generated output but does not source
-the legacy binbox repository.
+environment-selection forms of `bb wenv` and `bb assume`; management commands
+are never evaluated. Shell startup may evaluate this generated output but does
+not source the legacy binbox repository.
 
 Why binbox owns it: applying environment variables to a parent shell requires a
 small shell boundary, and generating it from the installed binary keeps that
 boundary versioned with the CLI. Why Orca does not: no agent or worktree
 lifecycle is involved. Why LazyVim does not: this is terminal shell behavior,
 not editor configuration.
+
+## 2026-08-11 — AWS CLI-owned assume and confirmed wenv apply
+
+Decision: `bb assume` restores profile selection, current-shell application,
+unset, current identity, and scoped exec by delegating credential resolution to
+`aws configure export-credentials`. bb does not parse SSO cache files, call SSO
+role APIs directly, or keep a credential cache. Credential-bearing stdout is
+refused when attached directly to a terminal and is captured only by the
+generated shell wrapper; `assume exec` keeps credentials in one child process.
+
+`bb wenv show` is inspection-only. `bb wenv apply` renders the current-to-target
+environment diff on stderr and emits eval-safe stdout only after confirmation.
+Legacy implicit `kubectl config` mutation remains retired: `KUBE_CONTEXT` and
+`KUBE_NAMESPACE` are declarative environment values.

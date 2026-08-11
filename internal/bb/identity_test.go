@@ -153,7 +153,7 @@ func TestCommandSelectorsReturnStableValuesWithoutStdout(t *testing.T) {
 			}
 		}
 		a.in = strings.NewReader("2\n")
-		if err := a.Run([]string{"wenv"}); err != nil {
+		if err := a.Run([]string{"wenv", "apply", "--yes"}); err != nil {
 			t.Fatal(err)
 		}
 		if got, want := stdout.String(), "export TARGET='zeta'\n"; got != want {
@@ -235,6 +235,54 @@ func TestWenvImportRejectsExecutableSyntaxAndExportsSafely(t *testing.T) {
 	}
 	if _, e := parseLegacyWenv(unterminated); ExitCode(e) != ExitInvalidInvocation {
 		t.Fatalf("unterminated EXPORTS err=%v", e)
+	}
+}
+
+func TestWenvShowAndConfirmedApply(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	if err := a.Run([]string{"wenv", "set", "dev", "AWS_PROFILE=dev", "AWS_REGION=ap-northeast-2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run([]string{"wenv", "show", "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "AWS_PROFILE='dev'\nAWS_REGION='ap-northeast-2'\n"; got != want {
+		t.Fatalf("show=%q, want %q", got, want)
+	}
+
+	out.Reset()
+	a.in = strings.NewReader("n\n")
+	if err := a.Run([]string{"wenv", "apply", "dev"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("cancel err=%v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("cancel emitted eval output: %q", out.String())
+	}
+
+	stderr.Reset()
+	a.in = strings.NewReader("y\n")
+	if err := a.Run([]string{"wenv", "apply", "dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "export AWS_PROFILE='dev'\nexport AWS_REGION='ap-northeast-2'\n"; got != want {
+		t.Fatalf("apply=%q, want %q", got, want)
+	}
+	if !strings.Contains(stderr.String(), `AWS_PROFILE: "" -> "dev"`) || !strings.Contains(stderr.String(), "Apply this environment? [y/N]") {
+		t.Fatalf("preview=%q", stderr.String())
+	}
+
+	out.Reset()
+	stderr.Reset()
+	if err := a.Run([]string{"wenv", "apply", "dev", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "export AWS_PROFILE='dev'\nexport AWS_REGION='ap-northeast-2'\n"; got != want {
+		t.Fatalf("non-interactive apply=%q, want %q", got, want)
+	}
+	if strings.Contains(stderr.String(), "Apply this environment? [y/N]") {
+		t.Fatalf("--yes prompted for confirmation: %q", stderr.String())
 	}
 }
 

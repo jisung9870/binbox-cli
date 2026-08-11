@@ -12,9 +12,9 @@ an installed Go binary with typed commands and explicit ownership boundaries.
 | tmux | Shell scripts and basename-oriented sessions | Stable project IDs, explicit session operations, direct tmux argv | Existing sessions remain external; new sessions avoid same-name collisions |
 | Git | `gx` shell helpers and interactive selection | Typed `git` reads and explicit `gx` mutations | Branch targets are explicit; stale interactive mutation is removed |
 | Kubernetes | fzf-driven context/pod selection | Explicit `kx` targets and validated ports | More typing, deterministic automation, safer mutations |
-| AWS assume | Shell environment mutation around profile selection | `bb profile` manages SSO config; `aws sso login` remains AWS-owned | No credentials or SSO cache are stored by bb |
+| AWS assume | Shell resolves SSO/role credentials and keeps a binbox cache | `bb assume` delegates credential resolution/cache/login state to AWS CLI | Current-shell, unset, current, and scoped exec UX return without a bb credential cache |
 | AWS SSM | Shell adapter | Typed `assm` adapter | Explicit instance and port parameters |
-| wenv | Executable shell presets sourced/evaluated | Allowlisted declarative JSON; legacy input is parsed without execution | Arbitrary shell syntax and secret-like keys are rejected |
+| wenv | Executable shell presets sourced/evaluated, with implicit kubectl mutation | Allowlisted declarative JSON with explicit show/apply preview and confirmation | Arbitrary shell syntax and secret-like keys are rejected; Kubernetes values are exported but do not mutate kubectl config |
 | sec | age-encrypted JSON with shell tooling/editor flow | Same key/ciphertext format with in-memory/piped CRUD | Existing data stays readable; full plaintext editor flow is retired |
 | Terraform | Shell guards and session files | Typed direct calls with account/scope/expiry/plan checks and immutable plan snapshot | Apply/destroy require stronger identity confirmation |
 | Trivy | Shell policy wrapper | Typed direct adapter with fixed policy flags | Policy flags cannot be silently overridden |

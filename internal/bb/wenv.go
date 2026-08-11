@@ -3,6 +3,7 @@ package bb
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -36,7 +37,9 @@ func (a *App) loadWenv() (wenvStore, string, error) {
 func (a *App) wenv(args []string) error {
 	if helpRequested(args) {
 		_, e := fmt.Fprint(a.err, `Usage:
-  bb wenv export [name]       Print eval-safe exports; select by number when omitted
+  bb wenv show <name>         Print the stored, non-secret values without applying
+  bb wenv apply [name] [--yes] Preview, confirm, and print eval-safe exports
+  bb wenv export [name]       Print eval-safe exports without applying in the shell wrapper
   bb wenv list|current
   bb wenv set <name> KEY=VALUE...
   bb wenv rm <name> [--yes]
@@ -45,9 +48,13 @@ func (a *App) wenv(args []string) error {
 		return e
 	}
 	if len(args) == 0 {
-		return a.wenvExport(nil)
+		return a.wenvApply(nil)
 	}
 	switch args[0] {
+	case "show":
+		return a.wenvShow(args[1:])
+	case "apply":
+		return a.wenvApply(args[1:])
 	case "export":
 		return a.wenvExport(args[1:])
 	case "list":
@@ -61,7 +68,7 @@ func (a *App) wenv(args []string) error {
 	case "import":
 		return a.wenvImport(args[1:])
 	default:
-		return a.wenvExport(args)
+		return a.wenvApply(args)
 	}
 }
 func (a *App) chooseWenv(s wenvStore) (string, error) {
@@ -95,6 +102,83 @@ func (a *App) wenvList(args []string) error {
 	return nil
 }
 func shellQuote(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\"'\"'") + "'" }
+
+func sortedWenvKeys(vars map[string]string) []string {
+	keys := make([]string, 0, len(vars))
+	for key := range vars {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (a *App) namedWenv(name string) (map[string]string, error) {
+	s, _, err := a.loadWenv()
+	if err != nil {
+		return nil, err
+	}
+	vars, ok := s.Presets[name]
+	if !ok {
+		return nil, invalid("wenv preset not found: " + name)
+	}
+	return vars, nil
+}
+
+func (a *App) wenvShow(args []string) error {
+	if len(args) != 1 {
+		return usage("wenv show", "<name>")
+	}
+	vars, err := a.namedWenv(args[0])
+	if err != nil {
+		return err
+	}
+	for _, key := range sortedWenvKeys(vars) {
+		if _, err := fmt.Fprintf(a.out, "%s=%s\n", key, shellQuote(vars[key])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) wenvApply(args []string) error {
+	args, yes := takeFlag(args, "--yes")
+	if len(args) > 1 {
+		return usage("wenv apply", "[name] [--yes]")
+	}
+	s, _, err := a.loadWenv()
+	if err != nil {
+		return err
+	}
+	name := ""
+	if len(args) == 1 {
+		name = args[0]
+	} else {
+		name, err = a.chooseWenv(s)
+		if err != nil || name == "" {
+			return err
+		}
+	}
+	vars, ok := s.Presets[name]
+	if !ok {
+		return invalid("wenv preset not found: " + name)
+	}
+	fmt.Fprintf(a.err, "Environment %s:\n", name)
+	for _, key := range sortedWenvKeys(vars) {
+		fmt.Fprintf(a.err, "  %s: %q -> %q\n", key, a.getenv(key), vars[key])
+	}
+	if !yes {
+		fmt.Fprint(a.err, "Apply this environment? [y/N] ")
+		answer, readErr := bufio.NewReader(a.in).ReadString('\n')
+		if readErr != nil && strings.TrimSpace(answer) == "" {
+			return fmt.Errorf("read wenv confirmation: %w", readErr)
+		}
+		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+			return invalid("wenv apply cancelled")
+		}
+	}
+	return writeWenvExports(a.out, vars)
+}
+
 func (a *App) wenvExport(args []string) error {
 	if len(args) > 1 {
 		return usage("wenv export", "[name]")
@@ -119,13 +203,14 @@ func (a *App) wenvExport(args []string) error {
 	if !ok {
 		return invalid("wenv preset not found: " + name)
 	}
-	keys := make([]string, 0, len(vars))
-	for k := range vars {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(a.out, "export %s=%s\n", k, shellQuote(vars[k]))
+	return writeWenvExports(a.out, vars)
+}
+
+func writeWenvExports(out io.Writer, vars map[string]string) error {
+	for _, key := range sortedWenvKeys(vars) {
+		if _, err := fmt.Fprintf(out, "export %s=%s\n", key, shellQuote(vars[key])); err != nil {
+			return err
+		}
 	}
 	return nil
 }

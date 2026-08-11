@@ -63,9 +63,12 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    review output is retained only in fresh owner-only XDG state directories;
    cleanup ignores caller-controlled artifact basenames.
 11. **Credential/data tranche (implemented with external ownership).** AWS CLI
-   owns SSO login, credentials, and cache while `bb profile` changes only
-   config SSO profiles. `wenv` imports an allowlisted non-executable subset into
-   XDG JSON and rejects secret-like variables. `sec` preserves the existing age
+   owns SSO login, credential resolution, and cache while `bb profile` changes
+   only config SSO profiles. `bb assume` restores current-shell/unset/current
+   and scoped exec behavior by delegating to `aws configure export-credentials`;
+   bb never stores those credentials. `wenv` imports an allowlisted
+   non-executable subset into XDG JSON, rejects secret-like variables, and
+   previews changes before confirmed apply. `sec` preserves the existing age
    ciphertext/key format without plaintext files or journal values. bb no
    longer depends on fzf.
 12. **Personal-device cutover (implemented).** The installed binary owns the

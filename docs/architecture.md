@@ -42,7 +42,8 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb tm sessions --json` | Preserves legacy typed tmux session fields | Session-level observation only; no panes, commands, or scrollback |
 | `bb tm [--project <id>]` | Selects with bb's embedded fuzzy selector (numbered fallback), then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
 | `bb profile ...` | Manages AWS SSO profiles and delegates login | Writes only `~/.aws/config` atomically with backups; credentials/cache remain AWS CLI-owned |
-| `bb wenv ...` | Imports an allowlisted non-executable legacy subset and exports/runs declarative environments | XDG JSON, secret-like key rejection, embedded selector with numbered fallback |
+| `bb assume ...` | Restores current-shell and scoped-command credential UX through AWS CLI resolution | No bb credential parsing/cache; stdout credentials are refused on a terminal and evaluated only through generated shell integration |
+| `bb wenv ...` | Imports an allowlisted non-executable legacy subset and previews/applies declarative environments | XDG JSON, secret-like key rejection, confirmation, embedded selector with numbered fallback |
 | `bb sec ...` | Uses the existing age-encrypted JSON/key format | Plaintext remains in memory/pipes; ciphertext mutation is locked, atomic, and backed up |
 | `bb tm attach/kill/dirs/layout` | Operates on an exact tmux session or bb project registry entry; layouts are fixed Go-owned recipes | Destructive actions show targets and re-observe before direct tmux argv; no legacy directory-file writes |
 | `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |

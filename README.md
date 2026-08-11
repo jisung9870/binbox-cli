@@ -46,12 +46,16 @@ bb assm shell i-0123456789abcdef0
 # AWS SSO, declarative environments, and the existing age store.
 bb profile add dev --sso-session corp --account-id 123456789012 --role-name Admin
 bb profile login dev
+bb assume dev
+bb assume current
+bb assume exec dev -- aws sts get-caller-identity
 bb wenv import --check
 bb wenv import --apply
-bb wenv dev
+bb wenv show dev
+bb wenv apply dev
 printf '%s' "$TOKEN" | bb sec set github token
 
-# Checkout-independent zsh integration. Add this to ~/.zshrc so `bb wenv dev`
+# Checkout-independent zsh integration. Add this to ~/.zshrc so `bb wenv apply dev`
 # changes the current shell without sourcing the legacy binbox repository.
 eval "$(bb shell init zsh)"
 
@@ -111,7 +115,7 @@ defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
 through the existing authenticated GitHub CLI session:
 
 ```sh
-scripts/install.sh --github-cli --version 0.5.2
+scripts/install.sh --github-cli --version 0.6.0
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.

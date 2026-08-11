@@ -51,7 +51,7 @@ func TestShellInitZshIsCheckoutIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	for _, want := range []string{"bb()", "command bb", `eval "$_bb_output"`, `list|current|set|rm|import`} {
+	for _, want := range []string{"bb()", "command bb", `eval "$_bb_output"`, `list|current|show|export|set|rm|import`, `"${1:-}" == "assume"`, `list|current|exec|profile`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("shell init missing %q:\n%s", want, got)
 		}
@@ -426,7 +426,7 @@ func TestRunSubcommandJSONErrorUsesEnvelope(t *testing.T) {
 func TestSubcommandHelp(t *testing.T) {
 	commands := [][]string{
 		{"version"}, {"doctor"}, {"setup"}, {"shell"}, {"project"}, {"session"}, {"tm"},
-		{"kx"}, {"assm"}, {"profile"}, {"wenv"}, {"sec"}, {"port"}, {"tfx"}, {"tvx"},
+		{"kx"}, {"assm"}, {"assume"}, {"profile"}, {"wenv"}, {"sec"}, {"port"}, {"tfx"}, {"tvx"},
 		{"run"}, {"mcp"}, {"export"}, {"orca"},
 	}
 	for _, command := range commands {

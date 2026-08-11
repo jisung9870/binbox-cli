@@ -79,6 +79,8 @@ func (a *App) dispatch(args []string) error {
 		return a.kx(args[1:])
 	case "assm":
 		return a.assm(args[1:])
+	case "assume":
+		return a.assume(args[1:])
 	case "profile":
 		return a.profile(args[1:])
 	case "wenv":
@@ -139,8 +141,9 @@ Commands:
   gx ...                 Explicit Git workflow compatibility adapter
   kx ...                 Explicit kubectl workflow compatibility adapter
   assm ...               Explicit AWS SSM session adapter
+  assume ...             Apply AWS CLI-resolved credentials to the current shell
   profile ...            Manage AWS CLI SSO profiles (config only)
-  wenv ...               Select and run declarative environment presets
+  wenv ...               Inspect and apply declarative environment presets
   sec ...                Manage the existing age-encrypted secret store
   port inspect|kill ...  Inspect a local port or terminate an exact re-observed PID set
   tfx ...                 Guarded Terraform compatibility workflow

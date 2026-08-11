@@ -3,6 +3,7 @@ package bb
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 )
@@ -37,11 +38,11 @@ func (a *App) setup(args []string) error {
 }
 
 func (a *App) parseNvimSetup(args []string) (NvimSetupRequest, bool, error) {
-	configRoot, _, err := a.paths()
+	configHome, err := a.nvimConfigHome()
 	if err != nil {
 		return NvimSetupRequest{}, false, err
 	}
-	request := NvimSetupRequest{XDGConfigHome: filepath.Dir(configRoot)}
+	request := NvimSetupRequest{XDGConfigHome: configHome}
 	dryRun := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -83,17 +84,32 @@ func (a *App) parseNvimSetup(args []string) (NvimSetupRequest, bool, error) {
 	return request, dryRun, nil
 }
 
+func (a *App) nvimConfigHome() (string, error) {
+	if configHome := a.getenv("XDG_CONFIG_HOME"); configHome != "" {
+		return configHome, nil
+	}
+	home := a.getenv("HOME")
+	if home == "" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("find home directory for nvim config: %w", err)
+		}
+	}
+	return filepath.Join(home, ".config"), nil
+}
+
 func (a *App) doctorNvim(args []string) error {
 	if helpRequested(args) {
 		_, err := fmt.Fprintln(a.out, "Usage: bb doctor nvim --config-dir <path> [--repository <url>] [--revision <commit>] [--lockfile-sha256 <sha>] [--headless] [--json]")
 		return err
 	}
 	args, jsonMode := takeFlag(args, "--json")
-	configRoot, _, err := a.paths()
+	configHome, err := a.nvimConfigHome()
 	if err != nil {
 		return err
 	}
-	options := NvimDoctorOptions{XDGConfigHome: filepath.Dir(configRoot)}
+	options := NvimDoctorOptions{XDGConfigHome: configHome}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--config-dir", "--repository", "--revision", "--lockfile-sha256":

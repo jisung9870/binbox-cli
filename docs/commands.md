@@ -34,6 +34,7 @@ provider state; `bb doctor` reports whether they are available.
 - AWS profiles: the AWS CLI's existing `~/.aws/config`
 - Secret store: the existing binbox age key/ciphertext paths
 - LazyVim configuration: a separate `lazyvim-config` checkout selected by path
+  and linked under `$XDG_CONFIG_HOME/nvim`, or `~/.config/nvim` when XDG is unset
 
 Writes use owner-only files, locks, atomic replacement, and concurrent-change
 checks where applicable. Destructive commands require explicit targets and

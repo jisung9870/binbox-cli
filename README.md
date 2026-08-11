@@ -111,7 +111,7 @@ defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
 through the existing authenticated GitHub CLI session:
 
 ```sh
-scripts/install.sh --github-cli --version 0.5.1
+scripts/install.sh --github-cli --version 0.5.2
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.

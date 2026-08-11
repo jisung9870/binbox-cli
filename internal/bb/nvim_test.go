@@ -174,6 +174,20 @@ func TestNvimCLIPlanApplyAndDoctor(t *testing.T) {
 	}
 }
 
+func TestNvimCLIUsesNeovimConfigFallbackWhenXDGIsUnset(t *testing.T) {
+	home := t.TempDir()
+	config := nvimConfig(t)
+	out := new(strings.Builder)
+	a := New(out, new(strings.Builder), []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")})
+	if err := a.Run([]string{"setup", "nvim", "--config-dir", config, "--dry-run", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".config", "nvim")
+	if !strings.Contains(out.String(), `"path":"`+want+`"`) {
+		t.Fatalf("plan does not target Neovim's fallback %q: %s", want, out.String())
+	}
+}
+
 func TestSetupRejectsUnknownSubcommand(t *testing.T) {
 	a, _, _, _ := testApp(t)
 	err := a.Run([]string{"setup", "unknown"})

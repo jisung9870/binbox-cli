@@ -1,5 +1,29 @@
 # Decision log
 
+## 2026-08-11 — Staged selection is one program
+
+Decision: a multi-level selection runs inside a single Bubble Tea program that
+holds a stack of levels. Entering a value pushes the next level, Escape pops back
+to the previous one, and the alternate screen is entered once for the whole walk.
+Commands describe the level graph as a function from the values chosen so far to
+the next level; `bb sec` is the first caller.
+
+Why: the Service -> Field -> Action contract was already documented, but it was
+implemented as three nested loops that each started and tore down their own
+alternate-screen program. The contract held only because the loops reproduced it
+by hand, and every level change was a full program restart.
+
+What this changes for the operator: returning to a level restores the query and
+cursor that were active there instead of resetting them, because the level was
+never destroyed. Cancelling the new-field prompt after choosing Rename now ends
+the command rather than returning to the action list; selection and mutation stay
+separated, and one invocation still performs at most one action.
+
+What this does not change: Escape still clears the query before navigating,
+Ctrl+C still exits immediately, selection still performs no mutation, the plain
+and `BB_SELECTOR=plain` walks remain deterministic and now share the same level
+graph, and UI still renders only on stderr.
+
 ## 2026-08-10 — One Go binary
 
 Decision: `bb` is a standard-library-first Go binary with no checkout, libexec,

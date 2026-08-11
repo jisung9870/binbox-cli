@@ -28,9 +28,11 @@ provider state; `bb doctor` reports whether they are available.
 
 Interactive selection renders only on stderr. Printable input searches without a
 mode switch; `↑/↓` or `Ctrl+N/P` move, Enter selects, and Escape clears then
-cancels. In `bb sec`, Escape navigates Action→Field→Service before exiting;
-Ctrl+C exits immediately. `BB_SELECTOR=plain` forces numbered prompts and
-`NO_COLOR=1` retains the TUI layout without ANSI color.
+cancels. Multi-level selections run in one screen: in `bb sec`, Escape navigates
+Action→Field→Service before exiting and each level keeps the query and cursor it
+had when you left it; Ctrl+C exits immediately. `BB_SELECTOR=plain` forces
+numbered prompts, where an empty answer steps back one level, and `NO_COLOR=1`
+retains the TUI layout without ANSI color.
 
 bb-owned structured reads render human-readable labels or tables by default.
 Pass `--json` to receive the stable schema-v1 envelope. Export commands whose

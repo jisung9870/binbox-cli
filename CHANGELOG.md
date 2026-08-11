@@ -6,7 +6,17 @@ release tags and the corresponding release records.
 
 ## Unreleased
 
-No user-visible changes have been recorded since v0.10.0.
+### Changed
+
+- Ran multi-level selection inside one Bubble Tea program. `bb sec` no longer
+  tears down and recreates the alternate screen when moving between Service,
+  Field, and Action.
+- Made returning to an earlier level restore the query and cursor it had, rather
+  than resetting them.
+- Made the TUI and `BB_SELECTOR=plain` walks share one level graph. An empty
+  answer in the plain walk steps back one level, matching Escape.
+- Ended the command when the new-field prompt is cancelled after choosing
+  Rename, instead of returning to the action list.
 
 ## [0.10.0] - 2026-08-11
 

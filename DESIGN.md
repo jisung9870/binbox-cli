@@ -54,7 +54,8 @@
 ## Components
 
 - Existing components to reuse: Bubble Tea program lifecycle, Bubbles fuzzy filter/ranking, Bubbles text input/list behavior where it matches the interaction contract, and Lip Gloss styles already supplied transitively.
-- New/changed components: a bb-owned selector view, always-visible search row, result counter, explicit empty state, compact help footer, command-specific optional detail/keywords, a default-cancel confirmation card, a three-stage Service/Field/Action secret manager, native zsh completion, and a generic control-safe human renderer.
+- New/changed components: a bb-owned selector view, always-visible search row, result counter, explicit empty state, compact help footer, command-specific optional detail/keywords, a default-cancel confirmation card, a staged selector that holds a stack of levels inside one program, a three-stage Service/Field/Action secret manager built on it, native zsh completion, and a generic control-safe human renderer.
+- Staged selection: a multi-level walk is one program, not one program per level. Entering a value pushes the next level and Escape pops back to the previous one with its query and cursor intact, so the alternate screen is entered once and returning to a level does not discard the search that got you there. Each level is an ordinary selector; the level graph is supplied by the command as a function from the values chosen so far to the next level. Levels with no choices complete the walk rather than rendering an empty list.
 - Variants and states: service browsing, field browsing, searching, filtered, completion with/without dynamic candidates, human detail/table/empty output, JSON envelope, no results, empty source, action selection, rename input/confirmation, overwrite confirmation, removal confirmation, narrow terminal, no-color, and numbered fallback.
 - Token/component ownership: selector styles and keymap live beside `internal/bb/select.go`; do not introduce a repository-wide design-system package.
 
@@ -77,7 +78,7 @@
 - Loading: not currently needed because choices are prepared before launch; reserve a text-only state if asynchronous sources are introduced.
 - Empty: explain that the source has no selectable items and exit without entering an unusable selector.
 - Error: return to the caller with the existing typed error; do not leave alternate-screen artifacts.
-- Success: immediately close and return exactly one stable value.
+- Success: immediately close and return exactly one stable value per level. A staged walk closes once, after the last level, and returns the chosen values in order; mutations still run after the selector has closed.
 - Disabled: unavailable actions are omitted from the footer rather than shown as inactive decoration.
 - Offline/slow network, if applicable: provider fetching remains outside the selector; the selector itself performs no network work.
 
@@ -93,7 +94,7 @@
 - Design-token constraints: adaptive ANSI colors, `NO_COLOR`, and terminal width-aware truncation; preserve labels and stable values separately.
 - Performance constraints: filtering and rendering 250 items must remain perceptually immediate and must not start provider or filesystem work per keystroke.
 - Compatibility constraints: `bb shell init zsh` remains the only required `.zshrc` line and registers completion without checkout paths; dynamic candidates use local names/IDs only and never values or credentials; all TUI writes go to stderr; `--json` preserves the schema-v1 envelope; non-TTY, dumb terminal, and `BB_SELECTOR=plain` behavior remain deterministic; `sec exec` replaces only the selected service's normalized environment keys in the child and never mutates the parent environment.
-- Test/screenshot expectations: generated zsh syntax/registration smoke, candidate non-disclosure tests, human-vs-JSON output regressions, model-level key sequence tests, width/height snapshots or golden text with color disabled, PTY smoke in direct zsh and tmux, and regressions for stdout cleanliness and alternate-screen cleanup.
+- Test/screenshot expectations: generated zsh syntax/registration smoke, candidate non-disclosure tests, human-vs-JSON output regressions, model-level key sequence tests, width/height snapshots or golden text with color disabled, PTY smoke in direct zsh and tmux, and regressions for stdout cleanliness and alternate-screen cleanup. Staged selection additionally requires model-level tests that no level transition returns a quit command, that Escape clears then pops then cancels, that a level keeps its query and cursor when returned to, that a resize reaches levels that are not currently visible, and that the plain walk pops on an empty answer.
 
 ## Open questions
 

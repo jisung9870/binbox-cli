@@ -207,6 +207,19 @@ type bubbleSelectorModel struct {
 	cancelled   bool
 	interrupted bool
 	noColor     bool
+	// embedded marks a selector that is one level of a staged walk. It records
+	// its outcome and lets the owning model decide whether the program ends,
+	// so entering and leaving a level never restarts the alternate screen.
+	embedded bool
+}
+
+// finish ends the program for a standalone selector and yields control to the
+// owning staged model for an embedded one.
+func (m bubbleSelectorModel) finish() tea.Cmd {
+	if m.embedded {
+		return nil
+	}
+	return tea.Quit
 }
 
 func newBubbleSelectorModel(prompt string, choices []selectChoice) bubbleSelectorModel {
@@ -259,13 +272,13 @@ func (m bubbleSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if len(m.matches) > 0 {
 				m.selected = m.matches[m.cursor].choice.value
-				return m, tea.Quit
+				return m, m.finish()
 			}
 			return m, nil
 		case "ctrl+c":
 			m.cancelled = true
 			m.interrupted = true
-			return m, tea.Quit
+			return m, m.finish()
 		case "esc":
 			if m.input.Value() != "" {
 				m.input.SetValue("")
@@ -273,7 +286,7 @@ func (m bubbleSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.cancelled = true
-			return m, tea.Quit
+			return m, m.finish()
 		case "up", "ctrl+p", "shift+tab":
 			m.move(-1)
 			return m, nil
@@ -480,6 +493,166 @@ func highlightLabelMatches(label string, indexes []int, matched, base lipgloss.S
 func padBetween(left, right string, width int) string {
 	space := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
 	return ansi.Truncate(left+strings.Repeat(" ", space)+right, width, "…")
+}
+
+// selectStage is one level of a multi-level selection.
+type selectStage struct {
+	Prompt  string
+	Choices []selectChoice
+}
+
+// stageOutcome reports the values chosen at each level, outermost first. Path
+// is empty when the walk was cancelled.
+type stageOutcome struct {
+	Path        []string
+	Cancelled   bool
+	Interrupted bool
+}
+
+// selectStages walks a multi-level selection. next receives the values chosen
+// so far and returns the level that follows, or nil when the path is complete.
+// A level with no choices is treated as complete rather than shown empty.
+//
+// Real terminals run the whole walk inside one Bubble Tea program: entering a
+// value pushes a level and Escape pops back to the previous one with its query
+// and cursor intact. Pipes, tests, and dumb terminals walk the same stage graph
+// with the line-oriented selector, where an empty answer pops instead.
+func (a *App) selectStages(root selectStage, next func(path []string) *selectStage) (stageOutcome, error) {
+	if len(root.Choices) == 0 {
+		return stageOutcome{}, unavailable("no selectable items")
+	}
+	if a.useBubbleSelector() {
+		return a.selectStagesBubble(root, next)
+	}
+	return a.selectStagesPlain(root, next)
+}
+
+func (a *App) selectStagesPlain(root selectStage, next func(path []string) *selectStage) (stageOutcome, error) {
+	stages := []selectStage{root}
+	var path []string
+	for {
+		current := stages[len(stages)-1]
+		value, err := selectOnePlain(a.in, a.err, current.Prompt, current.Choices)
+		if err != nil {
+			return stageOutcome{}, err
+		}
+		if value == "" {
+			if len(stages) == 1 {
+				return stageOutcome{Cancelled: true}, nil
+			}
+			stages = stages[:len(stages)-1]
+			path = path[:len(path)-1]
+			continue
+		}
+		path = append(path, value)
+		following := next(clonePath(path))
+		if following == nil || len(following.Choices) == 0 {
+			return stageOutcome{Path: clonePath(path)}, nil
+		}
+		stages = append(stages, *following)
+	}
+}
+
+func clonePath(path []string) []string {
+	return append([]string(nil), path...)
+}
+
+// stagedSelectorModel owns a stack of ordinary selectors and switches between
+// them in place, so the alternate screen is entered once for the whole walk.
+type stagedSelectorModel struct {
+	stack   []bubbleSelectorModel
+	path    []string
+	next    func(path []string) *selectStage
+	noColor bool
+	width   int
+	height  int
+	outcome stageOutcome
+}
+
+func newStagedSelectorModel(root selectStage, next func(path []string) *selectStage, noColor bool) stagedSelectorModel {
+	first := newBubbleSelectorModelWithColor(root.Prompt, root.Choices, noColor)
+	first.embedded = true
+	return stagedSelectorModel{
+		stack:   []bubbleSelectorModel{first},
+		next:    next,
+		noColor: noColor,
+		width:   first.width,
+		height:  first.height,
+	}
+}
+
+func (m stagedSelectorModel) Init() tea.Cmd { return textinput.Blink }
+
+func (m stagedSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Every level keeps its own cursor and offset, so a resize has to reach the
+	// levels that are not currently visible as well.
+	if size, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = max(1, size.Width)
+		m.height = max(1, size.Height)
+		for i := range m.stack {
+			resized, _ := m.stack[i].Update(msg)
+			m.stack[i] = resized.(bubbleSelectorModel)
+		}
+		return m, nil
+	}
+
+	top := len(m.stack) - 1
+	updated, cmd := m.stack[top].Update(msg)
+	current := updated.(bubbleSelectorModel)
+	m.stack[top] = current
+
+	switch {
+	case current.interrupted:
+		m.outcome = stageOutcome{Cancelled: true, Interrupted: true}
+		return m, tea.Quit
+	case current.cancelled:
+		if top == 0 {
+			m.outcome = stageOutcome{Cancelled: true}
+			return m, tea.Quit
+		}
+		m.stack = m.stack[:top]
+		m.path = m.path[:len(m.path)-1]
+		return m, textinput.Blink
+	case current.selected != "":
+		m.path = append(m.path, current.selected)
+		// Clear it so returning to this level later does not re-enter the child.
+		m.stack[top].selected = ""
+		following := m.next(clonePath(m.path))
+		if following == nil || len(following.Choices) == 0 {
+			m.outcome = stageOutcome{Path: clonePath(m.path)}
+			return m, tea.Quit
+		}
+		child := newBubbleSelectorModelWithColor(following.Prompt, following.Choices, m.noColor)
+		child.embedded = true
+		child.width = m.width
+		child.height = m.height
+		child.ensureVisible()
+		m.stack = append(m.stack, child)
+		return m, textinput.Blink
+	}
+	return m, cmd
+}
+
+func (m stagedSelectorModel) View() string {
+	return m.stack[len(m.stack)-1].View()
+}
+
+func (a *App) selectStagesBubble(root selectStage, next func(path []string) *selectStage) (stageOutcome, error) {
+	program := tea.NewProgram(
+		newStagedSelectorModel(root, next, a.getenv("NO_COLOR") != ""),
+		tea.WithInput(a.in),
+		tea.WithOutput(a.err),
+		tea.WithAltScreen(),
+	)
+	result, err := program.Run()
+	if err != nil {
+		return stageOutcome{}, fmt.Errorf("run selector: %w", err)
+	}
+	model, ok := result.(stagedSelectorModel)
+	if !ok {
+		return stageOutcome{}, fmt.Errorf("selector returned an unexpected model")
+	}
+	return model.outcome, nil
 }
 
 func (a *App) selectOneBubbleOutcome(prompt string, choices []selectChoice) (selectOutcome, error) {

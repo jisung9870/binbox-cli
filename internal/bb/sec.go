@@ -572,62 +572,60 @@ func (a *App) secManage() error {
 	if len(services) == 0 {
 		return unavailable("secret store is empty; add one with 'bb sec set <service> <field>'")
 	}
-	for {
-		serviceResult, selectErr := a.selectOneOutcome("Secret service", services)
-		if selectErr != nil {
-			return selectErr
-		}
-		if serviceResult.Interrupted || serviceResult.Value == "" {
+
+	// Service -> Field -> Action. Each level is derived from the values already
+	// chosen, so a field list can only ever belong to the selected service.
+	// Selecting never mutates: the walk returns a path and the action runs after
+	// the selector has closed.
+	root := selectStage{Prompt: "Secret service", Choices: services}
+	next := func(path []string) *selectStage {
+		switch len(path) {
+		case 1:
+			service := path[0]
+			return &selectStage{
+				Prompt:  "Field in " + service,
+				Choices: secretFieldChoices(service, data[service]),
+			}
+		case 2:
+			service, field := path[0], path[1]
+			return &selectStage{
+				Prompt:  "Action for " + service + "/" + field,
+				Choices: secretActionChoices(service, field, len(data[service])),
+			}
+		default:
 			return nil
 		}
-		service := serviceResult.Value
-		fields := data[service]
-		for {
-			fieldResult, fieldErr := a.selectOneOutcome("Field in "+service, secretFieldChoices(service, fields))
-			if fieldErr != nil {
-				return fieldErr
-			}
-			if fieldResult.Interrupted {
-				return nil
-			}
-			if fieldResult.Value == "" {
-				break
-			}
-			field := fieldResult.Value
-			for {
-				actionResult, actionErr := a.selectOneOutcome("Secret action", secretActionChoices(service, field, len(fields)))
-				if actionErr != nil {
-					return actionErr
-				}
-				if actionResult.Interrupted {
-					return nil
-				}
-				if actionResult.Value == "" {
-					break
-				}
-				switch actionResult.Value {
-				case "copy":
-					return a.secCopy([]string{service, field})
-				case "replace":
-					return a.secSet([]string{service, field})
-				case "rename-field":
-					newField, promptErr := a.promptSecretFieldName()
-					if promptErr != nil {
-						return promptErr
-					}
-					if newField == "" {
-						continue
-					}
-					return a.secRenameField([]string{service, field, newField})
-				case "remove-field":
-					return a.secRemove([]string{service, field})
-				case "remove-service":
-					return a.secRemove([]string{service})
-				default:
-					return invalid("unknown secret action")
-				}
-			}
+	}
+
+	outcome, e := a.selectStages(root, next)
+	if e != nil {
+		return e
+	}
+	if outcome.Cancelled || len(outcome.Path) < 3 {
+		return nil
+	}
+
+	service, field, action := outcome.Path[0], outcome.Path[1], outcome.Path[2]
+	switch action {
+	case "copy":
+		return a.secCopy([]string{service, field})
+	case "replace":
+		return a.secSet([]string{service, field})
+	case "rename-field":
+		newField, promptErr := a.promptSecretFieldName()
+		if promptErr != nil {
+			return promptErr
 		}
+		if newField == "" {
+			return nil
+		}
+		return a.secRenameField([]string{service, field, newField})
+	case "remove-field":
+		return a.secRemove([]string{service, field})
+	case "remove-service":
+		return a.secRemove([]string{service})
+	default:
+		return invalid("unknown secret action")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -219,6 +220,235 @@ func typeInSelector(model bubbleSelectorModel, value string) bubbleSelectorModel
 		model = updated.(bubbleSelectorModel)
 	}
 	return model
+}
+
+// secretWalk mirrors the Service -> Field -> Action graph used by `bb sec`.
+func secretWalk() (selectStage, func([]string) *selectStage) {
+	root := selectStage{Prompt: "Secret service", Choices: []selectChoice{
+		{Value: "alpha", Label: "alpha"},
+		{Value: "zeta", Label: "zeta"},
+	}}
+	next := func(path []string) *selectStage {
+		switch len(path) {
+		case 1:
+			return &selectStage{Prompt: "Field in " + path[0], Choices: []selectChoice{
+				{Value: "password", Label: "password"},
+				{Value: "token", Label: "token"},
+			}}
+		case 2:
+			return &selectStage{Prompt: "Action for " + path[0] + "/" + path[1], Choices: []selectChoice{
+				{Value: "copy", Label: "Copy to clipboard"},
+				{Value: "remove-field", Label: "Remove field"},
+			}}
+		default:
+			return nil
+		}
+	}
+	return root, next
+}
+
+// pressStaged reports whether the returned command ends the program. tea.Quit
+// answers immediately; the cursor blink command sleeps for about half a second,
+// so a short deadline separates the two without waiting on the timer.
+func pressStaged(t *testing.T, model stagedSelectorModel, msg tea.Msg) (stagedSelectorModel, bool) {
+	t.Helper()
+	updated, cmd := model.Update(msg)
+	next := updated.(stagedSelectorModel)
+	if cmd == nil {
+		return next, false
+	}
+	answered := make(chan tea.Msg, 1)
+	go func() { answered <- cmd() }()
+	select {
+	case msg := <-answered:
+		_, quits := msg.(tea.QuitMsg)
+		return next, quits
+	case <-time.After(200 * time.Millisecond):
+		return next, false
+	}
+}
+
+// typeInStagedSelector ignores the returned commands: typing never ends the
+// program, so there is nothing to wait on.
+func typeInStagedSelector(t *testing.T, model stagedSelectorModel, value string) stagedSelectorModel {
+	t.Helper()
+	for _, r := range value {
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		model = updated.(stagedSelectorModel)
+	}
+	return model
+}
+
+func TestStagedSelectorWalksLevelsWithoutQuittingInBetween(t *testing.T) {
+	root, next := secretWalk()
+	model := newStagedSelectorModel(root, next, true)
+
+	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if quits {
+		t.Fatal("entering a service ended the program instead of pushing the next level")
+	}
+	if len(model.stack) != 2 || model.stack[1].prompt != "Field in alpha" {
+		t.Fatalf("stack=%d prompt=%q", len(model.stack), model.stack[len(model.stack)-1].prompt)
+	}
+
+	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if quits {
+		t.Fatal("entering a field ended the program instead of pushing the next level")
+	}
+	if len(model.stack) != 3 || model.stack[2].prompt != "Action for alpha/password" {
+		t.Fatalf("stack=%d prompt=%q", len(model.stack), model.stack[len(model.stack)-1].prompt)
+	}
+
+	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if !quits {
+		t.Fatal("a complete path did not end the program")
+	}
+	want := []string{"alpha", "password", "copy"}
+	if got := model.outcome.Path; !slicesEqual(got, want) || model.outcome.Cancelled {
+		t.Fatalf("path=%v cancelled=%v", got, model.outcome.Cancelled)
+	}
+}
+
+func TestStagedSelectorEscapeClearsQueryThenPopsThenExits(t *testing.T) {
+	root, next := secretWalk()
+	model := newStagedSelectorModel(root, next, true)
+
+	model = typeInStagedSelector(t, model, "zet")
+	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if quits || len(model.stack) != 1 || model.stack[0].input.Value() != "" {
+		t.Fatalf("first Escape should only clear the query: stack=%d query=%q quits=%v", len(model.stack), model.stack[0].input.Value(), quits)
+	}
+
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(model.stack) != 2 {
+		t.Fatalf("stack=%d, want 2", len(model.stack))
+	}
+
+	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if quits || len(model.stack) != 1 || len(model.path) != 0 {
+		t.Fatalf("Escape should pop one level: stack=%d path=%v quits=%v", len(model.stack), model.path, quits)
+	}
+
+	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if !quits || !model.outcome.Cancelled || model.outcome.Interrupted {
+		t.Fatalf("Escape at the outermost level should cancel: %+v quits=%v", model.outcome, quits)
+	}
+}
+
+func TestStagedSelectorKeepsLevelStateWhenReturning(t *testing.T) {
+	root, next := secretWalk()
+	model := newStagedSelectorModel(root, next, true)
+
+	model = typeInStagedSelector(t, model, "zeta")
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = typeInStagedSelector(t, model, "token")
+	if got := model.stack[1].matches; len(got) != 1 || got[0].choice.value != "token" {
+		t.Fatalf("field level did not filter: %+v", got)
+	}
+
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if len(model.stack) != 1 {
+		t.Fatalf("stack=%d, want 1", len(model.stack))
+	}
+	if got := model.stack[0].input.Value(); got != "zeta" {
+		t.Fatalf("returning to the outer level lost its query: %q", got)
+	}
+	if got := model.stack[0].matches; len(got) != 1 || got[0].choice.value != "zeta" {
+		t.Fatalf("returning to the outer level lost its filter: %+v", got)
+	}
+
+	// The cleared selection must not immediately re-enter the level we left.
+	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'!'}})
+	if quits || len(model.stack) != 1 {
+		t.Fatalf("typing after returning changed levels: stack=%d quits=%v", len(model.stack), quits)
+	}
+}
+
+func TestStagedSelectorCtrlCExitsFromAnyLevel(t *testing.T) {
+	root, next := secretWalk()
+	model := newStagedSelectorModel(root, next, true)
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(model.stack) != 3 {
+		t.Fatalf("stack=%d, want 3", len(model.stack))
+	}
+
+	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if !quits || !model.outcome.Interrupted || !model.outcome.Cancelled || len(model.outcome.Path) != 0 {
+		t.Fatalf("Ctrl+C from a deep level: %+v quits=%v", model.outcome, quits)
+	}
+}
+
+func TestStagedSelectorResizeReachesLevelsThatAreNotVisible(t *testing.T) {
+	root, next := secretWalk()
+	model := newStagedSelectorModel(root, next, true)
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	model, _ = pressStaged(t, model, tea.WindowSizeMsg{Width: 44, Height: 12})
+	for i, level := range model.stack {
+		if level.width != 44 || level.height != 12 {
+			t.Fatalf("level %d kept %dx%d", i, level.width, level.height)
+		}
+	}
+
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if view := model.View(); ansi.StringWidth(strings.Split(view, "\n")[0]) > 44 {
+		t.Fatalf("view is wider than the terminal after returning:\n%s", view)
+	}
+}
+
+func TestStagedSelectorTreatsAnEmptyNextLevelAsComplete(t *testing.T) {
+	root := selectStage{Prompt: "Service", Choices: []selectChoice{{Value: "alpha", Label: "alpha"}}}
+	next := func([]string) *selectStage {
+		return &selectStage{Prompt: "Field in alpha", Choices: nil}
+	}
+	model := newStagedSelectorModel(root, next, true)
+
+	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if !quits {
+		t.Fatal("an empty following level was pushed instead of completing the walk")
+	}
+	if got := model.outcome.Path; !slicesEqual(got, []string{"alpha"}) {
+		t.Fatalf("path=%v", got)
+	}
+}
+
+func TestSelectStagesPlainPopsOnEmptyAnswer(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	root, next := secretWalk()
+
+	// alpha -> password -> back -> back -> zeta -> token -> remove-field
+	a.in = strings.NewReader("1\n1\n\n\n2\n2\n2\n")
+	outcome, err := a.selectStages(root, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slicesEqual(outcome.Path, []string{"zeta", "token", "remove-field"}) || outcome.Cancelled {
+		t.Fatalf("path=%v cancelled=%v", outcome.Path, outcome.Cancelled)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("staged walk wrote stdout: %q", out.String())
+	}
+
+	a.in = strings.NewReader("\n")
+	cancelled, err := a.selectStages(root, next)
+	if err != nil || !cancelled.Cancelled || len(cancelled.Path) != 0 {
+		t.Fatalf("outcome=%+v err=%v", cancelled, err)
+	}
+}
+
+func slicesEqual(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestCommandSelectorsReturnStableValuesWithoutStdout(t *testing.T) {

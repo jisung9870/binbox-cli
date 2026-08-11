@@ -211,6 +211,12 @@ type bubbleSelectorModel struct {
 	// its outcome and lets the owning model decide whether the program ends,
 	// so entering and leaving a level never restarts the alternate screen.
 	embedded bool
+	// readOnly marks rows that are shown for reading rather than choosing.
+	// Enter does nothing and the footer offers only navigation, so a viewer
+	// cannot be closed by the key used to drill into it.
+	readOnly bool
+	// title replaces the default "Select <prompt>" heading.
+	title string
 }
 
 // finish ends the program for a standalone selector and yields control to the
@@ -270,6 +276,9 @@ func (m bubbleSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "enter":
+			if m.readOnly {
+				return m, nil
+			}
 			if len(m.matches) > 0 {
 				m.selected = m.matches[m.cursor].choice.value
 				return m, m.finish()
@@ -398,7 +407,10 @@ func (m bubbleSelectorModel) View() string {
 		innerWidth = max(1, innerWidth-2)
 	}
 
-	title := "Select " + m.prompt
+	title := m.title
+	if title == "" {
+		title = "Select " + m.prompt
+	}
 	resultWord := "results"
 	if len(m.matches) == 1 {
 		resultWord = "result"
@@ -450,12 +462,18 @@ func (m bubbleSelectorModel) View() string {
 		}
 	}
 
+	// A read-only level offers no selection, so the footer omits it rather than
+	// showing a key that does nothing.
 	footer := "↑↓ move  enter select  esc clear/cancel"
-	if innerWidth < 40 {
-		footer = "↑↓ move  enter select\nesc clear/cancel"
-	}
-	if innerWidth >= 64 {
+	switch {
+	case m.readOnly && innerWidth >= 64:
+		footer = "↑↓/ctrl+n,p move  esc clear/back  ctrl+c quit"
+	case m.readOnly:
+		footer = "↑↓ move  esc clear/back"
+	case innerWidth >= 64:
 		footer = "↑↓/ctrl+n,p move  enter select  esc clear/cancel  ctrl+c quit"
+	case innerWidth < 40:
+		footer = "↑↓ move  enter select\nesc clear/cancel"
 	}
 	footerLines := strings.Split(footer, "\n")
 	for i := range footerLines {
@@ -499,6 +517,12 @@ func padBetween(left, right string, width int) string {
 type selectStage struct {
 	Prompt  string
 	Choices []selectChoice
+	// Title replaces the default "Select <Prompt>" heading.
+	Title string
+	// ReadOnly marks a level whose rows are read rather than chosen. Enter does
+	// nothing; Escape is the only way out. A walk cannot complete on such a
+	// level, so it is always a leaf.
+	ReadOnly bool
 }
 
 // stageOutcome reports the values chosen at each level, outermost first. Path
@@ -530,8 +554,24 @@ func (a *App) selectStages(root selectStage, next func(path []string) *selectSta
 func (a *App) selectStagesPlain(root selectStage, next func(path []string) *selectStage) (stageOutcome, error) {
 	stages := []selectStage{root}
 	var path []string
+	pop := func() {
+		stages = stages[:len(stages)-1]
+		path = path[:len(path)-1]
+	}
 	for {
 		current := stages[len(stages)-1]
+		// A read-only level has nothing to answer: show it, then step back on
+		// whatever the reader types.
+		if current.ReadOnly {
+			if err := showStagePlain(a.in, a.err, current); err != nil {
+				return stageOutcome{}, err
+			}
+			if len(stages) == 1 {
+				return stageOutcome{Cancelled: true}, nil
+			}
+			pop()
+			continue
+		}
 		value, err := selectOnePlain(a.in, a.err, current.Prompt, current.Choices)
 		if err != nil {
 			return stageOutcome{}, err
@@ -540,8 +580,7 @@ func (a *App) selectStagesPlain(root selectStage, next func(path []string) *sele
 			if len(stages) == 1 {
 				return stageOutcome{Cancelled: true}, nil
 			}
-			stages = stages[:len(stages)-1]
-			path = path[:len(path)-1]
+			pop()
 			continue
 		}
 		path = append(path, value)
@@ -557,6 +596,34 @@ func clonePath(path []string) []string {
 	return append([]string(nil), path...)
 }
 
+// showStagePlain renders a read-only level for the line-oriented walk and waits
+// for one line before stepping back.
+func showStagePlain(in io.Reader, out io.Writer, stage selectStage) error {
+	heading := stage.Title
+	if heading == "" {
+		heading = stage.Prompt
+	}
+	if _, err := fmt.Fprintf(out, "%s\n", safeTerminalText(heading)); err != nil {
+		return err
+	}
+	for _, choice := range stage.Choices {
+		line := "  " + safeTerminalText(choice.Label)
+		if choice.Description != "" {
+			line += "  " + safeTerminalText(choice.Description)
+		}
+		if _, err := fmt.Fprintln(out, line); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprint(out, "[Enter=back]: "); err != nil {
+		return err
+	}
+	// Exhausted or closed input steps back rather than failing: there is no
+	// answer to lose on a level that only displays.
+	_, _ = readLine(in)
+	return nil
+}
+
 // stagedSelectorModel owns a stack of ordinary selectors and switches between
 // them in place, so the alternate screen is entered once for the whole walk.
 type stagedSelectorModel struct {
@@ -569,9 +636,16 @@ type stagedSelectorModel struct {
 	outcome stageOutcome
 }
 
+func newStageLevel(stage selectStage, noColor bool) bubbleSelectorModel {
+	level := newBubbleSelectorModelWithColor(stage.Prompt, stage.Choices, noColor)
+	level.embedded = true
+	level.readOnly = stage.ReadOnly
+	level.title = safeTerminalText(stage.Title)
+	return level
+}
+
 func newStagedSelectorModel(root selectStage, next func(path []string) *selectStage, noColor bool) stagedSelectorModel {
-	first := newBubbleSelectorModelWithColor(root.Prompt, root.Choices, noColor)
-	first.embedded = true
+	first := newStageLevel(root, noColor)
 	return stagedSelectorModel{
 		stack:   []bubbleSelectorModel{first},
 		next:    next,
@@ -622,8 +696,7 @@ func (m stagedSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.outcome = stageOutcome{Path: clonePath(m.path)}
 			return m, tea.Quit
 		}
-		child := newBubbleSelectorModelWithColor(following.Prompt, following.Choices, m.noColor)
-		child.embedded = true
+		child := newStageLevel(*following, m.noColor)
 		child.width = m.width
 		child.height = m.height
 		child.ensureVisible()

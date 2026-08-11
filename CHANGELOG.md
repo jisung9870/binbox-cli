@@ -6,6 +6,21 @@ release tags and the corresponding release records.
 
 ## Unreleased
 
+### Added
+
+- Added `bb tfx browse [plan] [--json]`, a read-only Terraform plan viewer.
+  Resources are ordered destroy, replace, update, create, and each one opens a
+  read-only list of its changed attributes.
+- Added `--json` and non-terminal table output for the same reading, using the
+  existing schema-v1 envelope and human renderer.
+
+### Security
+
+- Replaced sensitive and not-yet-known plan values with `(sensitive)` and
+  `(known after apply)` before they can reach a label, description, search
+  metadata, table, or JSON envelope. A block marked sensitive covers every path
+  inside it.
+
 ### Changed
 
 - Ran multi-level selection inside one Bubble Tea program. `bb sec` no longer

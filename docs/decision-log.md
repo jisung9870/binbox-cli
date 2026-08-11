@@ -1,5 +1,31 @@
 # Decision log
 
+## 2026-08-11 — Plan review is a read-only view over the review parser
+
+Decision: `bb tfx browse` renders an existing plan for reading. It runs
+`terraform show -json` and nothing else, and it shares `tfx review`'s parser,
+changed-path definition, and rule evaluation instead of introducing a second
+interpretation of what a plan says.
+
+Why a separate command rather than a flag on `sum` or `review`: `sum` delegates
+to `tf-summarize` and `review` is an automation pipeline that writes artifacts.
+Reading one plan interactively is neither, and giving it its own name keeps the
+mutation-free boundary obvious from the command line.
+
+Why the values are placeholders: a plan carries secrets. The renderer resolves
+`before_sensitive`, `after_sensitive`, and `after_unknown` before a value can
+reach a label, a description, or search metadata, and a block marked sensitive
+covers every path inside it. This is the existing rule that previews must not
+expose secrets, applied to plan values.
+
+Why no prompt without a terminal: browsing produces no value to return, so a
+numbered prompt would ask a question whose answer is discarded. Without a usable
+terminal the same reading is written as a table on stdout, and `--json` returns
+the schema-v1 envelope.
+
+What this does not change: apply, destroy, and their account-bound session
+safeguards are not on this path, and no state, plan file, or artifact is written.
+
 ## 2026-08-11 — Staged selection is one program
 
 Decision: a multi-level selection runs inside a single Bubble Tea program that

@@ -79,6 +79,9 @@ bb tfx status --json
 bb tfx init -upgrade
 bb tfx plan -var-file=qa.tfvars
 bb tfx sum tree
+# Read an existing plan. Never applies; sensitive values are never printed.
+bb tfx browse
+bb tfx browse tfplan --json
 bb tfx session 15
 bb tfx apply
 bb tfx state list
@@ -151,7 +154,8 @@ See the [documentation index](docs/README.md), [changelog](CHANGELOG.md),
 [v0.8.1 compact secret manager smoke record](docs/sec-manager-smoke-v0.8.1.md),
 [v0.8.0 secret manager smoke record](docs/sec-manager-smoke-v0.8.0.md),
 [v0.7.1 secret audit](docs/sec-audit-v0.7.1.md),
-[v0.7.0 TUI smoke record](docs/tui-smoke-v0.7.0.md), the historical
+[v0.7.0 TUI smoke record](docs/tui-smoke-v0.7.0.md),
+[tfx browse smoke record](docs/tfx-browse-smoke-2026-08-11.md), the historical
 [selector smoke record](docs/selector-smoke-2026-08-11.md), and the
 [decision log](docs/decision-log.md). The legacy and installer evidence is
 preserved under `research/`.

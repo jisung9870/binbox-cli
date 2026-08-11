@@ -365,6 +365,80 @@ func TestStagedSelectorKeepsLevelStateWhenReturning(t *testing.T) {
 	}
 }
 
+func TestStagedSelectorReadOnlyLevelIsReadNotChosen(t *testing.T) {
+	root := selectStage{Prompt: "resource change", Choices: []selectChoice{{Value: "aws_s3_bucket.logs", Label: "destroy  aws_s3_bucket.logs"}}}
+	next := func(path []string) *selectStage {
+		if len(path) != 1 {
+			return nil
+		}
+		return &selectStage{
+			Prompt:   "attribute",
+			Title:    "destroy  " + path[0],
+			ReadOnly: true,
+			Choices:  []selectChoice{{Value: "bucket", Label: "bucket", Description: "logs-bucket → null"}},
+		}
+	}
+	model := newStagedSelectorModel(root, next, true)
+	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if len(model.stack) != 2 || !model.stack[1].readOnly {
+		t.Fatalf("stack=%d readOnly=%v", len(model.stack), model.stack[len(model.stack)-1].readOnly)
+	}
+
+	view := model.View()
+	if !strings.Contains(view, "destroy  aws_s3_bucket.logs") || strings.Contains(view, "Select ") {
+		t.Fatalf("read-only level should use its own title:\n%s", view)
+	}
+	if !strings.Contains(view, "esc") || strings.Contains(view, "enter select") {
+		t.Fatalf("read-only footer should not offer selection:\n%s", view)
+	}
+
+	// Enter must not close the viewer or complete the walk.
+	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	if quits || len(model.stack) != 2 || len(model.outcome.Path) != 0 {
+		t.Fatalf("Enter on a read-only level: stack=%d outcome=%+v quits=%v", len(model.stack), model.outcome, quits)
+	}
+
+	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	if quits || len(model.stack) != 1 {
+		t.Fatalf("Escape should return to the resource list: stack=%d quits=%v", len(model.stack), quits)
+	}
+}
+
+func TestSelectStagesPlainShowsReadOnlyLevelThenSteps(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	root := selectStage{Prompt: "resource change", Choices: []selectChoice{{Value: "aws_s3_bucket.logs", Label: "destroy  aws_s3_bucket.logs"}}}
+	next := func(path []string) *selectStage {
+		if len(path) != 1 {
+			return nil
+		}
+		return &selectStage{
+			Prompt:   "attribute",
+			Title:    "destroy  " + path[0],
+			ReadOnly: true,
+			Choices:  []selectChoice{{Value: "bucket", Label: "bucket", Description: "logs-bucket → null"}},
+		}
+	}
+
+	// Open the resource, read the attributes, step back, then leave.
+	a.in = strings.NewReader("1\n\n\n")
+	outcome, err := a.selectStages(root, next)
+	if err != nil || !outcome.Cancelled || len(outcome.Path) != 0 {
+		t.Fatalf("outcome=%+v err=%v", outcome, err)
+	}
+	rendered := stderr.String()
+	for _, want := range []string{"destroy  aws_s3_bucket.logs", "logs-bucket → null", "[Enter=back]"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("plain read-only level missing %q:\n%s", want, rendered)
+		}
+	}
+	if out.Len() != 0 {
+		t.Fatalf("read-only level wrote stdout: %q", out.String())
+	}
+}
+
 func TestStagedSelectorCtrlCExitsFromAnyLevel(t *testing.T) {
 	root, next := secretWalk()
 	model := newStagedSelectorModel(root, next, true)

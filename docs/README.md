@@ -42,6 +42,8 @@ Release summaries are available for
 
 Focused smoke and audit evidence:
 
+- [tfx browse smoke record](tfx-browse-smoke-2026-08-11.md)
+
 - [zsh completion and output smoke record](zsh-output-smoke-v0.10.0.md)
 - [hierarchical secret manager smoke record](sec-manager-smoke-v0.9.0.md)
 - [compact secret manager smoke record](sec-manager-smoke-v0.8.1.md)

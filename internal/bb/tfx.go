@@ -29,6 +29,7 @@ func (a *App) tfx(args []string) error {
   bb tfx fmt [terraform arguments...]
   bb tfx plan [terraform arguments...]
   bb tfx sum [summary|tree|stree|draw|md|json] [output] [plan]
+  bb tfx browse [plan] [--json]
   bb tfx session [minutes] [-d|--destroy]
   bb tfx apply [terraform arguments...]
   bb tfx destroy [terraform arguments...]
@@ -46,6 +47,9 @@ The plan command always writes to TFPLAN_FILE (default: tfplan), and refuses a
 caller-provided -out flag. apply and destroy require an account-bound session
 and an interactive confirmation. Review and clean intentionally accept explicit
 roots (or --all) only; they never invoke an interactive selector.
+
+Browse reads an existing plan and never mutates anything. Sensitive and
+not-yet-known values are replaced with placeholders rather than printed.
 `)
 		return err
 	}
@@ -56,6 +60,8 @@ roots (or --all) only; they never invoke an interactive selector.
 		return a.tfxPlan(args[1:])
 	case "sum":
 		return a.tfxSum(args[1:])
+	case "browse":
+		return a.tfxBrowse(args[1:])
 	case "status":
 		return a.tfxStatus(args[1:])
 	case "session":
@@ -902,56 +908,91 @@ func valueAtPath(v any, dotted string) any {
 	return cur
 }
 
-func classifyTFXPlan(data []byte, rules tfxReviewRules) (string, string, error) {
+// tfxResourceChange is one entry of `terraform show -json`'s resource_changes.
+// The parallel *_sensitive and after_unknown structures mirror the shape of
+// before/after and carry true where a value must not be printed or is not known
+// until apply.
+type tfxResourceChange struct {
+	Address string `json:"address"`
+	Change  struct {
+		Actions         []string `json:"actions"`
+		Before          any      `json:"before"`
+		After           any      `json:"after"`
+		BeforeSensitive any      `json:"before_sensitive"`
+		AfterSensitive  any      `json:"after_sensitive"`
+		AfterUnknown    any      `json:"after_unknown"`
+	} `json:"change"`
+}
+
+func parseTFXPlanChanges(data []byte) ([]tfxResourceChange, error) {
 	var plan struct {
-		ResourceChanges []struct {
-			Address string `json:"address"`
-			Change  struct {
-				Actions []string `json:"actions"`
-				Before  any      `json:"before"`
-				After   any      `json:"after"`
-			} `json:"change"`
-		} `json:"resource_changes"`
+		ResourceChanges []tfxResourceChange `json:"resource_changes"`
 	}
 	if err := json.Unmarshal(data, &plan); err != nil {
-		return "", "", fmt.Errorf("parse terraform plan JSON: %w", err)
+		return nil, fmt.Errorf("parse terraform plan JSON: %w", err)
 	}
+	return plan.ResourceChanges, nil
+}
+
+// tfxUnchanged reports the entries a plan carries without changing anything.
+func tfxUnchanged(actions []string) bool {
+	return len(actions) == 1 && (actions[0] == "no-op" || actions[0] == "read")
+}
+
+// tfxChangedPaths lists the attribute paths whose value differs between the
+// before and after states, in a stable order.
+func tfxChangedPaths(resource tfxResourceChange) []string {
+	var paths []string
+	scalarPaths(resource.Change.Before, "", &paths)
+	scalarPaths(resource.Change.After, "", &paths)
+	seen := map[string]bool{}
+	var differences []string
+	for _, path := range paths {
+		if !seen[path] && fmt.Sprintf("%#v", valueAtPath(resource.Change.Before, path)) != fmt.Sprintf("%#v", valueAtPath(resource.Change.After, path)) {
+			seen[path] = true
+			differences = append(differences, path)
+		}
+	}
+	return differences
+}
+
+// tfxNeedsReview applies the review rules to one resource change. An action the
+// rules do not allow is always reported; a pure update is reported when it
+// touches a path outside the allow list.
+func tfxNeedsReview(resource tfxResourceChange, differences []string, rules tfxReviewRules) bool {
 	allowedActions := map[string]bool{}
 	for _, action := range rules.AllowActions {
 		allowedActions[action] = true
 	}
+	for _, action := range resource.Change.Actions {
+		if !allowedActions[action] {
+			return true
+		}
+	}
+	if len(resource.Change.Actions) == 1 && resource.Change.Actions[0] == "update" {
+		for _, path := range differences {
+			if !pathAllowed(path, rules) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func classifyTFXPlan(data []byte, rules tfxReviewRules) (string, string, error) {
+	changes, err := parseTFXPlanChanges(data)
+	if err != nil {
+		return "", "", err
+	}
 	var reviews []string
 	changed := false
-	for _, resource := range plan.ResourceChanges {
-		if len(resource.Change.Actions) == 1 && (resource.Change.Actions[0] == "no-op" || resource.Change.Actions[0] == "read") {
+	for _, resource := range changes {
+		if tfxUnchanged(resource.Change.Actions) {
 			continue
 		}
 		changed = true
-		unsafe := false
-		for _, action := range resource.Change.Actions {
-			if !allowedActions[action] {
-				unsafe = true
-			}
-		}
-		var paths []string
-		scalarPaths(resource.Change.Before, "", &paths)
-		scalarPaths(resource.Change.After, "", &paths)
-		seen := map[string]bool{}
-		var differences []string
-		for _, path := range paths {
-			if !seen[path] && fmt.Sprintf("%#v", valueAtPath(resource.Change.Before, path)) != fmt.Sprintf("%#v", valueAtPath(resource.Change.After, path)) {
-				seen[path] = true
-				differences = append(differences, path)
-			}
-		}
-		if len(resource.Change.Actions) == 1 && resource.Change.Actions[0] == "update" {
-			for _, path := range differences {
-				if !pathAllowed(path, rules) {
-					unsafe = true
-				}
-			}
-		}
-		if unsafe {
+		differences := tfxChangedPaths(resource)
+		if tfxNeedsReview(resource, differences, rules) {
 			reviews = append(reviews, fmt.Sprintf("%s [%s] paths=%s", resource.Address, strings.Join(resource.Change.Actions, ","), strings.Join(differences, ",")))
 		}
 	}

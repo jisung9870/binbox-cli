@@ -64,6 +64,17 @@ func TestTFXHelperProcess(t *testing.T) {
 		os.Exit(0)
 	}
 	if name == "terraform" && len(tfargv) >= 2 && tfargv[0] == "show" && tfargv[1] == "-json" {
+		// Tests that need a specific plan point at a fixture instead of the
+		// two canned bodies below.
+		if fixture := os.Getenv("GO_WANT_BB_TFX_SHOW_FILE"); fixture != "" {
+			body, err := os.ReadFile(fixture)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "read plan fixture: %v", err)
+				os.Exit(97)
+			}
+			os.Stdout.Write(body)
+			os.Exit(0)
+		}
 		if hadChdir {
 			fmt.Fprint(os.Stdout, `{"resource_changes":[]}`)
 		} else {

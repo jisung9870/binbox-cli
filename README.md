@@ -53,6 +53,9 @@ bb wenv import --check
 bb wenv import --apply
 bb wenv show dev
 bb wenv apply dev
+# Interactive terminals prompt without echo.
+bb sec set github token
+# Automation can still pipe an exact value.
 printf '%s' "$TOKEN" | bb sec set github token
 
 # Checkout-independent zsh integration. Add this to ~/.zshrc so `bb wenv apply dev`
@@ -118,7 +121,7 @@ defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
 through the existing authenticated GitHub CLI session:
 
 ```sh
-scripts/install.sh --github-cli --version 0.7.0
+scripts/install.sh --github-cli --version 0.7.1
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.
@@ -128,7 +131,8 @@ See the [command reference](docs/commands.md),
 [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 [non-Git parity audit](docs/non-git-parity-audit-2026-08-11.md),
 [macOS cutover record](docs/cutover-macos-2026-08-11.md),
+[v0.7.1 secret audit](docs/sec-audit-v0.7.1.md),
 [v0.7.0 TUI smoke record](docs/tui-smoke-v0.7.0.md), the historical
-[selector smoke record](docs/selector-smoke-2026-08-11.md), and
+[selector smoke record](docs/selector-smoke-2026-08-11.md), and the
 [decision log](docs/decision-log.md). The legacy and installer evidence is
 preserved under `research/`.

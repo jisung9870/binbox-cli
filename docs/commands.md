@@ -18,7 +18,7 @@ provider state; `bb doctor` reports whether they are available.
 | AWS profiles | `profile list/show/add/edit/rm/login` | SSO profiles in AWS config only; AWS CLI owns credentials, login, and cache |
 | AWS credentials | `assume [profile]/list/current/unset/exec/profile` | Search-first profile TUI; AWS CLI resolves credentials; bb stores none and emits them only to the shell pipe or a scoped child process |
 | Environments | `wenv list/current/show/apply/set/rm/export/import` | Search-first preset TUI; declarative non-secret XDG JSON; preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
-| Secrets | `sec init/list/set/get/copy/env/rm` | Search-first service/field TUI without secret values; existing age key/ciphertext format; plaintext remains in memory or pipes |
+| Secrets | `sec init/list/set/get/copy/env/rm` | Hidden terminal prompt or exact piped input for `set`; search-first copy TUI without values; existing age key/ciphertext format; plaintext remains in memory or explicit output pipes |
 | Terraform | `tfx init/validate/fmt/plan/sum/session/status/apply/destroy/end/state/review/clean` | Account-, scope-, expiry-, and plan-bound destructive safeguards |
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
 | Local ports | `port inspect/kill` | Exact sorted PID observation followed by confirmation and re-observation |

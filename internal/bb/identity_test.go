@@ -525,6 +525,19 @@ func TestSecHelperProcess(t *testing.T) {
 	}
 	os.Exit(90)
 }
+
+func enableSecHelper(a *App, dir string) {
+	a.env = append(a.env,
+		"BINBOX_SECRETS_FILE="+filepath.Join(dir, "secrets.json.age"),
+		"BINBOX_AGE_KEY="+filepath.Join(dir, "age.key"),
+		"GO_WANT_SEC_HELPER=1",
+	)
+	a.lookPath = func(string) (string, error) { return "helper", nil }
+	a.command = func(name string, args ...string) *exec.Cmd {
+		return exec.Command(os.Args[0], append([]string{"-test.run=TestSecHelperProcess", "--", name}, args...)...)
+	}
+}
+
 func TestSecCompatibleCRUDNeverPlacesValueInJournal(t *testing.T) {
 	a, out, _, state := testApp(t)
 	dir := t.TempDir()
@@ -546,6 +559,163 @@ func TestSecCompatibleCRUDNeverPlacesValueInJournal(t *testing.T) {
 	}
 	if b, e := os.ReadFile(filepath.Join(state, "bb", "journal.ndjson")); e == nil && bytes.Contains(b, []byte("fake-token")) {
 		t.Fatal("secret leaked to journal")
+	}
+}
+
+func TestSecSetPromptsWithoutEchoOnTerminal(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	a.in = os.Stdin
+	a.isTerminal = func(uintptr) bool { return true }
+	a.readPassword = func(uintptr) ([]byte, error) { return []byte("fake-token"), nil }
+	if err := a.Run([]string{"sec", "set", "svc", "token"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stderr.String(); got != "Secret value: \n" || strings.Contains(got, "fake-token") {
+		t.Fatalf("terminal prompt=%q", got)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("set wrote stdout: %q", out.String())
+	}
+
+	a.in = strings.NewReader("")
+	if err := a.Run([]string{"sec", "get", "svc", "token"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "fake-token" {
+		t.Fatalf("stored value=%q", got)
+	}
+}
+
+func TestSecSetRejectsOversizedInputInsteadOfTruncating(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	a.in = bytes.NewReader(bytes.Repeat([]byte("x"), maxSecretValueBytes+1))
+	if _, err := a.readSecretValue(); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("oversized input err=%v", err)
+	}
+}
+
+func TestSecRejectsMissingTargetsAndEnvironmentCollisions(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run([]string{"sec", "list", "missing"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("missing service list err=%v", err)
+	}
+	for _, field := range []string{"api-key", "api_key"} {
+		a.in = strings.NewReader(field + "-value\n")
+		if err := a.Run([]string{"sec", "set", "svc", field}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Run([]string{"sec", "rm", "svc", "missing", "--yes"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("missing field removal err=%v", err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "env", "svc"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("environment collision err=%v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("collision emitted partial environment: %q", out.String())
+	}
+	if got := secretEnvName("1password", "token"); got != "_1PASSWORD_TOKEN" {
+		t.Fatalf("numeric environment name=%q", got)
+	}
+}
+
+func TestSecInitRecoversExistingKeyWhenStoreIsMissing(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	key := filepath.Join(dir, "age.key")
+	if err := os.WriteFile(key, []byte("AGE-SECRET-KEY-TEST\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("key mode=%o", info.Mode().Perm())
+	}
+	if err := a.Run([]string{"sec", "list"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSecRejectsUnsafeAgeKeyPermissions(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(dir, "age.key"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run([]string{"sec", "list"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("unsafe key permissions err=%v", err)
+	}
+}
+
+func TestSecListEnvAndRemovalLifecycle(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ field, value string }{{"alpha", "first'value"}, {"beta", "second"}} {
+		a.in = strings.NewReader(item.value + "\n")
+		if err := a.Run([]string{"sec", "set", "1service", item.field}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out.Reset()
+	if err := a.Run([]string{"sec", "list", "1service"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "alpha\nbeta\n"; got != want {
+		t.Fatalf("fields=%q, want %q", got, want)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "env", "1service"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "export _1SERVICE_ALPHA='first'\"'\"'value'\nexport _1SERVICE_BETA='second'\n"; got != want {
+		t.Fatalf("environment=%q, want %q", got, want)
+	}
+
+	if err := a.Run([]string{"sec", "rm", "1service", "beta", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "1service"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "first'value" {
+		t.Fatalf("single-field get=%q", got)
+	}
+	if err := a.Run([]string{"sec", "rm", "1service", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "list"}); err != nil || out.Len() != 0 {
+		t.Fatalf("final list=%q err=%v", out.String(), err)
 	}
 }
 

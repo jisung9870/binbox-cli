@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/term"
 )
 
 var (
@@ -25,16 +27,28 @@ var (
 )
 
 type App struct {
-	in       io.Reader
-	out, err io.Writer
-	env      []string
-	now      func() time.Time
-	lookPath func(string) (string, error)
-	command  func(string, ...string) *exec.Cmd
+	in           io.Reader
+	out, err     io.Writer
+	env          []string
+	now          func() time.Time
+	lookPath     func(string) (string, error)
+	command      func(string, ...string) *exec.Cmd
+	isTerminal   func(uintptr) bool
+	readPassword func(uintptr) ([]byte, error)
 }
 
 func New(out, err io.Writer, env []string) *App {
-	return &App{in: os.Stdin, out: out, err: err, env: env, now: time.Now, lookPath: exec.LookPath, command: exec.Command}
+	return &App{
+		in:           os.Stdin,
+		out:          out,
+		err:          err,
+		env:          env,
+		now:          time.Now,
+		lookPath:     exec.LookPath,
+		command:      exec.Command,
+		isTerminal:   term.IsTerminal,
+		readPassword: term.ReadPassword,
+	}
 }
 
 func (a *App) Run(args []string) error {

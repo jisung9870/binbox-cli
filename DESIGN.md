@@ -2,10 +2,10 @@
 
 ## Source of truth
 
-- Status: Draft
+- Status: Active
 - Last refreshed: 2026-08-11
 - Primary product surfaces: interactive selectors used by `tm`, `wenv`, `assume`, and `sec copy`, plus non-Git yes/no mutation confirmations
-- Evidence reviewed: `internal/bb/select.go`, `internal/bb/identity_test.go`, `docs/selector-smoke-2026-08-11.md`, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
+- Evidence reviewed: `internal/bb/select.go`, `internal/bb/identity_test.go`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
 
 ## Brand
 
@@ -41,7 +41,7 @@
 
 ## Visual language
 
-- Color: adaptive terminal colors with one restrained accent for title/cursor, high-contrast selected text, muted metadata, and a monochrome `NO_COLOR` path.
+- Color: adaptive terminal colors with one restrained accent for title/cursor, high-contrast selected text, muted metadata, and a monochrome `NO_COLOR` path. The light accent measures 5.89:1 on the terminal background and 4.87:1 on the selected-row background; the dark accent measures 7.72:1 and 5.17:1 respectively.
 - Typography: terminal-native text only; no icon font dependency. Use simple glyphs such as `>` and `•` with ASCII fallbacks where needed.
 - Spacing/layout rhythm: one-line header, one-line search/status row, dense one- or two-line results, and one-line footer; avoid full-screen empty padding.
 - Shape/radius/elevation: no simulated elevation; an optional subtle border only on sufficiently wide terminals.
@@ -94,4 +94,4 @@
 
 ## Open questions
 
-- [ ] Validate the accent palette in both a light and dark terminal before marking this document Active; owner: visual review; impact: contrast only, not interaction behavior.
+- None. Light, dark, and `NO_COLOR` variants are validated; reopen this section if the palette or terminal rendering library changes.

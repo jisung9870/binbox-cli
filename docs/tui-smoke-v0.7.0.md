@@ -14,10 +14,20 @@ command's stdout remained limited to its existing result.
 | Direct macOS PTY | 80x24 | type `beta` -> Enter -> inspect wenv preview -> `y` | one filtered result, selected stable preset, confirmation defaulted to Cancel, stdout contained only two eval-safe exports |
 | Isolated tmux socket | 80x24 | type `beta` -> Enter -> `y` | search, metadata, confirmation, terminal cleanup, and exit 0 passed |
 | Isolated tmux socket with `NO_COLOR=1` | 24x8 | type `beta` -> Enter -> `y` | result count, select/cancel hints, both buttons, explicit `y confirm`, stdout exports, and exit 0 remained visible and bounded |
+| Light/dark palette render | 80x24-equivalent | compare selector and confirmation states | title, selected row, muted metadata, border, and default-Cancel state remained distinct in both themes |
 
 The tmux checks used a dedicated socket and `remain-on-exit`; the socket was
 removed after capture. Fixtures used isolated repository-local XDG config and
 non-secret `COLOR`/`REGION` values.
+
+## Adaptive palette validation
+
+The light and dark adaptive colors were rendered side by side using the same
+selector and confirmation composition. Accent text meets WCAG AA contrast in
+both normal and selected states: 5.89:1 and 4.87:1 on light backgrounds, and
+7.72:1 and 5.17:1 on dark backgrounds. Muted text measures 6.10:1 on light and
+7.46:1 on dark. Borders are decorative and are not used as the sole state or
+content indicator.
 
 ## Automated coverage
 
@@ -45,4 +55,5 @@ scripts/test-release-guard.sh PASS
 direct PTY smoke              PASS
 tmux 80x24 smoke              PASS
 tmux 24x8 NO_COLOR smoke      PASS
+light/dark palette review     PASS
 ```

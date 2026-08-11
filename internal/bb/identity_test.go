@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestBuiltInSelectorUsesNumberOrExactName(t *testing.T) {
@@ -17,6 +19,21 @@ func TestBuiltInSelectorUsesNumberOrExactName(t *testing.T) {
 	got, e := a.selectOne("Pick", []selectChoice{{"dev", "Development"}, {"prod", "Production"}})
 	if e != nil || got != "prod" {
 		t.Fatalf("got=%q err=%v", got, e)
+	}
+}
+
+func TestBubbleSelectorSelectsStableValueAndCancels(t *testing.T) {
+	model := newBubbleSelectorModel("Pick", []selectChoice{{"dev", "Development"}, {"prod", "Production"}})
+	selected, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	selectedModel := selected.(bubbleSelectorModel)
+	if selectedModel.selected != "dev" || selectedModel.cancelled {
+		t.Fatalf("selected=%q cancelled=%v", selectedModel.selected, selectedModel.cancelled)
+	}
+
+	cancelled, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	cancelledModel := cancelled.(bubbleSelectorModel)
+	if !cancelledModel.cancelled || cancelledModel.selected != "" {
+		t.Fatalf("selected=%q cancelled=%v", cancelledModel.selected, cancelledModel.cancelled)
 	}
 }
 

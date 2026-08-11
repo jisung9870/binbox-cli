@@ -23,7 +23,8 @@ belongs to LazyVim. A feature without one clear owner is deferred.
 ## Runtime shape
 
 The module has a thin `cmd/bb` entry point and an internal application package.
-The MVP intentionally uses the Go standard library only. It has no runtime
+The CLI uses Bubble Tea/Bubbles for its embedded fuzzy selector and otherwise
+keeps integrations behind direct external CLI boundaries. It has no runtime
 checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 
 | Surface | Current minimum behavior | State/effect |
@@ -39,9 +40,9 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb session open <project-id>` | Returns an explicit backend plan | Never opens or destroys a terminal; Orca is capability-unavailable by design |
 | `bb tm projects --plain|--json` | Returns the sessionizer/LazyVim-compatible normalized project view | Read-only bb registry; never rewrites the shared legacy source |
 | `bb tm sessions --json` | Preserves legacy typed tmux session fields | Session-level observation only; no panes, commands, or scrollback |
-| `bb tm [--project <id>]` | Selects with bb's numbered selector, then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
+| `bb tm [--project <id>]` | Selects with bb's embedded fuzzy selector (numbered fallback), then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
 | `bb profile ...` | Manages AWS SSO profiles and delegates login | Writes only `~/.aws/config` atomically with backups; credentials/cache remain AWS CLI-owned |
-| `bb wenv ...` | Imports an allowlisted non-executable legacy subset and exports/runs declarative environments | XDG JSON, secret-like key rejection, built-in selector |
+| `bb wenv ...` | Imports an allowlisted non-executable legacy subset and exports/runs declarative environments | XDG JSON, secret-like key rejection, embedded selector with numbered fallback |
 | `bb sec ...` | Uses the existing age-encrypted JSON/key format | Plaintext remains in memory/pipes; ciphertext mutation is locked, atomic, and backed up |
 | `bb tm attach/kill/dirs/layout` | Operates on an exact tmux session or bb project registry entry; layouts are fixed Go-owned recipes | Destructive actions show targets and re-observe before direct tmux argv; no legacy directory-file writes |
 | `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |
@@ -77,7 +78,8 @@ tool.
 - Git, Kubernetes, AWS SSM, process, and Terraform adapters accept structured
   targets and invoke their owner CLI with a direct argument vector. They never
   evaluate shell strings or persist provider credentials.
-- The built-in selector writes UI to stderr and keeps stdout machine/eval-safe.
+- The embedded selector writes UI to stderr and keeps stdout machine/eval-safe;
+  non-TTY input/output and `BB_SELECTOR=plain` use the numbered fallback.
   The tm selector passes only the selected value as a direct tmux argument:
   tmux remains the owner of its sessions and Orca is never consulted.
 - Sessionizer compatibility is explicit import, not a live mirror. New tmux

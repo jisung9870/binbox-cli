@@ -79,8 +79,10 @@ bb doctor nvim --config-dir /path/to/lazyvim-config --json
 The MVP stores configuration under `$XDG_CONFIG_HOME/bb` and state/journals
 under `$XDG_STATE_HOME/bb` (with standard home-directory fallbacks). It does
 not require `BB_ROOT`, a `libexec` tree, or helper scripts on `PATH`.
-Interactive choices use a built-in numbered selector; fzf is not a bb runtime
-dependency. `bb shell init zsh` emits the small wrapper that evaluates only
+Interactive choices use an embedded Bubble Tea fuzzy selector on real terminals
+and fall back to a numbered prompt for pipes, tests, and dumb terminals; fzf is
+not a bb runtime dependency. Set `BB_SELECTOR=plain` to force the numbered
+prompt. `bb shell init zsh` emits the small wrapper that evaluates only
 successful `bb wenv <preset>` output in the current shell. It has no checkout,
 `BB_ROOT`, or libexec dependency.
 

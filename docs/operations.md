@@ -84,8 +84,9 @@ It returns one schema-v1 envelope with `data.projects`; records include stable
 `id`, display `name`, and canonical `path`. It reads only bb's XDG registry and
 does not inspect, import, or alter LazyVim/sessionizer files.
 
-For a local human terminal, `bb tm` presents a built-in numbered selector and
-opens the chosen directory through external `tmux`. Use
+For a local human terminal, `bb tm` presents an embedded fuzzy selector and
+opens the chosen directory through external `tmux`. Non-TTY use and
+`BB_SELECTOR=plain` fall back to the numbered prompt. Use
 `bb tm --project prj_...` for an explicit non-interactive choice,
 including scripts and tests. This command neither contacts Orca nor records or
 manages an Orca/tmux lifecycle; `tmux` owns the session it attaches or creates.

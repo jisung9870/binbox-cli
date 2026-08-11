@@ -7,7 +7,7 @@ an installed Go binary with typed commands and explicit ownership boundaries.
 |---|---|---|---|
 | Installation | Symlink into a checkout plus `BB_ROOT`, libexec, aliases, and helper scripts | One `bb` binary in `~/.local/bin` | Repository checkout is no longer required at runtime |
 | Shell startup | Sources `setup/binbox/shell/init.zsh` and aliases every libexec program | `eval "$(bb shell init zsh)"` | `bb wenv <name>` still changes the current zsh; generic aliases are removed |
-| Interactive selection | fzf used by multiple commands | Built-in numbered selector for bb-owned selection | fzf is no longer a bb dependency; specialist external tools may still use it |
+| Interactive selection | fzf used by multiple commands | Embedded Bubble Tea fuzzy selector with numbered fallback | fzf is no longer a bb dependency; non-TTY use remains deterministic |
 | Projects | Shared sessionizer text file as live source | XDG JSON registry imported check-first | Legacy file stays unchanged and can be used as rollback input |
 | tmux | Shell scripts and basename-oriented sessions | Stable project IDs, explicit session operations, direct tmux argv | Existing sessions remain external; new sessions avoid same-name collisions |
 | Git | `gx` shell helpers and interactive selection | Typed `git` reads and explicit `gx` mutations | Branch targets are explicit; stale interactive mutation is removed |

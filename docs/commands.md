@@ -9,7 +9,7 @@ provider state; `bb doctor` reports whether they are available.
 | Build and health | `version`, `doctor`, `doctor nvim` | Versioned output and required/optional capability checks |
 | Shell | `shell init zsh` | Emits checkout-independent integration; only successful wenv selection output is evaluated |
 | Projects | `project list/add/show/remove`, `project import sessionizer --check/--apply` | XDG registry, stable IDs, read-only legacy source, content-addressed recovery copy |
-| Human tmux | `tm`, `tm projects`, `tm sessions`, `tm attach/kill/dirs/layout` | Built-in numbered selector, exact target re-observation, tmux remains process owner |
+| Human tmux | `tm`, `tm projects`, `tm sessions`, `tm attach/kill/dirs/layout` | Embedded fuzzy selector with numbered fallback, exact target re-observation, tmux remains process owner |
 | Session intent | `session list/start/stop/open` | bb-owned intent records; explicit `tmux`, `orca`, or `shell` backend |
 | Execution journal | `run`, `run list/show/export`, `export` | Records command basename, argument count, time, and exit only; never argument values |
 | Git | `git root/branch/log`, `gx root/branch/log` | Typed reads plus explicit branch mutations |

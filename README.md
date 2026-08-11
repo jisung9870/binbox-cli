@@ -61,6 +61,8 @@ printf '%s' "$TOKEN" | bb sec set github token
 printf '%s' "$TOKEN" | bb sec set github token --force
 # Search and manage existing entries without displaying values.
 bb sec
+# Rename a field without exposing or re-entering its value.
+bb sec rename github token access-token
 # Scope normalized secret variables to one child process.
 bb sec exec database -- psql
 
@@ -127,7 +129,7 @@ defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
 through the existing authenticated GitHub CLI session:
 
 ```sh
-scripts/install.sh --github-cli --version 0.8.1
+scripts/install.sh --github-cli --version 0.9.0
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.
@@ -137,6 +139,7 @@ See the [command reference](docs/commands.md),
 [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 [non-Git parity audit](docs/non-git-parity-audit-2026-08-11.md),
 [macOS cutover record](docs/cutover-macos-2026-08-11.md),
+[v0.9.0 hierarchical secret manager smoke record](docs/sec-manager-smoke-v0.9.0.md),
 [v0.8.1 compact secret manager smoke record](docs/sec-manager-smoke-v0.8.1.md),
 [v0.8.0 secret manager smoke record](docs/sec-manager-smoke-v0.8.0.md),
 [v0.7.1 secret audit](docs/sec-audit-v0.7.1.md),

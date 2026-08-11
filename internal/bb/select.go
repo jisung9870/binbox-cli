@@ -23,18 +23,29 @@ type selectChoice struct {
 	SearchText  string
 }
 
+type selectOutcome struct {
+	Value       string
+	Interrupted bool
+}
+
 // selectOne is the interactive selector shared by bb commands. Real terminals
 // get a search-first Bubble Tea UI; pipes, tests, and dumb terminals keep the
 // line-oriented selector. UI always goes to stderr so stdout remains a
 // machine/eval-safe data channel.
 func (a *App) selectOne(prompt string, choices []selectChoice) (string, error) {
+	result, err := a.selectOneOutcome(prompt, choices)
+	return result.Value, err
+}
+
+func (a *App) selectOneOutcome(prompt string, choices []selectChoice) (selectOutcome, error) {
 	if len(choices) == 0 {
-		return "", unavailable("no selectable items")
+		return selectOutcome{}, unavailable("no selectable items")
 	}
 	if a.useBubbleSelector() {
-		return a.selectOneBubble(prompt, choices)
+		return a.selectOneBubbleOutcome(prompt, choices)
 	}
-	return selectOnePlain(a.in, a.err, prompt, choices)
+	value, err := selectOnePlain(a.in, a.err, prompt, choices)
+	return selectOutcome{Value: value}, err
 }
 
 func (a *App) useBubbleSelector() bool {
@@ -183,18 +194,19 @@ func newSelectorStyles(noColor bool) selectorStyles {
 }
 
 type bubbleSelectorModel struct {
-	prompt    string
-	choices   []bubbleChoice
-	matches   []selectorMatch
-	input     textinput.Model
-	styles    selectorStyles
-	width     int
-	height    int
-	cursor    int
-	offset    int
-	selected  string
-	cancelled bool
-	noColor   bool
+	prompt      string
+	choices     []bubbleChoice
+	matches     []selectorMatch
+	input       textinput.Model
+	styles      selectorStyles
+	width       int
+	height      int
+	cursor      int
+	offset      int
+	selected    string
+	cancelled   bool
+	interrupted bool
+	noColor     bool
 }
 
 func newBubbleSelectorModel(prompt string, choices []selectChoice) bubbleSelectorModel {
@@ -252,6 +264,7 @@ func (m bubbleSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+c":
 			m.cancelled = true
+			m.interrupted = true
 			return m, tea.Quit
 		case "esc":
 			if m.input.Value() != "" {
@@ -469,7 +482,7 @@ func padBetween(left, right string, width int) string {
 	return ansi.Truncate(left+strings.Repeat(" ", space)+right, width, "…")
 }
 
-func (a *App) selectOneBubble(prompt string, choices []selectChoice) (string, error) {
+func (a *App) selectOneBubbleOutcome(prompt string, choices []selectChoice) (selectOutcome, error) {
 	program := tea.NewProgram(
 		newBubbleSelectorModelWithColor(prompt, choices, a.getenv("NO_COLOR") != ""),
 		tea.WithInput(a.in),
@@ -478,14 +491,14 @@ func (a *App) selectOneBubble(prompt string, choices []selectChoice) (string, er
 	)
 	result, err := program.Run()
 	if err != nil {
-		return "", fmt.Errorf("run selector: %w", err)
+		return selectOutcome{}, fmt.Errorf("run selector: %w", err)
 	}
 	model, ok := result.(bubbleSelectorModel)
 	if !ok {
-		return "", fmt.Errorf("selector returned an unexpected model")
+		return selectOutcome{}, fmt.Errorf("selector returned an unexpected model")
 	}
 	if model.cancelled {
-		return "", nil
+		return selectOutcome{Interrupted: model.interrupted}, nil
 	}
-	return model.selected, nil
+	return selectOutcome{Value: model.selected}, nil
 }

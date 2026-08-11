@@ -34,8 +34,8 @@ func TestBubbleSelectorSelectsStableValueAndCancels(t *testing.T) {
 
 	cancelled, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	cancelledModel := cancelled.(bubbleSelectorModel)
-	if !cancelledModel.cancelled || cancelledModel.selected != "" {
-		t.Fatalf("selected=%q cancelled=%v", cancelledModel.selected, cancelledModel.cancelled)
+	if !cancelledModel.cancelled || !cancelledModel.interrupted || cancelledModel.selected != "" {
+		t.Fatalf("selected=%q cancelled=%v interrupted=%v", cancelledModel.selected, cancelledModel.cancelled, cancelledModel.interrupted)
 	}
 }
 
@@ -84,8 +84,8 @@ func TestBubbleSelectorEscapeClearsFilterBeforeCancelling(t *testing.T) {
 
 	cancelled, _ := clearedModel.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	cancelledModel := cancelled.(bubbleSelectorModel)
-	if !cancelledModel.cancelled {
-		t.Fatal("second Escape did not cancel the selector")
+	if !cancelledModel.cancelled || cancelledModel.interrupted {
+		t.Fatalf("second Escape cancellation: cancelled=%v interrupted=%v", cancelledModel.cancelled, cancelledModel.interrupted)
 	}
 }
 
@@ -842,7 +842,7 @@ func TestSecManagerPlainCopyAndReplace(t *testing.T) {
 
 	stderr := new(bytes.Buffer)
 	a.err = stderr
-	a.in = strings.NewReader("2\n1\n")
+	a.in = strings.NewReader("2\n1\n1\n")
 	out.Reset()
 	if err := a.Run([]string{"sec"}); err != nil {
 		t.Fatal(err)
@@ -855,7 +855,7 @@ func TestSecManagerPlainCopyAndReplace(t *testing.T) {
 	}
 
 	stderr.Reset()
-	a.in = strings.NewReader("1\n2\nyes\nreplaced-value\n")
+	a.in = strings.NewReader("1\n1\n2\nyes\nreplaced-value\n")
 	if err := a.Run([]string{"sec"}); err != nil {
 		t.Fatal(err)
 	}
@@ -865,17 +865,107 @@ func TestSecManagerPlainCopyAndReplace(t *testing.T) {
 	}
 }
 
-func TestSecretChoicesRenderServiceAndFieldOnOneLine(t *testing.T) {
-	choices := secretChoices(secretStore{"service": {"field": "not-rendered"}})
-	if len(choices) != 1 {
-		t.Fatalf("choices=%+v", choices)
+func TestSecRenameFieldPreservesValueAndRejectsConflicts(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
 	}
-	if got := choices[0]; got.Label != "service / field" || got.Description != "" || got.Value != "service\tfield" {
-		t.Fatalf("choice=%+v", got)
+	for _, item := range []struct{ field, value string }{{"old", "secret-value"}, {"existing", "other-value"}} {
+		a.in = strings.NewReader(item.value + "\n")
+		if err := a.Run([]string{"sec", "set", "svc", item.field}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	view := newBubbleSelectorModelWithColor("Secret", choices, true).View()
-	if !strings.Contains(view, "> service / field") || strings.Contains(view, "not-rendered") || strings.Contains(view, "> service / field\n\n") {
-		t.Fatalf("secret choice view:\n%s", view)
+
+	store, _ := a.secPaths()
+	before, err := os.ReadFile(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run([]string{"sec", "rename", "svc", "old", "existing", "--yes"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("rename conflict err=%v", err)
+	}
+	after, err := os.ReadFile(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("rename conflict rewrote the encrypted store")
+	}
+
+	a.in = strings.NewReader("\n")
+	if err := a.Run([]string{"sec", "rename", "svc", "old", "renamed"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("cancelled rename err=%v", err)
+	}
+	afterCancel, err := os.ReadFile(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, afterCancel) {
+		t.Fatal("cancelled rename rewrote the encrypted store")
+	}
+	if err := a.Run([]string{"sec", "rename", "svc", "old", "renamed", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "svc", "renamed"}); err != nil || strings.TrimSpace(out.String()) != "secret-value" {
+		t.Fatalf("renamed value=%q err=%v", out.String(), err)
+	}
+	if err := a.Run([]string{"sec", "get", "svc", "old"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("old field still resolves: %v", err)
+	}
+}
+
+func TestSecManagerRenamesSelectedField(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	a.in = strings.NewReader("sensitive-secret\n")
+	if err := a.Run([]string{"sec", "set", "svc", "field"}); err != nil {
+		t.Fatal(err)
+	}
+	a.in = strings.NewReader("1\n1\n3\nrenamed\nyes\n")
+	stderr.Reset()
+	out.Reset()
+	if err := a.Run([]string{"sec"}); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 || strings.Contains(stderr.String(), "sensitive-secret") {
+		t.Fatalf("rename streams stdout=%q stderr=%q", out.String(), stderr.String())
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "svc", "renamed"}); err != nil || strings.TrimSpace(out.String()) != "sensitive-secret" {
+		t.Fatalf("manager renamed value=%q err=%v", out.String(), err)
+	}
+}
+
+func TestSecretChoicesSeparateServicesAndFieldsWithoutValues(t *testing.T) {
+	data := secretStore{"service": {"alpha": "not-rendered", "beta": "also-secret"}}
+	services := secretServiceChoices(data)
+	if len(services) != 1 || services[0].Value != "service" || services[0].Label != "service" || services[0].Description != "2 fields" {
+		t.Fatalf("service choices=%+v", services)
+	}
+	serviceView := newBubbleSelectorModelWithColor("Secret service", services, true).View()
+	if !strings.Contains(serviceView, "> service") || !strings.Contains(serviceView, "2 fields") || strings.Contains(serviceView, "not-rendered") || strings.Contains(serviceView, "also-secret") {
+		t.Fatalf("service view:\n%s", serviceView)
+	}
+
+	fields := secretFieldChoices("service", data["service"])
+	if len(fields) != 2 || fields[0].Value != "alpha" || fields[0].Label != "alpha" || fields[1].Value != "beta" {
+		t.Fatalf("field choices=%+v", fields)
+	}
+	fieldView := newBubbleSelectorModelWithColor("Field in service", fields, true).View()
+	if !strings.Contains(fieldView, "> alpha") || strings.Contains(fieldView, "not-rendered") || strings.Contains(fieldView, "also-secret") {
+		t.Fatalf("field view:\n%s", fieldView)
 	}
 }
 
@@ -886,8 +976,8 @@ func TestSecManagerPlainRemovalActions(t *testing.T) {
 		remaining     string
 		serviceExists bool
 	}{
-		{name: "field", action: "3", remaining: "beta\n", serviceExists: true},
-		{name: "service", action: "4", serviceExists: false},
+		{name: "field", action: "4", remaining: "beta\n", serviceExists: true},
+		{name: "service", action: "5", serviceExists: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, out, _, _ := testApp(t)
@@ -903,7 +993,7 @@ func TestSecManagerPlainRemovalActions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			a.in = strings.NewReader("1\n" + tc.action + "\nyes\n")
+			a.in = strings.NewReader("1\n1\n" + tc.action + "\nyes\n")
 			if err := a.Run([]string{"sec"}); err != nil {
 				t.Fatal(err)
 			}
@@ -920,7 +1010,7 @@ func TestSecManagerPlainRemovalActions(t *testing.T) {
 	}
 }
 
-func TestSecManagerPlainCancelAtEitherStage(t *testing.T) {
+func TestSecManagerPlainCancelAtEveryNavigationStage(t *testing.T) {
 	a, out, _, _ := testApp(t)
 	dir := t.TempDir()
 	enableSecHelper(a, dir)
@@ -932,7 +1022,7 @@ func TestSecManagerPlainCancelAtEitherStage(t *testing.T) {
 	if err := a.Run([]string{"sec", "set", "svc", "field"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []string{"\n", "1\n\n"} {
+	for _, input := range []string{"\n", "1\n\n\n", "1\n1\n\n\n\n"} {
 		a.in = strings.NewReader(input)
 		out.Reset()
 		if err := a.Run([]string{"sec"}); err != nil {
@@ -976,7 +1066,7 @@ func TestSecCopySelectorUsesStableValueAndKeepsStdoutClean(t *testing.T) {
 	}
 	for _, item := range []struct {
 		service, field, value string
-	}{{"alpha", "password", "alpha-secret"}, {"zeta", "token", "zeta-secret"}} {
+	}{{"alpha", "password", "alpha-secret"}, {"zeta", "password", "zeta-password-secret"}, {"zeta", "token", "zeta-secret"}} {
 		a.in = strings.NewReader(item.value + "\n")
 		if err := a.Run([]string{"sec", "set", item.service, item.field}); err != nil {
 			t.Fatal(err)
@@ -985,7 +1075,7 @@ func TestSecCopySelectorUsesStableValueAndKeepsStdoutClean(t *testing.T) {
 
 	stderr := new(bytes.Buffer)
 	a.err = stderr
-	a.in = strings.NewReader("2\n")
+	a.in = strings.NewReader("2\n2\n")
 	out.Reset()
 	if err := a.Run([]string{"sec", "copy"}); err != nil {
 		t.Fatal(err)

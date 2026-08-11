@@ -18,7 +18,7 @@ provider state; `bb doctor` reports whether they are available.
 | AWS profiles | `profile list/show/add/edit/rm/login` | SSO profiles in AWS config only; AWS CLI owns credentials, login, and cache |
 | AWS credentials | `assume [profile]/list/current/unset/exec/profile` | Search-first profile TUI; AWS CLI resolves credentials; bb stores none and emits them only to the shell pipe or a scoped child process |
 | Environments | `wenv list/current/show/apply/set/rm/export/import` | Search-first preset TUI; declarative non-secret XDG JSON; preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
-| Secrets | `sec`, `sec init/list/set/get/copy/env/exec/rm` | Search-first manager without values; default-cancel overwrite/removal; hidden input; child-scoped exec; existing age key/ciphertext format |
+| Secrets | `sec`, `sec init/list/set/rename/get/copy/env/exec/rm` | Service→Field→Action manager without values; default-cancel rename/overwrite/removal; hidden input; child-scoped exec; existing age key/ciphertext format |
 | Terraform | `tfx init/validate/fmt/plan/sum/session/status/apply/destroy/end/state/review/clean` | Account-, scope-, expiry-, and plan-bound destructive safeguards |
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
 | Local ports | `port inspect/kill` | Exact sorted PID observation followed by confirmation and re-observation |
@@ -27,8 +27,9 @@ provider state; `bb doctor` reports whether they are available.
 | Orca | `orca status`, `agents` | Status/pointer only; Orca exclusively owns agents, worktrees, terminals, schedules, and DAGs |
 
 Interactive selection renders only on stderr. Printable input searches without a
-mode switch; `↑/↓` or `Ctrl+N/P` move, Enter selects, Escape clears then cancels,
-and Ctrl+C cancels immediately. `BB_SELECTOR=plain` forces numbered prompts and
+mode switch; `↑/↓` or `Ctrl+N/P` move, Enter selects, and Escape clears then
+cancels. In `bb sec`, Escape navigates Action→Field→Service before exiting;
+Ctrl+C exits immediately. `BB_SELECTOR=plain` forces numbered prompts and
 `NO_COLOR=1` retains the TUI layout without ANSI color.
 
 ## State and recovery

@@ -239,3 +239,18 @@ on one child process without printing export statements or changing the parent
 environment. Piped replacement requires `--force`; interactive replacement
 requires confirmation. The existing local age key/ciphertext format remains the
 only storage backend.
+
+## 2026-08-11 — Secrets use scoped hierarchy and atomic field rename
+
+Decision: `bb sec` navigates Service→Field→Action. The service screen shows only
+service names and field counts; entering a service reveals its sorted field
+names. Escape returns Action→Field→Service and exits only from the service
+screen, while Ctrl+C exits immediately. This supersedes the earlier flat
+`service / field` list because repeated service names made frequent use harder
+to scan.
+
+Rename field is available in the action screen and as
+`bb sec rename <service> <field> <new-field>`. It validates the unused target,
+defaults to Cancel, moves the existing value in memory, and performs the same
+locked atomic ciphertext replacement and backup as other secret mutations.
+Neither the old value nor the new value is rendered or journaled.

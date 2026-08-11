@@ -38,6 +38,7 @@ func (a *App) sec(args []string) error {
   bb sec init
   bb sec list [service]
   bb sec set <service> <field> [--force]
+  bb sec rename <service> <field> <new-field> [--yes]
   bb sec get <service> [field]
   bb sec copy [service] [field]
   bb sec env <service>
@@ -58,6 +59,8 @@ Uses the existing age key/store format. Plaintext is never written to disk or jo
 		return a.secList(args[1:])
 	case "set":
 		return a.secSet(args[1:])
+	case "rename":
+		return a.secRenameField(args[1:])
 	case "get":
 		return a.secGet(args[1:])
 	case "copy":
@@ -314,6 +317,44 @@ func (a *App) secSet(args []string) error {
 	return a.writeSecrets(d, old)
 }
 
+func (a *App) secRenameField(args []string) error {
+	args, yes := takeFlag(args, "--yes")
+	if len(args) != 3 || !validSecretName(args[0]) || !validSecretName(args[1]) || !validSecretName(args[2]) {
+		return usage("sec rename", "<service> <field> <new-field> [--yes]")
+	}
+	service, field, newField := args[0], args[1], args[2]
+	if field == newField {
+		return invalid("new secret field name must differ from the current name")
+	}
+	data, old, e := a.readSecretsSnapshot()
+	if e != nil {
+		return e
+	}
+	fields, ok := data[service]
+	if !ok {
+		return invalid("secret service not found: " + service)
+	}
+	value, ok := fields[field]
+	if !ok {
+		return invalid("secret field not found")
+	}
+	if _, exists := fields[newField]; exists {
+		return invalid("target secret field already exists")
+	}
+	if !yes {
+		confirmed, confirmErr := a.confirmAction("Rename encrypted secret field " + service + "/" + field + " to " + newField + "?")
+		if confirmErr != nil {
+			return confirmErr
+		}
+		if !confirmed {
+			return invalid("secret field rename cancelled")
+		}
+	}
+	fields[newField] = value
+	delete(fields, field)
+	return a.writeSecrets(data, old)
+}
+
 func (a *App) readSecretValue() ([]byte, error) {
 	if input, ok := a.in.(*os.File); ok && a.isTerminal(input.Fd()) {
 		if _, e := fmt.Fprint(a.err, "Secret value: "); e != nil {
@@ -479,16 +520,42 @@ func overlaySecretEnvironment(base []string, variables []secretEnvironmentVariab
 	return env
 }
 
-func secretChoices(data secretStore) []selectChoice {
-	choices := make([]selectChoice, 0)
+func secretServiceChoices(data secretStore) []selectChoice {
+	choices := make([]selectChoice, 0, len(data))
 	for service, fields := range data {
-		for field := range fields {
-			choices = append(choices, selectChoice{
-				Value:      service + "\t" + field,
-				Label:      service + " / " + field,
-				SearchText: service + "/" + field,
-			})
+		if len(fields) == 0 {
+			continue
 		}
+		fieldNames := make([]string, 0, len(fields))
+		for field := range fields {
+			fieldNames = append(fieldNames, field)
+		}
+		sort.Strings(fieldNames)
+		fieldWord := "fields"
+		if len(fields) == 1 {
+			fieldWord = "field"
+		}
+		choices = append(choices, selectChoice{
+			Value:       service,
+			Label:       service,
+			Description: fmt.Sprintf("%d %s", len(fields), fieldWord),
+			SearchText:  strings.Join(fieldNames, " "),
+		})
+	}
+	sort.Slice(choices, func(i, j int) bool {
+		return choices[i].Label < choices[j].Label
+	})
+	return choices
+}
+
+func secretFieldChoices(service string, fields map[string]string) []selectChoice {
+	choices := make([]selectChoice, 0, len(fields))
+	for field := range fields {
+		choices = append(choices, selectChoice{
+			Value:      field,
+			Label:      field,
+			SearchText: service + "/" + field,
+		})
 	}
 	sort.Slice(choices, func(i, j int) bool {
 		return choices[i].Label < choices[j].Label
@@ -501,46 +568,99 @@ func (a *App) secManage() error {
 	if e != nil {
 		return e
 	}
-	picked, e := a.selectOne("Secret", secretChoices(data))
-	if e != nil {
-		if ExitCode(e) == ExitCapabilityUnavailable {
-			return unavailable("secret store is empty; add one with 'bb sec set <service> <field>'")
+	services := secretServiceChoices(data)
+	if len(services) == 0 {
+		return unavailable("secret store is empty; add one with 'bb sec set <service> <field>'")
+	}
+	for {
+		serviceResult, selectErr := a.selectOneOutcome("Secret service", services)
+		if selectErr != nil {
+			return selectErr
 		}
-		return e
+		if serviceResult.Interrupted || serviceResult.Value == "" {
+			return nil
+		}
+		service := serviceResult.Value
+		fields := data[service]
+		for {
+			fieldResult, fieldErr := a.selectOneOutcome("Field in "+service, secretFieldChoices(service, fields))
+			if fieldErr != nil {
+				return fieldErr
+			}
+			if fieldResult.Interrupted {
+				return nil
+			}
+			if fieldResult.Value == "" {
+				break
+			}
+			field := fieldResult.Value
+			for {
+				actionResult, actionErr := a.selectOneOutcome("Secret action", secretActionChoices(service, field, len(fields)))
+				if actionErr != nil {
+					return actionErr
+				}
+				if actionResult.Interrupted {
+					return nil
+				}
+				if actionResult.Value == "" {
+					break
+				}
+				switch actionResult.Value {
+				case "copy":
+					return a.secCopy([]string{service, field})
+				case "replace":
+					return a.secSet([]string{service, field})
+				case "rename-field":
+					newField, promptErr := a.promptSecretFieldName()
+					if promptErr != nil {
+						return promptErr
+					}
+					if newField == "" {
+						continue
+					}
+					return a.secRenameField([]string{service, field, newField})
+				case "remove-field":
+					return a.secRemove([]string{service, field})
+				case "remove-service":
+					return a.secRemove([]string{service})
+				default:
+					return invalid("unknown secret action")
+				}
+			}
+		}
 	}
-	if picked == "" {
-		return nil
-	}
-	service, field, _ := strings.Cut(picked, "\t")
-	fieldCount := len(data[service])
+}
+
+func secretActionChoices(service, field string, fieldCount int) []selectChoice {
 	fieldWord := "fields"
 	if fieldCount == 1 {
 		fieldWord = "field"
 	}
-	action, e := a.selectOne("Secret action", []selectChoice{
+	return []selectChoice{
 		{Value: "copy", Label: "Copy to clipboard", Description: service + "/" + field},
 		{Value: "replace", Label: "Replace value", Description: "Confirm, then enter without echo"},
+		{Value: "rename-field", Label: "Rename field", Description: service + "/" + field},
 		{Value: "remove-field", Label: "Remove field", Description: service + "/" + field},
 		{Value: "remove-service", Label: "Remove service", Description: fmt.Sprintf("%s · %d %s", service, fieldCount, fieldWord)},
-	})
-	if e != nil {
-		return e
 	}
-	if action == "" {
-		return nil
+}
+
+func (a *App) promptSecretFieldName() (string, error) {
+	if _, e := fmt.Fprint(a.err, "New field name [Enter=cancel]: "); e != nil {
+		return "", e
 	}
-	switch action {
-	case "copy":
-		return a.secCopy([]string{service, field})
-	case "replace":
-		return a.secSet([]string{service, field})
-	case "remove-field":
-		return a.secRemove([]string{service, field})
-	case "remove-service":
-		return a.secRemove([]string{service})
-	default:
-		return invalid("unknown secret action")
+	value, e := readLine(a.in)
+	value = strings.TrimSpace(value)
+	if e != nil && value == "" {
+		return "", fmt.Errorf("read new secret field name: %w", e)
 	}
+	if value == "" {
+		return "", nil
+	}
+	if !validSecretName(value) {
+		return "", invalid("secret field names may contain only letters, digits, dot, underscore, and hyphen")
+	}
+	return value, nil
 }
 
 func (a *App) secCopy(args []string) error {
@@ -559,14 +679,27 @@ func (a *App) secCopy(args []string) error {
 		field = args[1]
 	}
 	if svc == "" {
-		picked, e := a.selectOne("Secret", secretChoices(d))
+		picked, e := a.selectOne("Secret service", secretServiceChoices(d))
 		if e != nil {
 			return e
 		}
 		if picked == "" {
 			return nil
 		}
-		svc, field, _ = strings.Cut(picked, "\t")
+		svc = picked
+	}
+	fields, ok := d[svc]
+	if !ok {
+		return invalid("secret service not found: " + svc)
+	}
+	if field == "" && len(fields) > 1 {
+		field, e = a.selectOne("Field in "+svc, secretFieldChoices(svc, fields))
+		if e != nil {
+			return e
+		}
+		if field == "" {
+			return nil
+		}
 	}
 	field, e = resolveSecretField(d, svc, field)
 	if e != nil {

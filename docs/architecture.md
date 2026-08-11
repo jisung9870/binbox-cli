@@ -45,7 +45,7 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb profile ...` | Manages AWS SSO profiles and delegates login | Writes only `~/.aws/config` atomically with backups; credentials/cache remain AWS CLI-owned |
 | `bb assume ...` | Restores current-shell and scoped-command credential UX through AWS CLI resolution | No bb credential parsing/cache; stdout credentials are refused on a terminal and evaluated only through generated shell integration |
 | `bb wenv ...` | Imports an allowlisted non-executable legacy subset and previews/applies declarative environments | XDG JSON, secret-like key rejection, search-first selector, default-cancel confirmation, numbered fallback |
-| `bb sec ...` | Uses the existing age-encrypted JSON/key format | Plaintext remains in memory/pipes; ciphertext mutation is locked, atomic, and backed up |
+| `bb sec ...` | Uses the existing age-encrypted JSON/key format through Service→Field→Action navigation | Plaintext remains in memory/pipes; field rename moves the in-memory value only; ciphertext mutation is locked, atomic, and backed up |
 | `bb tm attach/kill/dirs/layout` | Operates on an exact tmux session or bb project registry entry; layouts are fixed Go-owned recipes | Destructive actions show targets and re-observe before direct tmux argv; no legacy directory-file writes |
 | `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |
 | `bb gx ...` | Provides explicit Git branch/root/log compatibility without shell or fzf dependence | Branch deletion shows and re-observes the exact ref and refuses the current branch |
@@ -54,7 +54,7 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/review/clean/state ...` | Preserves the guarded Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; review output uses fresh owner-only XDG state; every destructive path is bounded, confirmed, and re-observed; plan mutation uses a private immutable snapshot |
 | `bb tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Preserves the Trivy workflow and fixed CI/report policies | Direct Trivy arguments; node collector requires confirmation; no config or credential mutation |
 | `bb mcp inventory/audit` | Reports candidate presence and content hashes without returning configuration content | Appends redacted metadata-only `mcp_audit` journal event; never mutates config |
-| `bb sec` | Selects service/field metadata, then a safe copy/replace/remove action | Plaintext never enters selector labels, descriptions, stdout, or the journal |
+| `bb sec` | Selects a service, one scoped field, then a safe copy/replace/rename/remove action | Plaintext never enters selector labels, descriptions, stdout, or the journal |
 | `bb sec exec <service> -- ...` | Decrypts once and overlays normalized fields on one child environment | Parent environment and encrypted store are unchanged; no export text is emitted |
 | `bb export [--output path]` | Exports journal events as JSON | Read-only journal access; optional `0600` output |
 | `bb orca status` | Calls Orca's read-only JSON status endpoint | No Orca mutation or duplicated state |

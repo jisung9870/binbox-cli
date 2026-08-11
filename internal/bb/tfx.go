@@ -367,17 +367,7 @@ func (a *App) writeTFXSession(s tfxSession) error {
 	return nil
 }
 
-func (a *App) confirmTFX(question string) (bool, error) {
-	if _, err := fmt.Fprintf(a.out, "%s [y/N]: ", question); err != nil {
-		return false, err
-	}
-	answer, err := bufio.NewReader(a.in).ReadString('\n')
-	if err != nil && len(answer) == 0 {
-		return false, fmt.Errorf("read confirmation: %w", err)
-	}
-	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y" || answer == "yes", nil
-}
+func (a *App) confirmTFX(question string) (bool, error) { return a.confirmAction(question) }
 
 func (a *App) revalidateTFXMutation(expected tfxSession, requiredScope string) error {
 	current, err := a.requireTFXSession()
@@ -512,7 +502,10 @@ func (a *App) tfxApply(args []string) (err error) {
 			err = cleanupErr
 		}
 	}()
-	ok, err := a.confirmTFX(fmt.Sprintf("Apply saved plan %q (sha256 %s)?", snapshot.Source, snapshot.SHA256))
+	if _, err := fmt.Fprintf(a.err, "Saved plan: %s\nSHA-256: %s\n", safeTerminalText(snapshot.Source), snapshot.SHA256); err != nil {
+		return err
+	}
+	ok, err := a.confirmTFX("Apply this saved plan?")
 	if err != nil {
 		return err
 	}
@@ -568,7 +561,10 @@ func (a *App) tfxDestroy(args []string) (err error) {
 			err = cleanupErr
 		}
 	}()
-	ok, err := a.confirmTFX(fmt.Sprintf("Apply destroy plan %q (sha256 %s)?", snapshot.Source, snapshot.SHA256))
+	if _, err := fmt.Fprintf(a.err, "Destroy plan: %s\nSHA-256: %s\n", safeTerminalText(snapshot.Source), snapshot.SHA256); err != nil {
+		return err
+	}
+	ok, err := a.confirmTFX("Apply this destroy plan?")
 	if err != nil {
 		return err
 	}

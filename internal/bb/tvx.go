@@ -1,7 +1,6 @@
 package bb
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -147,9 +146,11 @@ func (a *App) tvxK8s(args []string) error {
 	}
 	if collector {
 		fmt.Fprintln(a.err, "warning: node collector can create Job/namespace resources in the target cluster")
-		fmt.Fprint(a.err, "run node collector? [y/N] ")
-		answer, _ := bufio.NewReader(a.in).ReadString('\n')
-		if strings.ToLower(strings.TrimSpace(answer)) != "y" && strings.ToLower(strings.TrimSpace(answer)) != "yes" {
+		confirmed, confirmErr := a.confirmAction("Run the node collector?")
+		if confirmErr != nil {
+			return confirmErr
+		}
+		if !confirmed {
 			fmt.Fprintln(a.err, "cancelled")
 			return nil
 		}

@@ -83,10 +83,13 @@ bb doctor nvim --config-dir /path/to/lazyvim-config --json
 The MVP stores configuration under `$XDG_CONFIG_HOME/bb` and state/journals
 under `$XDG_STATE_HOME/bb` (with standard home-directory fallbacks). It does
 not require `BB_ROOT`, a `libexec` tree, or helper scripts on `PATH`.
-Interactive choices use an embedded Bubble Tea fuzzy selector on real terminals
-and fall back to a numbered prompt for pipes, tests, and dumb terminals; fzf is
-not a bb runtime dependency. Set `BB_SELECTOR=plain` to force the numbered
-prompt. `bb shell init zsh` emits the small wrapper that evaluates only
+Interactive choices use bb's search-first Bubble Tea TUI on real terminals:
+typing filters immediately, arrows move on the first press, and command-specific
+metadata helps distinguish matches. Destructive non-Git confirmations use the
+same responsive, default-cancel visual language. Pipes, tests, dumb terminals,
+and `BB_SELECTOR=plain` retain deterministic text prompts; `NO_COLOR=1` removes
+TUI color. fzf is not a bb runtime dependency. `bb shell init zsh` emits the
+small wrapper that evaluates only
 successful `bb wenv <preset>` output in the current shell. It has no checkout,
 `BB_ROOT`, or libexec dependency.
 
@@ -115,7 +118,7 @@ defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
 through the existing authenticated GitHub CLI session:
 
 ```sh
-scripts/install.sh --github-cli --version 0.6.0
+scripts/install.sh --github-cli --version 0.7.0
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.
@@ -125,6 +128,7 @@ See the [command reference](docs/commands.md),
 [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 [non-Git parity audit](docs/non-git-parity-audit-2026-08-11.md),
 [macOS cutover record](docs/cutover-macos-2026-08-11.md),
+[v0.7.0 TUI smoke record](docs/tui-smoke-v0.7.0.md), the historical
 [selector smoke record](docs/selector-smoke-2026-08-11.md), and
 [decision log](docs/decision-log.md). The legacy and installer evidence is
 preserved under `research/`.

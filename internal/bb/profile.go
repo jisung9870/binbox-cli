@@ -301,7 +301,7 @@ func (a *App) profileRemove(args []string) error {
 	}
 	fmt.Fprintln(a.out, "Target AWS profile:", name)
 	if !yes {
-		ok, e := a.confirmExternal("Remove this profile from ~/.aws/config? [y/N] ")
+		ok, e := a.confirmAction("Remove this profile from ~/.aws/config?")
 		if e != nil {
 			return e
 		}

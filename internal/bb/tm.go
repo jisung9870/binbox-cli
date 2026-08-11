@@ -1,7 +1,6 @@
 package bb
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -225,7 +224,12 @@ func (a *App) selectTMProject(projects []projectRecord) (projectRecord, error) {
 	choices := make([]selectChoice, 0, len(projects))
 	for _, project := range projects {
 		if !strings.ContainsAny(project.ID+project.Name+project.Path, "\n\r") {
-			choices = append(choices, selectChoice{project.ID, project.Name + " — " + project.Path})
+			choices = append(choices, selectChoice{
+				Value:       project.ID,
+				Label:       project.Name,
+				Description: project.Path,
+				SearchText:  project.ID + " " + project.Origin.Kind,
+			})
 		}
 	}
 	selectedID, err := a.selectOne("Project", choices)
@@ -295,7 +299,7 @@ func (a *App) tmKill(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(a.out, "Target tmux session: %s\n", target.Name); err != nil {
+	if _, err := fmt.Fprintf(a.out, "Target tmux session: %s\n", safeTerminalText(target.Name)); err != nil {
 		return err
 	}
 	if !yes {
@@ -379,7 +383,7 @@ func (a *App) tmRemoveProject(ref string, yes bool) error {
 	}); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(a.out, "Target project: %s (%s)\n", target.Name, target.Path); err != nil {
+	if _, err := fmt.Fprintf(a.out, "Target project: %s (%s)\n", safeTerminalText(target.Name), safeTerminalText(target.Path)); err != nil {
 		return err
 	}
 	if !yes {
@@ -435,7 +439,7 @@ func (a *App) tmPruneProjects(yes bool) error {
 		return err
 	}
 	for _, p := range stale {
-		if _, err := fmt.Fprintf(a.out, "- %s\t%s\n", p.Name, p.Path); err != nil {
+		if _, err := fmt.Fprintf(a.out, "- %s\t%s\n", safeTerminalText(p.Name), safeTerminalText(p.Path)); err != nil {
 			return err
 		}
 	}
@@ -481,17 +485,7 @@ func matchingTMProjects(projects []projectRecord, ref string) []projectRecord {
 	return matches
 }
 
-func (a *App) confirmTM(question string) (bool, error) {
-	if _, err := fmt.Fprintf(a.out, "%s [y/N]: ", question); err != nil {
-		return false, err
-	}
-	answer, err := bufio.NewReader(a.in).ReadString('\n')
-	if err != nil && len(answer) == 0 {
-		return false, fmt.Errorf("read confirmation: %w", err)
-	}
-	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y" || answer == "yes", nil
-}
+func (a *App) confirmTM(question string) (bool, error) { return a.confirmAction(question) }
 
 func (a *App) tmLayout(args []string) error {
 	flags, err := tmLayoutFlags(args)
@@ -552,7 +546,7 @@ func tmLayoutFlags(args []string) (tmLayoutOptions, error) {
 }
 
 func validTMSessionName(name string) bool {
-	return name != "" && !strings.ContainsAny(name, "\x00\n\r")
+	return name != "" && safeTerminalText(name) == name
 }
 
 func (a *App) tmExactSession(name string) (tmSession, error) {
@@ -572,7 +566,20 @@ func (a *App) selectTMSession(sessions []tmSession) (tmSession, error) {
 	choices := make([]selectChoice, 0, len(sessions))
 	for _, s := range sessions {
 		if validTMSessionName(s.Name) {
-			choices = append(choices, selectChoice{s.ID, s.Name})
+			state := "detached"
+			if s.Attached {
+				state = "attached"
+			}
+			windowWord := "windows"
+			if s.Windows == 1 {
+				windowWord = "window"
+			}
+			choices = append(choices, selectChoice{
+				Value:       s.ID,
+				Label:       s.Name,
+				Description: fmt.Sprintf("%s • %d %s", state, s.Windows, windowWord),
+				SearchText:  s.ID + " " + state,
+			})
 		}
 	}
 	selectedID, err := a.selectOne("Tmux session", choices)

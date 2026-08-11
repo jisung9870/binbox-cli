@@ -28,7 +28,7 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
    by `bb`. Existing tmux/Workbench/Orca objects remain external observations.
    Explicit backends never silently fall back. The minimum LazyVim bridge is
    now `bb tm projects --json`: schema-v1 `data.projects` reads only the bb
-   registry. `bb tm` is a local built-in-selector/tmux convenience and deliberately makes no
+   registry. `bb tm` is a local search-first-TUI/tmux convenience and deliberately makes no
    Orca lifecycle claim.
 5. **Binary release migration (automation implemented).** Publish checksummed artifacts and an atomic
    installer. Detect the old checkout symlink, explain the transition, require

@@ -1,7 +1,6 @@
 package bb
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -205,12 +204,11 @@ func (a *App) portKill(args []string) error {
 	}
 	fmt.Fprintf(a.out, "Processes using port %d: %s\n", port, strings.Join(pids, ", "))
 	if !yes {
-		fmt.Fprint(a.out, "Send SIGTERM to exactly these processes? [y/N] ")
-		answer, readErr := bufio.NewReader(a.in).ReadString('\n')
-		if readErr != nil && strings.TrimSpace(answer) == "" {
-			return fmt.Errorf("read confirmation: %w", readErr)
+		confirmed, confirmErr := a.confirmAction("Send SIGTERM to exactly these processes?")
+		if confirmErr != nil {
+			return confirmErr
 		}
-		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+		if !confirmed {
 			return invalid("port kill cancelled")
 		}
 	}

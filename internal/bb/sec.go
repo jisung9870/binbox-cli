@@ -282,7 +282,7 @@ func (a *App) secRemove(args []string) error {
 		return invalid("secret service not found")
 	}
 	if !yes {
-		ok, e := a.confirmExternal("Remove encrypted secret entry? [y/N] ")
+		ok, e := a.confirmAction("Remove encrypted secret entry?")
 		if e != nil {
 			return e
 		}
@@ -342,10 +342,20 @@ func (a *App) secCopy(args []string) error {
 		var c []selectChoice
 		for s, fs := range d {
 			for f := range fs {
-				c = append(c, selectChoice{s + "\t" + f, s + "/" + f})
+				c = append(c, selectChoice{
+					Value:       s + "\t" + f,
+					Label:       s,
+					Description: f,
+					SearchText:  s + "/" + f,
+				})
 			}
 		}
-		sort.Slice(c, func(i, j int) bool { return c[i].Label < c[j].Label })
+		sort.Slice(c, func(i, j int) bool {
+			if c[i].Label == c[j].Label {
+				return c[i].Description < c[j].Description
+			}
+			return c[i].Label < c[j].Label
+		})
 		picked, e := a.selectOne("Secret", c)
 		if e != nil {
 			return e

@@ -210,3 +210,18 @@ generated shell wrapper; `assume exec` keeps credentials in one child process.
 environment diff on stderr and emits eval-safe stdout only after confirmation.
 Legacy implicit `kubectl config` mutation remains retired: `KUBE_CONTEXT` and
 `KUBE_NAMESPACE` are declarative environment values.
+
+## 2026-08-11 — Search-first shared TUI
+
+Decision: bb owns one responsive Bubble Tea selection surface shared by project,
+tmux session, AWS profile, wenv, and secret service/field selection. Printable
+input filters immediately without a `/` mode switch; the first navigation key
+moves; results show safe command-specific metadata, counts, empty states, and a
+stable selected value. Rendering stays on stderr and `NO_COLOR`, non-TTY, dumb
+terminal, and numbered fallbacks remain supported.
+
+Non-Git yes/no mutation gates share a compact confirmation card whose initial
+selection is Cancel. Existing target previews, immutable Terraform snapshots,
+provider re-observation, and the typed Terraform account challenge remain the
+security authority; the TUI changes presentation, not the mutation threshold.
+Git-related CLI behavior remains outside this rollout.

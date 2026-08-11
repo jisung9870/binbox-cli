@@ -2,6 +2,7 @@ package bb
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -271,8 +272,12 @@ func TestTFXApplyUsesImmutablePrivateSnapshotAfterSourceReplacement(t *testing.T
 		t.Fatal(err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "Apply saved plan \""+plan+"\" (sha256 ") || !strings.Contains(got, "plan-content=trusted") || strings.Contains(got, "terraform args=apply,"+plan) {
+	if !strings.Contains(got, "plan-content=trusted") || strings.Contains(got, "terraform args=apply,"+plan) {
 		t.Fatalf("immutable apply handoff failed: %q", got)
+	}
+	errText := a.err.(*bytes.Buffer).String()
+	if want := fmt.Sprintf("Saved plan: %s\nSHA-256: %x", safeTerminalText(plan), sha256.Sum256([]byte("trusted"))); !strings.Contains(errText, want) {
+		t.Fatalf("apply plan identity missing from stderr: %q", errText)
 	}
 	if b, err := os.ReadFile(plan); err != nil || string(b) != "evil" {
 		t.Fatalf("source was not replaced as expected: %q err=%v", b, err)
@@ -337,8 +342,12 @@ func TestTFXDestroyUsesImmutablePrivateSnapshotAfterSourceReplacement(t *testing
 		t.Fatal(err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "Apply destroy plan \""+plan+"\" (sha256 ") || !strings.Contains(got, "plan-content=plan") || strings.Contains(got, "terraform args=apply,"+plan) {
+	if !strings.Contains(got, "plan-content=plan") || strings.Contains(got, "terraform args=apply,"+plan) {
 		t.Fatalf("immutable destroy handoff failed: %q", got)
+	}
+	errText := a.err.(*bytes.Buffer).String()
+	if want := fmt.Sprintf("Destroy plan: %s\nSHA-256: %x", safeTerminalText(plan), sha256.Sum256([]byte("plan"))); !strings.Contains(errText, want) {
+		t.Fatalf("destroy plan identity missing from stderr: %q", errText)
 	}
 	if b, err := os.ReadFile(plan); err != nil || string(b) != "evil" {
 		t.Fatalf("destroy source was not replaced as expected: %q err=%v", b, err)

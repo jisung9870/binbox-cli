@@ -11,21 +11,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestBuiltInSelectorUsesNumberOrExactName(t *testing.T) {
 	a, _, _, _ := testApp(t)
 	a.in = strings.NewReader("2\n")
-	got, e := a.selectOne("Pick", []selectChoice{{"dev", "Development"}, {"prod", "Production"}})
+	got, e := a.selectOne("Pick", []selectChoice{{Value: "dev", Label: "Development"}, {Value: "prod", Label: "Production"}})
 	if e != nil || got != "prod" {
 		t.Fatalf("got=%q err=%v", got, e)
 	}
 }
 
 func TestBubbleSelectorSelectsStableValueAndCancels(t *testing.T) {
-	model := newBubbleSelectorModel("Pick", []selectChoice{{"dev", "Development"}, {"prod", "Production"}})
+	model := newBubbleSelectorModel("Pick", []selectChoice{{Value: "dev", Label: "Development"}, {Value: "prod", Label: "Production"}})
 	selected, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	selectedModel := selected.(bubbleSelectorModel)
 	if selectedModel.selected != "dev" || selectedModel.cancelled {
@@ -40,10 +40,10 @@ func TestBubbleSelectorSelectsStableValueAndCancels(t *testing.T) {
 }
 
 func TestBubbleSelectorFiltersAndReturnsStableValue(t *testing.T) {
-	model := newBubbleSelectorModel("Pick", []selectChoice{{"dev-id", "Development"}, {"prod-id", "Production"}})
-	model.list.SetFilterText("prod")
-	if got := model.list.VisibleItems(); len(got) != 1 {
-		t.Fatalf("visible items=%d, want 1", len(got))
+	model := newBubbleSelectorModel("Pick", []selectChoice{{Value: "dev-id", Label: "Development"}, {Value: "prod-id", Label: "Production"}})
+	model = typeInSelector(model, "prod")
+	if got := len(model.matches); got != 1 {
+		t.Fatalf("visible items=%d, want 1", got)
 	}
 
 	selected, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -54,10 +54,10 @@ func TestBubbleSelectorFiltersAndReturnsStableValue(t *testing.T) {
 }
 
 func TestBubbleSelectorEmptyFilterDoesNotExit(t *testing.T) {
-	model := newBubbleSelectorModel("Pick", []selectChoice{{"dev", "Development"}, {"prod", "Production"}})
-	model.list.SetFilterText("no-such-environment")
-	if got := model.list.VisibleItems(); len(got) != 0 {
-		t.Fatalf("visible items=%d, want 0", len(got))
+	model := newBubbleSelectorModel("Pick", []selectChoice{{Value: "dev", Label: "Development"}, {Value: "prod", Label: "Production"}})
+	model = typeInSelector(model, "no-such-environment")
+	if got := len(model.matches); got != 0 {
+		t.Fatalf("visible items=%d, want 0", got)
 	}
 
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -73,13 +73,13 @@ func TestBubbleSelectorEmptyFilterDoesNotExit(t *testing.T) {
 }
 
 func TestBubbleSelectorEscapeClearsFilterBeforeCancelling(t *testing.T) {
-	model := newBubbleSelectorModel("Pick", []selectChoice{{"dev", "Development"}, {"prod", "Production"}})
-	model.list.SetFilterText("prod")
+	model := newBubbleSelectorModel("Pick", []selectChoice{{Value: "dev", Label: "Development"}, {Value: "prod", Label: "Production"}})
+	model = typeInSelector(model, "prod")
 
 	cleared, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	clearedModel := cleared.(bubbleSelectorModel)
-	if clearedModel.cancelled || clearedModel.list.FilterState() != list.Unfiltered {
-		t.Fatalf("cancelled=%v filter_state=%v", clearedModel.cancelled, clearedModel.list.FilterState())
+	if clearedModel.cancelled || clearedModel.input.Value() != "" || len(clearedModel.matches) != 2 {
+		t.Fatalf("cancelled=%v query=%q matches=%d", clearedModel.cancelled, clearedModel.input.Value(), len(clearedModel.matches))
 	}
 
 	cancelled, _ := clearedModel.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -99,20 +99,126 @@ func TestBubbleSelectorResizesAndHandlesLongLists(t *testing.T) {
 
 	small, _ := model.Update(tea.WindowSizeMsg{Width: 10, Height: 3})
 	smallModel := small.(bubbleSelectorModel)
-	if smallModel.list.Width() != 24 || smallModel.list.Height() != 8 {
-		t.Fatalf("small size=%dx%d", smallModel.list.Width(), smallModel.list.Height())
+	if smallModel.width != 10 || smallModel.height != 3 {
+		t.Fatalf("small size=%dx%d", smallModel.width, smallModel.height)
 	}
 	large, _ := smallModel.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	largeModel := large.(bubbleSelectorModel)
-	if largeModel.list.Width() != 120 || largeModel.list.Height() != 40 {
-		t.Fatalf("large size=%dx%d", largeModel.list.Width(), largeModel.list.Height())
+	if largeModel.width != 120 || largeModel.height != 40 {
+		t.Fatalf("large size=%dx%d", largeModel.width, largeModel.height)
 	}
 
-	largeModel.list.SetFilterText("needle target")
+	largeModel = typeInSelector(largeModel, "needle target")
 	selected, _ := largeModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if got := selected.(bubbleSelectorModel).selected; got != "id-173" {
 		t.Fatalf("selected=%q, want id-173", got)
 	}
+}
+
+func TestBubbleSelectorFirstArrowMovesWhileSearchRemainsActive(t *testing.T) {
+	model := newBubbleSelectorModel("Pick", []selectChoice{
+		{Value: "prod-a", Label: "Production Alpha"},
+		{Value: "prod-b", Label: "Production Beta"},
+		{Value: "dev", Label: "Development"},
+	})
+	model = typeInSelector(model, "prod")
+	if model.cursor != 0 || len(model.matches) != 2 {
+		t.Fatalf("cursor=%d matches=%d", model.cursor, len(model.matches))
+	}
+	moved, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	movedModel := moved.(bubbleSelectorModel)
+	if movedModel.cursor != 1 || movedModel.input.Value() != "prod" {
+		t.Fatalf("cursor=%d query=%q", movedModel.cursor, movedModel.input.Value())
+	}
+	want := movedModel.matches[1].choice.value
+	selected, _ := movedModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := selected.(bubbleSelectorModel).selected; got != want {
+		t.Fatalf("selected=%q, want second visible result %q", got, want)
+	}
+}
+
+func TestBubbleSelectorViewIsSearchFirstResponsiveAndNoColor(t *testing.T) {
+	model := newBubbleSelectorModelWithColor("Project", []selectChoice{
+		{Value: "dev", Label: "Development", Description: "/workspace/dev", SearchText: "backend"},
+		{Value: "prod", Label: "Production", Description: "/workspace/prod", SearchText: "frontend"},
+	}, true)
+	resized, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = resized.(bubbleSelectorModel)
+	view := model.View()
+	for _, want := range []string{"Select Project", "Search", "Type to search", "2/2 results", "> Development", "/workspace/dev", "enter select"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "\x1b[") {
+		t.Fatalf("NO_COLOR view contains ANSI escape: %q", view)
+	}
+
+	narrow, _ := model.Update(tea.WindowSizeMsg{Width: 49, Height: 12})
+	narrowView := narrow.(bubbleSelectorModel).View()
+	if strings.Contains(narrowView, "/workspace/dev") {
+		t.Fatalf("narrow view showed metadata:\n%s", narrowView)
+	}
+
+	filtered := typeInSelector(model, "missing")
+	if got := filtered.View(); !strings.Contains(got, `No matches for "missing"`) || !strings.Contains(got, "0/2 results") {
+		t.Fatalf("empty search view:\n%s", got)
+	}
+}
+
+func TestBubbleSelectorLayoutNeverExceedsTerminal(t *testing.T) {
+	choices := []selectChoice{
+		{Value: "dev", Label: "개발 환경", Description: "/workspace/development/very/long/path", SearchText: "backend"},
+		{Value: "prod", Label: "Production", Description: "/workspace/production/very/long/path", SearchText: "frontend"},
+	}
+	for _, size := range []struct{ width, height int }{{24, 8}, {40, 9}, {49, 12}, {50, 12}, {80, 20}, {120, 40}} {
+		model := newBubbleSelectorModelWithColor("Environment", choices, true)
+		resized, _ := model.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
+		view := resized.(bubbleSelectorModel).View()
+		lines := strings.Split(view, "\n")
+		if len(lines) > size.height {
+			t.Fatalf("%dx%d rendered %d lines:\n%s", size.width, size.height, len(lines), view)
+		}
+		for lineNumber, line := range lines {
+			if width := ansi.StringWidth(line); width > size.width {
+				t.Fatalf("%dx%d line %d width=%d:\n%s", size.width, size.height, lineNumber, width, view)
+			}
+		}
+		if size.width == 24 {
+			for _, want := range []string{"2/2 results", "enter select", "esc clear/cancel"} {
+				if !strings.Contains(view, want) {
+					t.Fatalf("24x8 view missing %q:\n%s", want, view)
+				}
+			}
+		}
+	}
+}
+
+func TestBubbleSelectorSearchesMetadataAndHandlesUnicodeEditing(t *testing.T) {
+	model := newBubbleSelectorModel("Pick", []selectChoice{
+		{Value: "dev", Label: "개발 환경", Description: "/workspace/dev", SearchText: "backend"},
+		{Value: "prod", Label: "Production", Description: "/workspace/prod", SearchText: "frontend"},
+	})
+	model = typeInSelector(model, "backend")
+	if len(model.matches) != 1 || model.matches[0].choice.value != "dev" {
+		t.Fatalf("metadata matches=%+v", model.matches)
+	}
+	for range len([]rune("backend")) {
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		model = updated.(bubbleSelectorModel)
+	}
+	model = typeInSelector(model, "개발")
+	if model.input.Value() != "개발" || len(model.matches) != 1 || model.matches[0].choice.value != "dev" {
+		t.Fatalf("unicode query=%q matches=%+v", model.input.Value(), model.matches)
+	}
+}
+
+func typeInSelector(model bubbleSelectorModel, value string) bubbleSelectorModel {
+	for _, r := range value {
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		model = updated.(bubbleSelectorModel)
+	}
+	return model
 }
 
 func TestCommandSelectorsReturnStableValuesWithoutStdout(t *testing.T) {
@@ -269,7 +375,7 @@ func TestWenvShowAndConfirmedApply(t *testing.T) {
 	if got, want := out.String(), "export AWS_PROFILE='dev'\nexport AWS_REGION='ap-northeast-2'\n"; got != want {
 		t.Fatalf("apply=%q, want %q", got, want)
 	}
-	if !strings.Contains(stderr.String(), `AWS_PROFILE: "" -> "dev"`) || !strings.Contains(stderr.String(), "Apply this environment? [y/N]") {
+	if !strings.Contains(stderr.String(), `AWS_PROFILE: "" -> "dev"`) || !strings.Contains(stderr.String(), "Apply this environment? [y/N]:") {
 		t.Fatalf("preview=%q", stderr.String())
 	}
 
@@ -281,8 +387,99 @@ func TestWenvShowAndConfirmedApply(t *testing.T) {
 	if got, want := out.String(), "export AWS_PROFILE='dev'\nexport AWS_REGION='ap-northeast-2'\n"; got != want {
 		t.Fatalf("non-interactive apply=%q, want %q", got, want)
 	}
-	if strings.Contains(stderr.String(), "Apply this environment? [y/N]") {
+	if strings.Contains(stderr.String(), "Apply this environment? [y/N]:") {
 		t.Fatalf("--yes prompted for confirmation: %q", stderr.String())
+	}
+}
+
+func TestConfirmationDefaultsToCancelAndSupportsExplicitConfirm(t *testing.T) {
+	model := newConfirmModel("Remove selected item?", true)
+	cancelled, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := cancelled.(confirmModel); got.confirmed || !got.done {
+		t.Fatalf("default confirmation=%v done=%v", got.confirmed, got.done)
+	}
+
+	model = newConfirmModel("Remove selected item?", true)
+	moved, _ := model.Update(tea.KeyMsg{Type: tea.KeyRight})
+	confirmed, _ := moved.(confirmModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := confirmed.(confirmModel); !got.confirmed || !got.done {
+		t.Fatalf("explicit confirmation=%v done=%v", got.confirmed, got.done)
+	}
+
+	view := newConfirmModel("Remove selected item?", true).View()
+	for _, want := range []string{"Confirm action", "Remove selected item?", "[ Cancel ]", "[ Confirm ]", "enter accept"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("confirmation view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "\x1b[") {
+		t.Fatalf("NO_COLOR confirmation contains ANSI: %q", view)
+	}
+
+	for _, size := range []struct{ width, height int }{{24, 8}, {40, 9}, {50, 12}, {80, 20}} {
+		long := newConfirmModel("Apply plan "+strings.Repeat("a", 100)+"?", true)
+		resized, _ := long.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
+		view := resized.(confirmModel).View()
+		lines := strings.Split(view, "\n")
+		if len(lines) > size.height {
+			t.Fatalf("confirmation %dx%d rendered %d lines", size.width, size.height, len(lines))
+		}
+		for lineNumber, line := range lines {
+			if width := ansi.StringWidth(line); width > size.width {
+				t.Fatalf("confirmation %dx%d line %d width=%d", size.width, size.height, lineNumber, width)
+			}
+		}
+		for _, want := range []string{"[ Cancel ]", "[ Confirm ]", "y confirm"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("confirmation %dx%d missing %q:\n%s", size.width, size.height, want, view)
+			}
+		}
+	}
+}
+
+func TestTUIEscapesTerminalControlSequences(t *testing.T) {
+	unsafe := "project\x1b]52;c;Y2xpcGJvYXJk\a\u202eevil"
+	choice := selectChoice{Value: "stable", Label: unsafe, Description: unsafe, SearchText: unsafe}
+	var plain bytes.Buffer
+	selected, err := selectOnePlain(strings.NewReader("1\n"), &plain, unsafe, []selectChoice{choice})
+	if err != nil || selected != "stable" {
+		t.Fatalf("selected=%q err=%v", selected, err)
+	}
+	queryModel := newBubbleSelectorModelWithColor("Query", []selectChoice{{Value: "stable", Label: "safe"}}, true)
+	updated, _ := queryModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(unsafe)})
+	queryModel = updated.(bubbleSelectorModel)
+	if strings.ContainsAny(queryModel.input.Value(), "\x1b\a") || strings.Contains(queryModel.input.Value(), "\u202e") {
+		t.Fatalf("terminal control sequence survived query sanitization: %q", queryModel.input.Value())
+	}
+	for _, output := range []string{
+		plain.String(),
+		newBubbleSelectorModelWithColor(unsafe, []selectChoice{choice}, true).View(),
+		queryModel.View(),
+		newConfirmModel(unsafe, true).View(),
+	} {
+		if strings.ContainsAny(output, "\x1b\a") || strings.Contains(output, "\u202e") {
+			t.Fatalf("terminal control sequence survived sanitization: %q", output)
+		}
+	}
+	if validTMSessionName(unsafe) {
+		t.Fatal("tmux session name with terminal controls was accepted")
+	}
+}
+
+func TestPlainConfirmationKeepsStdoutClean(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	a.in = strings.NewReader("yes\n")
+	confirmed, err := a.confirmAction("Proceed?")
+	if err != nil || !confirmed {
+		t.Fatalf("confirmed=%v err=%v", confirmed, err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("confirmation wrote stdout: %q", out.String())
+	}
+	if got, want := stderr.String(), "Proceed? [y/N]: "; got != want {
+		t.Fatalf("stderr=%q, want %q", got, want)
 	}
 }
 

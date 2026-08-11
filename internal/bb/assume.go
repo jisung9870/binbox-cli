@@ -80,7 +80,20 @@ func (a *App) chooseAssumeProfile() (string, error) {
 	sort.Strings(names)
 	choices := make([]selectChoice, len(names))
 	for i, name := range names {
-		choices[i] = selectChoice{Value: name, Label: name}
+		fields := sectionFields(config, profileHeader(name))
+		detail := make([]string, 0, 2)
+		if region := fields["region"]; region != "" {
+			detail = append(detail, region)
+		}
+		if role := fields["sso_role_name"]; role != "" {
+			detail = append(detail, role)
+		}
+		choices[i] = selectChoice{
+			Value:       name,
+			Label:       name,
+			Description: strings.Join(detail, " • "),
+			SearchText:  strings.Join([]string{fields["sso_session"], fields["sso_account_id"]}, " "),
+		}
 	}
 	return a.selectOne("AWS profile", choices)
 }

@@ -79,7 +79,17 @@ func (a *App) chooseWenv(s wenvStore) (string, error) {
 	sort.Strings(names)
 	choices := make([]selectChoice, len(names))
 	for i, n := range names {
-		choices[i] = selectChoice{n, n}
+		keys := sortedWenvKeys(s.Presets[n])
+		variableWord := "variables"
+		if len(keys) == 1 {
+			variableWord = "variable"
+		}
+		choices[i] = selectChoice{
+			Value:       n,
+			Label:       n,
+			Description: fmt.Sprintf("%d %s", len(keys), variableWord),
+			SearchText:  strings.Join(keys, " "),
+		}
 	}
 	return a.selectOne("Environment", choices)
 }
@@ -167,12 +177,11 @@ func (a *App) wenvApply(args []string) error {
 		fmt.Fprintf(a.err, "  %s: %q -> %q\n", key, a.getenv(key), vars[key])
 	}
 	if !yes {
-		fmt.Fprint(a.err, "Apply this environment? [y/N] ")
-		answer, readErr := bufio.NewReader(a.in).ReadString('\n')
-		if readErr != nil && strings.TrimSpace(answer) == "" {
-			return fmt.Errorf("read wenv confirmation: %w", readErr)
+		confirmed, confirmErr := a.confirmAction("Apply this environment?")
+		if confirmErr != nil {
+			return confirmErr
 		}
-		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
+		if !confirmed {
 			return invalid("wenv apply cancelled")
 		}
 	}
@@ -252,7 +261,7 @@ func (a *App) wenvRemove(args []string) error {
 		return invalid("wenv preset not found: " + args[0])
 	}
 	if !yes {
-		ok, e := a.confirmExternal("Remove wenv preset? [y/N] ")
+		ok, e := a.confirmAction("Remove wenv preset?")
 		if e != nil {
 			return e
 		}

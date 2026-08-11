@@ -26,8 +26,8 @@ go run ./cmd/releasearchive verify --manifest dist/checksums.txt
 ## Install and recovery
 
 ```sh
-scripts/install.sh --version 0.6.0 --dry-run
-scripts/install.sh --version 0.6.0
+scripts/install.sh --version 0.7.0 --dry-run
+scripts/install.sh --version 0.7.0
 ```
 
 For this private repository, use the authenticated GitHub CLI mode instead of
@@ -35,7 +35,7 @@ unauthenticated release URLs:
 
 ```sh
 gh auth status
-scripts/install.sh --github-cli --version 0.6.0
+scripts/install.sh --github-cli --version 0.7.0
 ```
 
 This mode delegates download authorization to `gh`; the installer neither
@@ -84,7 +84,7 @@ It returns one schema-v1 envelope with `data.projects`; records include stable
 `id`, display `name`, and canonical `path`. It reads only bb's XDG registry and
 does not inspect, import, or alter LazyVim/sessionizer files.
 
-For a local human terminal, `bb tm` presents an embedded fuzzy selector and
+For a local human terminal, `bb tm` presents the shared search-first TUI and
 opens the chosen directory through external `tmux`. Non-TTY use and
 `BB_SELECTOR=plain` fall back to the numbered prompt. Use
 `bb tm --project prj_...` for an explicit non-interactive choice,

@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -34,6 +36,130 @@ func TestBubbleSelectorSelectsStableValueAndCancels(t *testing.T) {
 	cancelledModel := cancelled.(bubbleSelectorModel)
 	if !cancelledModel.cancelled || cancelledModel.selected != "" {
 		t.Fatalf("selected=%q cancelled=%v", cancelledModel.selected, cancelledModel.cancelled)
+	}
+}
+
+func TestBubbleSelectorFiltersAndReturnsStableValue(t *testing.T) {
+	model := newBubbleSelectorModel("Pick", []selectChoice{{"dev-id", "Development"}, {"prod-id", "Production"}})
+	model.list.SetFilterText("prod")
+	if got := model.list.VisibleItems(); len(got) != 1 {
+		t.Fatalf("visible items=%d, want 1", len(got))
+	}
+
+	selected, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	selectedModel := selected.(bubbleSelectorModel)
+	if selectedModel.selected != "prod-id" || selectedModel.cancelled {
+		t.Fatalf("selected=%q cancelled=%v", selectedModel.selected, selectedModel.cancelled)
+	}
+}
+
+func TestBubbleSelectorEmptyFilterDoesNotExit(t *testing.T) {
+	model := newBubbleSelectorModel("Pick", []selectChoice{{"dev", "Development"}, {"prod", "Production"}})
+	model.list.SetFilterText("no-such-environment")
+	if got := model.list.VisibleItems(); len(got) != 0 {
+		t.Fatalf("visible items=%d, want 0", len(got))
+	}
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updatedModel := updated.(bubbleSelectorModel)
+	if updatedModel.selected != "" || updatedModel.cancelled {
+		t.Fatalf("selected=%q cancelled=%v", updatedModel.selected, updatedModel.cancelled)
+	}
+	if cmd != nil {
+		if _, quits := cmd().(tea.QuitMsg); quits {
+			t.Fatal("Enter with no visible result quit the selector")
+		}
+	}
+}
+
+func TestBubbleSelectorEscapeClearsFilterBeforeCancelling(t *testing.T) {
+	model := newBubbleSelectorModel("Pick", []selectChoice{{"dev", "Development"}, {"prod", "Production"}})
+	model.list.SetFilterText("prod")
+
+	cleared, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	clearedModel := cleared.(bubbleSelectorModel)
+	if clearedModel.cancelled || clearedModel.list.FilterState() != list.Unfiltered {
+		t.Fatalf("cancelled=%v filter_state=%v", clearedModel.cancelled, clearedModel.list.FilterState())
+	}
+
+	cancelled, _ := clearedModel.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	cancelledModel := cancelled.(bubbleSelectorModel)
+	if !cancelledModel.cancelled {
+		t.Fatal("second Escape did not cancel the selector")
+	}
+}
+
+func TestBubbleSelectorResizesAndHandlesLongLists(t *testing.T) {
+	choices := make([]selectChoice, 250)
+	for i := range choices {
+		choices[i] = selectChoice{Value: "id-" + strconv.Itoa(i), Label: "Environment " + strconv.Itoa(i)}
+	}
+	choices[173].Label = "Unique needle target"
+	model := newBubbleSelectorModel("Pick", choices)
+
+	small, _ := model.Update(tea.WindowSizeMsg{Width: 10, Height: 3})
+	smallModel := small.(bubbleSelectorModel)
+	if smallModel.list.Width() != 24 || smallModel.list.Height() != 8 {
+		t.Fatalf("small size=%dx%d", smallModel.list.Width(), smallModel.list.Height())
+	}
+	large, _ := smallModel.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	largeModel := large.(bubbleSelectorModel)
+	if largeModel.list.Width() != 120 || largeModel.list.Height() != 40 {
+		t.Fatalf("large size=%dx%d", largeModel.list.Width(), largeModel.list.Height())
+	}
+
+	largeModel.list.SetFilterText("needle target")
+	selected, _ := largeModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := selected.(bubbleSelectorModel).selected; got != "id-173" {
+		t.Fatalf("selected=%q, want id-173", got)
+	}
+}
+
+func TestCommandSelectorsReturnStableValuesWithoutStdout(t *testing.T) {
+	newApp := func(input string) (*App, *bytes.Buffer, *bytes.Buffer) {
+		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
+		a := New(stdout, stderr, []string{"BB_SELECTOR=plain", "TERM=xterm-256color"})
+		a.in = strings.NewReader(input)
+		return a, stdout, stderr
+	}
+
+	t.Run("tm project", func(t *testing.T) {
+		a, stdout, stderr := newApp("2\n")
+		projects := []projectRecord{{ID: "project-a", Name: "Duplicate", Path: "/work/a"}, {ID: "project-b", Name: "Duplicate", Path: "/work/b"}}
+		got, err := a.selectTMProject(projects)
+		if err != nil || got.ID != "project-b" {
+			t.Fatalf("project=%+v err=%v", got, err)
+		}
+		assertSelectorStreams(t, stdout, stderr)
+	})
+
+	t.Run("tm session", func(t *testing.T) {
+		a, stdout, stderr := newApp("2\n")
+		sessions := []tmSession{{ID: "$1", Name: "dev"}, {ID: "$9", Name: "prod"}}
+		got, err := a.selectTMSession(sessions)
+		if err != nil || got.ID != "$9" {
+			t.Fatalf("session=%+v err=%v", got, err)
+		}
+		assertSelectorStreams(t, stdout, stderr)
+	})
+
+	t.Run("wenv", func(t *testing.T) {
+		a, stdout, stderr := newApp("2\n")
+		got, err := a.chooseWenv(wenvStore{Presets: map[string]map[string]string{"zeta": {}, "alpha": {}}})
+		if err != nil || got != "zeta" {
+			t.Fatalf("environment=%q err=%v", got, err)
+		}
+		assertSelectorStreams(t, stdout, stderr)
+	})
+}
+
+func assertSelectorStreams(t *testing.T, stdout, stderr *bytes.Buffer) {
+	t.Helper()
+	if stdout.Len() != 0 {
+		t.Fatalf("selector wrote to stdout: %q", stdout.String())
+	}
+	if stderr.Len() == 0 {
+		t.Fatal("selector did not write its UI to stderr")
 	}
 }
 
@@ -128,6 +254,11 @@ func TestSecHelperProcess(t *testing.T) {
 			}
 		}
 	}
+	if name == "pbcopy" {
+		b, _ := io.ReadAll(os.Stdin)
+		_ = os.WriteFile(os.Getenv("SEC_CLIPBOARD_FILE"), b, 0o600)
+		os.Exit(0)
+	}
 	os.Exit(90)
 }
 func TestSecCompatibleCRUDNeverPlacesValueInJournal(t *testing.T) {
@@ -151,5 +282,49 @@ func TestSecCompatibleCRUDNeverPlacesValueInJournal(t *testing.T) {
 	}
 	if b, e := os.ReadFile(filepath.Join(state, "bb", "journal.ndjson")); e == nil && bytes.Contains(b, []byte("fake-token")) {
 		t.Fatal("secret leaked to journal")
+	}
+}
+
+func TestSecCopySelectorUsesStableValueAndKeepsStdoutClean(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	clipboard := filepath.Join(dir, "clipboard")
+	a.env = append(a.env,
+		"BINBOX_SECRETS_FILE="+filepath.Join(dir, "secrets.json.age"),
+		"BINBOX_AGE_KEY="+filepath.Join(dir, "age.key"),
+		"GO_WANT_SEC_HELPER=1",
+		"SEC_CLIPBOARD_FILE="+clipboard,
+		"BB_SELECTOR=plain",
+	)
+	a.lookPath = func(string) (string, error) { return "helper", nil }
+	a.command = func(name string, args ...string) *exec.Cmd {
+		return exec.Command(os.Args[0], append([]string{"-test.run=TestSecHelperProcess", "--", name}, args...)...)
+	}
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		service, field, value string
+	}{{"alpha", "password", "alpha-secret"}, {"zeta", "token", "zeta-secret"}} {
+		a.in = strings.NewReader(item.value + "\n")
+		if err := a.Run([]string{"sec", "set", item.service, item.field}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	a.in = strings.NewReader("2\n")
+	out.Reset()
+	if err := a.Run([]string{"sec", "copy"}); err != nil {
+		t.Fatal(err)
+	}
+	assertSelectorStreams(t, out, stderr)
+	got, err := os.ReadFile(clipboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "zeta-secret" {
+		t.Fatalf("clipboard=%q, want zeta-secret", got)
 	}
 }

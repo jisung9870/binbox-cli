@@ -111,13 +111,13 @@ func (m bubbleSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			if item, ok := m.list.SelectedItem().(bubbleChoice); ok {
 				m.selected = item.value
+				return m, tea.Quit
 			}
-			return m, tea.Quit
 		case tea.KeyCtrlC:
 			m.cancelled = true
 			return m, tea.Quit
 		case tea.KeyEsc:
-			if m.list.FilterState() != list.Filtering {
+			if m.list.FilterState() == list.Unfiltered {
 				m.cancelled = true
 				return m, tea.Quit
 			}

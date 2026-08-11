@@ -7,7 +7,7 @@ provider state; `bb doctor` reports whether they are available.
 | Area | Commands | Contract |
 |---|---|---|
 | Build and health | `version`, `doctor`, `doctor nvim` | Versioned output and required/optional capability checks |
-| Shell | `shell init zsh` | Emits checkout-independent integration; only successful wenv/assume environment output is evaluated |
+| Shell | `shell init zsh`, `completion zsh` | Emits checkout-independent environment integration and native zsh completion; only successful wenv/assume environment output is evaluated |
 | Projects | `project list/add/show/remove`, `project import sessionizer --check/--apply` | XDG registry, stable IDs, read-only legacy source, content-addressed recovery copy |
 | Human tmux | `tm`, `tm projects`, `tm sessions`, `tm attach/kill/dirs/layout` | Search-first TUI with project/session metadata and numbered fallback; exact target re-observation; tmux remains process owner |
 | Session intent | `session list/start/stop/open` | bb-owned intent records; explicit `tmux`, `orca`, or `shell` backend |
@@ -31,6 +31,11 @@ mode switch; `↑/↓` or `Ctrl+N/P` move, Enter selects, and Escape clears then
 cancels. In `bb sec`, Escape navigates Action→Field→Service before exiting;
 Ctrl+C exits immediately. `BB_SELECTOR=plain` forces numbered prompts and
 `NO_COLOR=1` retains the TUI layout without ANSI color.
+
+bb-owned structured reads render human-readable labels or tables by default.
+Pass `--json` to receive the stable schema-v1 envelope. Export commands whose
+explicit purpose is a JSON artifact continue to write JSON. External provider
+streams retain the owning CLI's format.
 
 ## State and recovery
 

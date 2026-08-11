@@ -79,6 +79,8 @@ func (a *App) dispatch(args []string) error {
 		return a.setup(args[1:])
 	case "shell":
 		return a.shell(args[1:])
+	case "completion":
+		return a.completion(args[1:])
 	case "project":
 		return a.project(args[1:])
 	case "session":
@@ -149,6 +151,7 @@ Commands:
   doctor [--json]         Check external CLI capabilities
   setup nvim ...          Plan or link a selected LazyVim config
   shell init zsh          Print checkout-independent zsh integration
+  completion zsh          Print native zsh completion
   project ...             Manage/import the local project registry
   tm [projects|sessions|--project]  Select a project or inspect local tmux sessions
   git root|branch|log    Read Git repository metadata without modifying it
@@ -265,7 +268,7 @@ func (a *App) project(args []string) error {
 		if jsonMode {
 			return printEnvelope(a.out, records, nil)
 		}
-		return printJSON(a.out, records)
+		return printHuman(a.out, records)
 	}
 	switch args[0] {
 	case "add":
@@ -306,7 +309,7 @@ func (a *App) project(args []string) error {
 		if jsonMode {
 			return printEnvelope(a.out, added, nil)
 		}
-		return printJSON(a.out, added)
+		return printHuman(a.out, added)
 	case "remove":
 		if len(args) != 2 {
 			return usage("project remove", "<id|name> [--json]")
@@ -336,7 +339,7 @@ func (a *App) project(args []string) error {
 		if jsonMode {
 			return printEnvelope(a.out, map[string]string{"removed": removed}, nil)
 		}
-		return nil
+		return printHuman(a.out, map[string]string{"removed": removed})
 	case "show":
 		if len(args) != 2 {
 			return usage("project show", "<id|name> [--json]")
@@ -360,7 +363,7 @@ func (a *App) project(args []string) error {
 		if jsonMode {
 			return printEnvelope(a.out, matches[0], nil)
 		}
-		return printJSON(a.out, matches[0])
+		return printHuman(a.out, matches[0])
 	case "import":
 		_, state, err := a.paths()
 		if err != nil {
@@ -419,7 +422,7 @@ func (a *App) projectImport(args []string, jsonMode bool, registryPath, state st
 	if jsonMode {
 		return printEnvelope(a.out, check, check.Warnings)
 	}
-	return printJSON(a.out, check)
+	return printHuman(a.out, check)
 }
 
 func canonicalPath(path string) string {
@@ -467,7 +470,7 @@ func (a *App) session(args []string) error {
 		if jsonMode {
 			return printEnvelope(a.out, records, nil)
 		}
-		return printJSON(a.out, records)
+		return printHuman(a.out, records)
 	}
 	if args[0] == "open" {
 		return a.sessionOpen(args[1:], jsonMode)
@@ -523,7 +526,7 @@ func (a *App) session(args []string) error {
 	if jsonMode {
 		return printEnvelope(a.out, changed, nil)
 	}
-	return nil
+	return printHuman(a.out, changed)
 }
 
 // sessionOpen deliberately produces an opening plan, never an external session.
@@ -577,7 +580,7 @@ func (a *App) sessionOpen(args []string, jsonMode bool) error {
 	if jsonMode {
 		return printEnvelope(a.out, data, nil)
 	}
-	return printJSON(a.out, data)
+	return printHuman(a.out, data)
 }
 
 func loadSessions(path string) ([]sessionRecord, error) {
@@ -797,13 +800,24 @@ func (a *App) runList(args []string, jsonMode bool) error {
 	if len(args) != 0 {
 		return usage("run list", "[--json]")
 	}
-	_, state, err := a.paths()
+	runs, err := a.readRunEvents()
 	if err != nil {
 		return err
 	}
+	if jsonMode {
+		return printEnvelope(a.out, runs, nil)
+	}
+	return printHuman(a.out, runs)
+}
+
+func (a *App) readRunEvents() ([]journalEvent, error) {
+	_, state, err := a.paths()
+	if err != nil {
+		return nil, err
+	}
 	events, err := readJournal(filepath.Join(state, "journal.ndjson"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	runs := make([]journalEvent, 0)
 	for _, event := range events {
@@ -812,10 +826,7 @@ func (a *App) runList(args []string, jsonMode bool) error {
 			runs = append(runs, event)
 		}
 	}
-	if jsonMode {
-		return printEnvelope(a.out, runs, nil)
-	}
-	return printJSON(a.out, runs)
+	return runs, nil
 }
 func (a *App) runShow(args []string, jsonMode bool) error {
 	if len(args) != 1 {
@@ -835,7 +846,7 @@ func (a *App) runShow(args []string, jsonMode bool) error {
 			if jsonMode {
 				return printEnvelope(a.out, event, nil)
 			}
-			return printJSON(a.out, event)
+			return printHuman(a.out, event)
 		}
 	}
 	return fmt.Errorf("run not found: %s", args[0])
@@ -843,6 +854,16 @@ func (a *App) runShow(args []string, jsonMode bool) error {
 func (a *App) runExport(args []string, jsonMode bool) error {
 	if len(args) != 0 && (len(args) != 2 || args[0] != "--format" || args[1] != "json") {
 		return usage("run export", "[--format json] [--json]")
+	}
+	if len(args) == 2 {
+		runs, err := a.readRunEvents()
+		if err != nil {
+			return err
+		}
+		if jsonMode {
+			return printEnvelope(a.out, runs, nil)
+		}
+		return printJSON(a.out, runs)
 	}
 	return a.runList(nil, jsonMode)
 }
@@ -962,7 +983,7 @@ func (a *App) mcp(args []string) error {
 	if jsonMode {
 		return printEnvelope(a.out, data, nil)
 	}
-	return printJSON(a.out, data)
+	return printHuman(a.out, data)
 }
 
 func (a *App) orca(args []string) error {
@@ -992,7 +1013,7 @@ func (a *App) orca(args []string) error {
 	if jsonMode {
 		return printEnvelope(a.out, data, nil)
 	}
-	return printJSON(a.out, data)
+	return printHuman(a.out, data)
 }
 
 var sensitiveKey = regexp.MustCompile(`(?i)(token|secret|password|authorization|api[_-]?key|cookie|credential)`)

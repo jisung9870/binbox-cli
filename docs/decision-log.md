@@ -254,3 +254,18 @@ Rename field is available in the action screen and as
 defaults to Cancel, moves the existing value in memory, and performs the same
 locked atomic ciphertext replacement and backup as other secret mutations.
 Neither the old value nor the new value is rendered or journaled.
+
+## 2026-08-11 — Native zsh completion and human-first output
+
+Decision: `bb shell init zsh` registers native `compdef` completion in addition
+to its existing wenv/assume wrapper. `bb completion zsh` exposes the completion
+independently. Static candidates cover supported non-Git commands and options;
+dynamic candidates read only local project/session, tmux, wenv, AWS profile,
+and secret service/field names. Secret values and AWS credentials never enter
+the candidate protocol. Git and gx candidates remain excluded.
+
+bb-owned structured reads render deterministic labels, nested sections, or
+tables by default. `--json` remains the explicit automation format and retains
+the schema-v1 envelope. JSON artifact export and external provider streams keep
+their purpose-specific formats. Human rendering strips terminal controls before
+printing and does not change stored data or machine output.

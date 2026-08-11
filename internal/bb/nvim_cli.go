@@ -34,7 +34,7 @@ func (a *App) setup(args []string) error {
 	if jsonMode {
 		return printEnvelope(a.out, data, nil)
 	}
-	return printJSON(a.out, data)
+	return printHuman(a.out, data)
 }
 
 func (a *App) parseNvimSetup(args []string) (NvimSetupRequest, bool, error) {
@@ -146,5 +146,5 @@ func (a *App) doctorNvim(args []string) error {
 	if jsonMode {
 		return printEnvelope(a.out, report, nil)
 	}
-	return printJSON(a.out, report)
+	return printHuman(a.out, report)
 }

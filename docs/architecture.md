@@ -39,12 +39,14 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb run <command> [args]` | Executes an explicit external command | Journal stores only executable basename, argument count, exit code, and timestamp |
 | `bb run list/show/export` | Reads bb-owned run records with stable `run_` IDs and outcomes | No provider scraping or external lifecycle authority |
 | `bb session open <project-id>` | Returns an explicit backend plan | Never opens or destroys a terminal; Orca is capability-unavailable by design |
-| `bb tm projects --plain|--json` | Returns the sessionizer/LazyVim-compatible normalized project view | Read-only bb registry; never rewrites the shared legacy source |
-| `bb tm sessions --json` | Preserves legacy typed tmux session fields | Session-level observation only; no panes, commands, or scrollback |
+| `bb tm projects [--plain|--json]` | Shows a human project table by default or the sessionizer/LazyVim-compatible normalized project view explicitly | Read-only bb registry; never rewrites the shared legacy source |
+| `bb tm sessions [--json]` | Shows a human session table or preserves legacy typed tmux session fields explicitly | Session-level observation only; no panes, commands, or scrollback |
 | `bb tm [--project <id>]` | Selects through bb's search-first responsive TUI (numbered fallback), then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
 | `bb profile ...` | Manages AWS SSO profiles and delegates login | Writes only `~/.aws/config` atomically with backups; credentials/cache remain AWS CLI-owned |
 | `bb assume ...` | Restores current-shell and scoped-command credential UX through AWS CLI resolution | No bb credential parsing/cache; stdout credentials are refused on a terminal and evaluated only through generated shell integration |
 | `bb wenv ...` | Imports an allowlisted non-executable legacy subset and previews/applies declarative environments | XDG JSON, secret-like key rejection, search-first selector, default-cancel confirmation, numbered fallback |
+| `bb completion zsh` | Registers native command, option, and safe local-metadata completion | Git commands are omitted; candidates contain names/IDs only and call the installed binary without checkout coupling |
+| bb-owned structured reads | Render labels/tables by default and schema-v1 envelopes with `--json` | Terminal control characters are removed at the human-rendering boundary; external owner streams are unchanged |
 | `bb sec ...` | Uses the existing age-encrypted JSON/key format through Service→Field→Action navigation | Plaintext remains in memory/pipes; field rename moves the in-memory value only; ciphertext mutation is locked, atomic, and backed up |
 | `bb tm attach/kill/dirs/layout` | Operates on an exact tmux session or bb project registry entry; layouts are fixed Go-owned recipes | Destructive actions show targets and re-observe before direct tmux argv; no legacy directory-file writes |
 | `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |

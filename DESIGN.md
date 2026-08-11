@@ -4,8 +4,8 @@
 
 - Status: Active
 - Last refreshed: 2026-08-11
-- Primary product surfaces: interactive selectors used by `tm`, `wenv`, `assume`, and secret management, plus non-Git yes/no mutation confirmations and scoped child-process execution
-- Evidence reviewed: `internal/bb/select.go`, `internal/bb/confirm.go`, `internal/bb/sec.go`, `internal/bb/identity_test.go`, `docs/sec-manager-smoke-v0.9.0.md`, `docs/sec-manager-smoke-v0.8.1.md`, `docs/sec-manager-smoke-v0.8.0.md`, `docs/sec-audit-v0.7.1.md`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
+- Primary product surfaces: interactive selectors used by `tm`, `wenv`, `assume`, and secret management, zsh completion, human-readable command output, non-Git yes/no mutation confirmations, and scoped child-process execution
+- Evidence reviewed: `internal/bb/select.go`, `internal/bb/confirm.go`, `internal/bb/sec.go`, `internal/bb/completion.go`, `internal/bb/human.go`, `internal/bb/identity_test.go`, `internal/bb/completion_test.go`, `docs/zsh-output-smoke-v0.10.0.md`, `docs/sec-manager-smoke-v0.9.0.md`, `docs/sec-manager-smoke-v0.8.1.md`, `docs/sec-manager-smoke-v0.8.0.md`, `docs/sec-audit-v0.7.1.md`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
 
 ## Brand
 
@@ -15,9 +15,9 @@
 
 ## Product goals
 
-- Goals: make search immediately discoverable, make common selection possible without mode knowledge, preserve fast keyboard operation, present a polished but compact terminal surface, and make frequent secret use possible without printing plaintext into the parent shell.
+- Goals: make search and completion immediately discoverable, make common selection possible without mode knowledge, preserve fast keyboard operation, present polished human-readable output by default, retain explicit stable JSON for automation, and make frequent secret use possible without printing plaintext into the parent shell.
 - Non-goals: pixel compatibility with fzf, mouse-first operation, a general TUI framework, Git workflow expansion, or previews that can expose secrets.
-- Success signals: typing any printable character immediately filters; the first arrow press moves selection; Enter selects; Escape clears the query before navigating back or cancelling; secret management exposes only service/field metadata; service selection scopes the field list; rename, destructive, or overwrite actions default to Cancel; scoped execution passes values only to the child process; stderr-only rendering and stable-value output remain unchanged.
+- Success signals: Tab completes supported commands/options and safe local metadata; default structured reads render labels/tables rather than JSON; `--json` preserves schema-v1 envelopes; typing any printable character immediately filters; the first arrow press moves selection; Enter selects; Escape clears the query before navigating back or cancelling; secret management exposes only service/field metadata; service selection scopes the field list; rename, destructive, or overwrite actions default to Cancel; scoped execution passes values only to the child process; stderr-only rendering and stable-value output remain unchanged.
 
 ## Personas and jobs
 
@@ -28,7 +28,7 @@
 ## Information architecture
 
 - Primary navigation: one search field, one ranked result list, and one persistent compact key-hint footer.
-- Core routes/screens: one reusable selector surface, a secret Service selector followed by a Field selector and safe Action selector, and one reusable default-cancel confirmation card; command-specific content is supplied through metadata rather than separate screens.
+- Core routes/screens: one reusable selector surface, a secret Service selector followed by a Field selector and safe Action selector, one reusable default-cancel confirmation card, zsh completion states, and one generic human output hierarchy for bb-owned structured results.
 - Content hierarchy: service list with field counts -> selected service's flat field list -> safe action -> confirmation when required -> key hints. Field names are not repeated beneath every service in the first screen.
 
 ## Design principles
@@ -36,6 +36,7 @@
 - Search is the default action: printable input filters immediately; `/` remains an optional shortcut, not required knowledge.
 - One key, one visible effect: arrows move on the first press, Enter selects on the first press, and Escape has a predictable clear-then-cancel sequence.
 - Context without clutter: show one muted metadata line only when it helps distinguish choices.
+- Human first, machine explicit: bb-owned structured reads render concise labels or tables by default and use `--json` for the stable schema envelope.
 - Scoped secret navigation: enter a service before choosing one of its fields; show field counts on services and keep field rows flat and compact.
 - Safety survives styling: UI stays on stderr, selected stable values stay on stdout, and sensitive values never become preview metadata.
 - Secret actions are staged: selection never performs a mutation; copy is the default safe action, replacement confirms before hidden entry, and rename/removal confirm before writing. Rename moves the existing in-memory value to a validated unused field name and never displays it.
@@ -53,14 +54,14 @@
 ## Components
 
 - Existing components to reuse: Bubble Tea program lifecycle, Bubbles fuzzy filter/ranking, Bubbles text input/list behavior where it matches the interaction contract, and Lip Gloss styles already supplied transitively.
-- New/changed components: a bb-owned selector view, always-visible search row, result counter, explicit empty state, compact help footer, command-specific optional detail/keywords, a default-cancel confirmation card, and a three-stage Service/Field/Action secret manager that reuses those components.
-- Variants and states: service browsing, field browsing, searching, filtered, no results, empty source, action selection, rename input/confirmation, overwrite confirmation, removal confirmation, narrow terminal, no-color, and numbered fallback.
+- New/changed components: a bb-owned selector view, always-visible search row, result counter, explicit empty state, compact help footer, command-specific optional detail/keywords, a default-cancel confirmation card, a three-stage Service/Field/Action secret manager, native zsh completion, and a generic control-safe human renderer.
+- Variants and states: service browsing, field browsing, searching, filtered, completion with/without dynamic candidates, human detail/table/empty output, JSON envelope, no results, empty source, action selection, rename input/confirmation, overwrite confirmation, removal confirmation, narrow terminal, no-color, and numbered fallback.
 - Token/component ownership: selector styles and keymap live beside `internal/bb/select.go`; do not introduce a repository-wide design-system package.
 
 ## Accessibility
 
 - Target standard: keyboard-complete operation, readable contrast, no required color perception, and stable text labels.
-- Keyboard/focus behavior: printable keys search; arrows or `ctrl+n`/`ctrl+p` move; PageUp/PageDown page; Home/End jump; Enter selects; Backspace edits; Escape clears query, then returns Action→Field→Service, then exits from Service; Ctrl+C always exits the manager.
+- Keyboard/focus behavior: Tab completes commands/options and safe candidates through native zsh completion; printable keys search; arrows or `ctrl+n`/`ctrl+p` move; PageUp/PageDown page; Home/End jump; Enter selects; Backspace edits; Escape clears query, then returns Action→Field→Service, then exits from Service; Ctrl+C always exits the manager.
 - Contrast/readability: selected state uses both a marker and style; matched characters use emphasis in addition to color; metadata remains readable on light and dark terminals.
 - Screen-reader semantics: retain the numbered plain selector as the deterministic accessible fallback through `BB_SELECTOR=plain`.
 - Reduced motion and sensory considerations: honor `NO_COLOR`; avoid animation and rapid redraw outside input changes.
@@ -91,8 +92,8 @@
 - Framework/styling system: Go with Bubble Tea, Bubbles, and Lip Gloss; no external `fzf` process and no new dependency for this redesign.
 - Design-token constraints: adaptive ANSI colors, `NO_COLOR`, and terminal width-aware truncation; preserve labels and stable values separately.
 - Performance constraints: filtering and rendering 250 items must remain perceptually immediate and must not start provider or filesystem work per keystroke.
-- Compatibility constraints: all UI writes to stderr; stdout remains byte-stable for shell evaluation and machine consumers; non-TTY, dumb terminal, and `BB_SELECTOR=plain` behavior remain numbered and deterministic; `sec exec` replaces only the selected service's normalized environment keys in the child and never mutates the parent environment.
-- Test/screenshot expectations: model-level key sequence tests, width/height snapshots or golden text with color disabled, PTY smoke in direct zsh and tmux, and regressions for stdout cleanliness and alternate-screen cleanup.
+- Compatibility constraints: `bb shell init zsh` remains the only required `.zshrc` line and registers completion without checkout paths; dynamic candidates use local names/IDs only and never values or credentials; all TUI writes go to stderr; `--json` preserves the schema-v1 envelope; non-TTY, dumb terminal, and `BB_SELECTOR=plain` behavior remain deterministic; `sec exec` replaces only the selected service's normalized environment keys in the child and never mutates the parent environment.
+- Test/screenshot expectations: generated zsh syntax/registration smoke, candidate non-disclosure tests, human-vs-JSON output regressions, model-level key sequence tests, width/height snapshots or golden text with color disabled, PTY smoke in direct zsh and tmux, and regressions for stdout cleanliness and alternate-screen cleanup.
 
 ## Open questions
 

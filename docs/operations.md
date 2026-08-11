@@ -26,8 +26,8 @@ go run ./cmd/releasearchive verify --manifest dist/checksums.txt
 ## Install and recovery
 
 ```sh
-scripts/install.sh --version 0.9.0 --dry-run
-scripts/install.sh --version 0.9.0
+scripts/install.sh --version 0.10.0 --dry-run
+scripts/install.sh --version 0.10.0
 ```
 
 For this private repository, use the authenticated GitHub CLI mode instead of
@@ -35,7 +35,7 @@ unauthenticated release URLs:
 
 ```sh
 gh auth status
-scripts/install.sh --github-cli --version 0.9.0
+scripts/install.sh --github-cli --version 0.10.0
 ```
 
 This mode delegates download authorization to `gh`; the installer neither

@@ -67,8 +67,12 @@ bb sec rename github token access-token
 bb sec exec database -- psql
 
 # Checkout-independent zsh integration. Add this to ~/.zshrc so `bb wenv apply dev`
-# changes the current shell without sourcing the legacy binbox repository.
+# changes the current shell and native bb completion is registered without sourcing
+# the legacy binbox repository.
 eval "$(bb shell init zsh)"
+
+# Completion can also be loaded independently.
+source <(bb completion zsh)
 
 # Terraform compatibility with account-bound apply/destroy safeguards.
 bb tfx status --json
@@ -104,7 +108,8 @@ small wrapper that evaluates only
 successful `bb wenv <preset>` output in the current shell. It has no checkout,
 `BB_ROOT`, or libexec dependency.
 
-Machine-readable reads accept `--json` and return the schema-v1 envelope:
+bb-owned structured reads are formatted as human-readable labels and tables by
+default. Add `--json` for automation and the stable schema-v1 envelope:
 
 ```json
 {"schema_version":1,"ok":true,"data":{},"warnings":[],"error":null}
@@ -129,7 +134,7 @@ defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
 through the existing authenticated GitHub CLI session:
 
 ```sh
-scripts/install.sh --github-cli --version 0.9.0
+scripts/install.sh --github-cli --version 0.10.0
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.
@@ -139,6 +144,7 @@ See the [command reference](docs/commands.md),
 [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 [non-Git parity audit](docs/non-git-parity-audit-2026-08-11.md),
 [macOS cutover record](docs/cutover-macos-2026-08-11.md),
+[v0.10.0 zsh/output smoke record](docs/zsh-output-smoke-v0.10.0.md),
 [v0.9.0 hierarchical secret manager smoke record](docs/sec-manager-smoke-v0.9.0.md),
 [v0.8.1 compact secret manager smoke record](docs/sec-manager-smoke-v0.8.1.md),
 [v0.8.0 secret manager smoke record](docs/sec-manager-smoke-v0.8.0.md),

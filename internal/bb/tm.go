@@ -16,7 +16,7 @@ import (
 func (a *App) tm(args []string) error {
 	if helpRequested(args) {
 		_, err := fmt.Fprint(a.out, `Usage:
-  bb tm projects --plain|--json
+  bb tm projects [--plain|--json]
   bb tm sessions [--json]
   bb tm attach [--session <name>]
   bb tm kill --session <name> [--yes]
@@ -65,12 +65,12 @@ local tmux session. --project is an explicit non-interactive selector.
 		if jsonMode {
 			return printEnvelope(a.out, map[string]any{"sessions": sessions}, nil)
 		}
-		return printJSON(a.out, sessions)
+		return printHuman(a.out, sessions)
 	}
 	if len(args) > 0 && args[0] == "projects" {
 		plain := len(args) == 2 && args[1] == "--plain"
-		if (!plain && (len(args) != 1 || !jsonMode)) || (plain && jsonMode) {
-			return usage("tm projects", "--plain|--json")
+		if len(args) > 2 || (len(args) == 2 && !plain) || (plain && jsonMode) {
+			return usage("tm projects", "[--plain|--json]")
 		}
 		projects, err := a.tmProjects()
 		if err != nil {
@@ -84,7 +84,10 @@ local tmux session. --project is an explicit non-interactive selector.
 			}
 			return nil
 		}
-		return printEnvelope(a.out, map[string]any{"projects": projects}, nil)
+		if jsonMode {
+			return printEnvelope(a.out, map[string]any{"projects": projects}, nil)
+		}
+		return printHuman(a.out, projects)
 	}
 	if jsonMode {
 		return usage("tm", "[--project <project-id>]")

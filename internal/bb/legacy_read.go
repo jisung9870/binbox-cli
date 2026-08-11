@@ -182,7 +182,7 @@ func (a *App) port(args []string) error {
 	if jsonMode {
 		return printEnvelope(a.out, data, nil)
 	}
-	return printJSON(a.out, data)
+	return printHuman(a.out, data)
 }
 
 func (a *App) portKill(args []string) error {

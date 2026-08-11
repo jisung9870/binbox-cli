@@ -34,7 +34,7 @@ bb() {
     command bb "$@"
   fi
 }
-`
+` + zshCompletion
 
 func (a *App) shell(args []string) error {
 	if helpRequested(args) || len(args) == 0 {
@@ -43,7 +43,7 @@ func (a *App) shell(args []string) error {
 
 Print shell integration to stdout. Evaluate it from .zshrc to make
 "bb wenv [name]" and "bb assume [profile]" update the current shell without
-sourcing a checkout.
+sourcing a checkout. Native zsh completion is registered at the same time.
 `)
 		return err
 	}

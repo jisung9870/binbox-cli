@@ -43,6 +43,9 @@ func TestVersionAndHelp(t *testing.T) {
 	if !strings.Contains(out.String(), "shell init zsh") {
 		t.Fatal("help missing shell init")
 	}
+	if !strings.Contains(out.String(), "completion zsh") {
+		t.Fatal("help missing zsh completion")
+	}
 }
 
 func TestShellInitZshIsCheckoutIndependent(t *testing.T) {
@@ -51,7 +54,7 @@ func TestShellInitZshIsCheckoutIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	for _, want := range []string{"bb()", "command bb", `eval "$_bb_output"`, `list|current|show|export|set|rm|import`, `"${1:-}" == "assume"`, `list|current|exec|profile`} {
+	for _, want := range []string{"bb()", "command bb", `eval "$_bb_output"`, `list|current|show|export|set|rm|import`, `"${1:-}" == "assume"`, `list|current|exec|profile`, "compdef _bb bb", "completion candidates"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("shell init missing %q:\n%s", want, got)
 		}
@@ -94,20 +97,60 @@ func TestProjectAndSessionPersistInXDG(t *testing.T) {
 	}
 }
 
-func TestEmptyProjectAndSessionListsAreArrays(t *testing.T) {
+func TestEmptyProjectAndSessionListsAreHumanByDefault(t *testing.T) {
 	a, out, _, _ := testApp(t)
 	if err := a.Run([]string{"project", "list"}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "[]" {
+	if strings.TrimSpace(out.String()) != "No results." {
 		t.Fatalf("project list=%q", out.String())
 	}
 	out.Reset()
 	if err := a.Run([]string{"session", "list"}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != "[]" {
+	if strings.TrimSpace(out.String()) != "No results." {
 		t.Fatalf("session list=%q", out.String())
+	}
+	out.Reset()
+	if err := a.Run([]string{"project", "list", "--json"}); err != nil || !strings.Contains(out.String(), `"data":[]`) {
+		t.Fatalf("project JSON=%q err=%v", out.String(), err)
+	}
+}
+
+func TestStructuredReadsAreHumanByDefaultAndJSONOnRequest(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	project := t.TempDir()
+	if err := a.Run([]string{"project", "add", project, "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"project", "list"}); err != nil {
+		t.Fatal(err)
+	}
+	human := out.String()
+	for _, want := range []string{"Name", "ID", "Path", "demo", projectID(project)} {
+		if !strings.Contains(human, want) {
+			t.Fatalf("human project list missing %q:\n%s", want, human)
+		}
+	}
+	if strings.Contains(human, `{"`) {
+		t.Fatalf("human project list contains JSON: %s", human)
+	}
+
+	out.Reset()
+	if err := a.Run([]string{"project", "list", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		SchemaVersion int             `json:"schema_version"`
+		Data          []projectRecord `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.SchemaVersion != SchemaVersion || len(result.Data) != 1 || result.Data[0].Name != "demo" {
+		t.Fatalf("JSON project list=%s", out.String())
 	}
 }
 func TestRunJournalRedacts(t *testing.T) {
@@ -362,8 +405,15 @@ func TestMCPInventoryDoesNotExposeConfigContent(t *testing.T) {
 	if err := a.Run([]string{"mcp", "inventory"}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "topsecret") || !strings.Contains(out.String(), `"content_inspected":false`) {
+	if strings.Contains(out.String(), "topsecret") || !strings.Contains(out.String(), "Content Inspected:") || !strings.Contains(out.String(), "false") {
 		t.Fatalf("unsafe MCP inventory: %s", out.String())
+	}
+	out.Reset()
+	if err := a.Run([]string{"mcp", "inventory", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "topsecret") || !strings.Contains(out.String(), `"content_inspected":false`) {
+		t.Fatalf("unsafe MCP JSON inventory: %s", out.String())
 	}
 }
 func TestExportProducesJSON(t *testing.T) {
@@ -653,7 +703,7 @@ func TestProjectShowSessionOpenAndRunJournalCommands(t *testing.T) {
 		t.Fatalf("show run=%s err=%v", out, err)
 	}
 	out.Reset()
-	if err := a.Run([]string{"run", "export", "--format", "json"}); err != nil || !strings.Contains(out.String(), id) {
+	if err := a.Run([]string{"run", "export", "--format", "json"}); err != nil || !strings.Contains(out.String(), id) || !json.Valid(out.Bytes()) {
 		t.Fatalf("export=%s err=%v", out, err)
 	}
 }

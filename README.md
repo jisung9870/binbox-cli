@@ -57,6 +57,12 @@ bb wenv apply dev
 bb sec set github token
 # Automation can still pipe an exact value.
 printf '%s' "$TOKEN" | bb sec set github token
+# Existing values require confirmation or an explicit automation override.
+printf '%s' "$TOKEN" | bb sec set github token --force
+# Search and manage existing entries without displaying values.
+bb sec
+# Scope normalized secret variables to one child process.
+bb sec exec database -- psql
 
 # Checkout-independent zsh integration. Add this to ~/.zshrc so `bb wenv apply dev`
 # changes the current shell without sourcing the legacy binbox repository.
@@ -121,7 +127,7 @@ defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
 through the existing authenticated GitHub CLI session:
 
 ```sh
-scripts/install.sh --github-cli --version 0.7.1
+scripts/install.sh --github-cli --version 0.8.0
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.
@@ -131,6 +137,7 @@ See the [command reference](docs/commands.md),
 [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 [non-Git parity audit](docs/non-git-parity-audit-2026-08-11.md),
 [macOS cutover record](docs/cutover-macos-2026-08-11.md),
+[v0.8.0 secret manager smoke record](docs/sec-manager-smoke-v0.8.0.md),
 [v0.7.1 secret audit](docs/sec-audit-v0.7.1.md),
 [v0.7.0 TUI smoke record](docs/tui-smoke-v0.7.0.md), the historical
 [selector smoke record](docs/selector-smoke-2026-08-11.md), and the

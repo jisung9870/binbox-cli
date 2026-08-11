@@ -1,7 +1,6 @@
 package bb
 
 import (
-	"bufio"
 	"fmt"
 	"strings"
 
@@ -34,7 +33,7 @@ func confirmActionPlain(a *App, question string) (bool, error) {
 	if _, err := fmt.Fprintf(a.err, "%s [y/N]: ", safeTerminalText(question)); err != nil {
 		return false, err
 	}
-	answer, err := bufio.NewReader(a.in).ReadString('\n')
+	answer, err := readLine(a.in)
 	if err != nil && strings.TrimSpace(answer) == "" {
 		return false, fmt.Errorf("read confirmation: %w", err)
 	}

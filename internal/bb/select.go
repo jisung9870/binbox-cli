@@ -1,7 +1,7 @@
 package bb
 
 import (
-	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -71,7 +71,7 @@ func selectOnePlain(in io.Reader, out io.Writer, prompt string, choices []select
 	if _, err := fmt.Fprintf(out, "%s [1-%d, name, Enter=cancel]: ", safeTerminalText(prompt), len(choices)); err != nil {
 		return "", err
 	}
-	answer, err := bufio.NewReader(in).ReadString('\n')
+	answer, err := readLine(in)
 	answer = strings.TrimSpace(answer)
 	if err != nil && answer == "" {
 		return "", fmt.Errorf("read selection: %w", err)
@@ -101,6 +101,23 @@ func selectOnePlain(in io.Reader, out io.Writer, prompt string, choices []select
 		return matchedValue, nil
 	}
 	return "", invalid(fmt.Sprintf("unknown selection %q", answer))
+}
+
+// readLine deliberately reads one byte at a time so sequential plain-mode
+// prompts cannot lose buffered input when each prompt returns to its caller.
+func readLine(in io.Reader) (string, error) {
+	var value bytes.Buffer
+	var one [1]byte
+	for {
+		_, err := io.ReadFull(in, one[:])
+		if err != nil {
+			return value.String(), err
+		}
+		value.WriteByte(one[0])
+		if one[0] == '\n' {
+			return value.String(), nil
+		}
+	}
 }
 
 type bubbleChoice struct {

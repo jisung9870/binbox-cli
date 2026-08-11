@@ -32,19 +32,24 @@ func (a *App) secPaths() (string, string) {
 	return store, key
 }
 func (a *App) sec(args []string) error {
-	if helpRequested(args) || len(args) == 0 {
+	if helpRequested(args) {
 		_, e := fmt.Fprint(a.out, `Usage:
+  bb sec                            Open the secret manager
   bb sec init
   bb sec list [service]
-  bb sec set <service> <field>       Prompt securely, or read value from piped stdin
+  bb sec set <service> <field> [--force]
   bb sec get <service> [field]
   bb sec copy [service] [field]
   bb sec env <service>
+  bb sec exec <service> -- <command> [args...]
   bb sec rm <service> [field] [--yes]
 
 Uses the existing age key/store format. Plaintext is never written to disk or journaled.
 `)
 		return e
+	}
+	if len(args) == 0 {
+		return a.secManage()
 	}
 	switch args[0] {
 	case "init":
@@ -59,6 +64,8 @@ Uses the existing age key/store format. Plaintext is never written to disk or jo
 		return a.secCopy(args[1:])
 	case "env":
 		return a.secEnv(args[1:])
+	case "exec":
+		return a.secExec(args[1:])
 	case "rm":
 		return a.secRemove(args[1:])
 	default:
@@ -276,12 +283,22 @@ func (a *App) secGet(args []string) error {
 	return e
 }
 func (a *App) secSet(args []string) error {
+	args, force := takeFlag(args, "--force")
 	if len(args) != 2 || !validSecretName(args[0]) || !validSecretName(args[1]) {
-		return usage("sec set", "<service> <field>")
+		return usage("sec set", "<service> <field> [--force]")
 	}
 	d, old, e := a.readSecretsSnapshot()
 	if e != nil {
 		return e
+	}
+	if _, exists := d[args[0]][args[1]]; exists && !force {
+		confirmed, confirmErr := a.confirmAction("Replace encrypted secret field " + args[0] + "/" + args[1] + "?")
+		if confirmErr != nil {
+			return confirmErr
+		}
+		if !confirmed {
+			return invalid("secret replacement cancelled")
+		}
 	}
 	value, e := a.readSecretValue()
 	if e != nil {
@@ -372,27 +389,40 @@ func (a *App) secEnv(args []string) error {
 	if !ok {
 		return invalid("secret service not found")
 	}
-	keys := make([]string, 0, len(fields))
-	for k := range fields {
-		keys = append(keys, k)
+	variables, e := secretEnvironmentVariables(args[0], fields)
+	if e != nil {
+		return e
 	}
-	sort.Strings(keys)
-	names := make(map[string]string, len(keys))
-	envNames := make(map[string]string, len(keys))
-	for _, k := range keys {
-		name := secretEnvName(args[0], k)
-		if previous, exists := names[name]; exists {
-			return invalid(fmt.Sprintf("secret fields %q and %q produce the same environment name %s", previous, k, name))
-		}
-		names[name] = k
-		envNames[k] = name
-	}
-	for _, k := range keys {
-		if _, e := fmt.Fprintf(a.out, "export %s=%s\n", envNames[k], shellQuote(fields[k])); e != nil {
+	for _, variable := range variables {
+		if _, e := fmt.Fprintf(a.out, "export %s=%s\n", variable.Name, shellQuote(variable.Value)); e != nil {
 			return e
 		}
 	}
 	return nil
+}
+
+type secretEnvironmentVariable struct {
+	Name  string
+	Value string
+}
+
+func secretEnvironmentVariables(service string, fields map[string]string) ([]secretEnvironmentVariable, error) {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	seen := make(map[string]string, len(keys))
+	variables := make([]secretEnvironmentVariable, 0, len(keys))
+	for _, key := range keys {
+		name := secretEnvName(service, key)
+		if previous, exists := seen[name]; exists {
+			return nil, invalid(fmt.Sprintf("secret fields %q and %q produce the same environment name %s", previous, key, name))
+		}
+		seen[name] = key
+		variables = append(variables, secretEnvironmentVariable{Name: name, Value: fields[key]})
+	}
+	return variables, nil
 }
 
 func secretEnvName(service, field string) string {
@@ -402,6 +432,121 @@ func secretEnvName(service, field string) string {
 	}
 	return name
 }
+
+func (a *App) secExec(args []string) error {
+	if len(args) < 3 || args[1] != "--" || args[0] == "" {
+		return usage("sec exec", "<service> -- <command> [args...]")
+	}
+	data, e := a.readSecrets()
+	if e != nil {
+		return e
+	}
+	fields, ok := data[args[0]]
+	if !ok {
+		return invalid("secret service not found: " + safeTerminalText(args[0]))
+	}
+	if len(fields) == 0 {
+		return invalid("secret service has no fields: " + safeTerminalText(args[0]))
+	}
+	variables, e := secretEnvironmentVariables(args[0], fields)
+	if e != nil {
+		return e
+	}
+	cmd := a.command(args[2], args[3:]...)
+	cmd.Env = overlaySecretEnvironment(a.env, variables)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = a.in, a.out, a.err
+	if e := cmd.Run(); e != nil {
+		return fmt.Errorf("run with secret service %s: %w", safeTerminalText(args[0]), e)
+	}
+	return nil
+}
+
+func overlaySecretEnvironment(base []string, variables []secretEnvironmentVariable) []string {
+	replaced := make(map[string]bool, len(variables))
+	for _, variable := range variables {
+		replaced[variable.Name] = true
+	}
+	env := make([]string, 0, len(base)+len(variables))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || !replaced[key] {
+			env = append(env, entry)
+		}
+	}
+	for _, variable := range variables {
+		env = append(env, variable.Name+"="+variable.Value)
+	}
+	return env
+}
+
+func secretChoices(data secretStore) []selectChoice {
+	choices := make([]selectChoice, 0)
+	for service, fields := range data {
+		for field := range fields {
+			choices = append(choices, selectChoice{
+				Value:       service + "\t" + field,
+				Label:       service,
+				Description: field,
+				SearchText:  service + "/" + field,
+			})
+		}
+	}
+	sort.Slice(choices, func(i, j int) bool {
+		if choices[i].Label == choices[j].Label {
+			return choices[i].Description < choices[j].Description
+		}
+		return choices[i].Label < choices[j].Label
+	})
+	return choices
+}
+
+func (a *App) secManage() error {
+	data, e := a.readSecrets()
+	if e != nil {
+		return e
+	}
+	picked, e := a.selectOne("Secret", secretChoices(data))
+	if e != nil {
+		if ExitCode(e) == ExitCapabilityUnavailable {
+			return unavailable("secret store is empty; add one with 'bb sec set <service> <field>'")
+		}
+		return e
+	}
+	if picked == "" {
+		return nil
+	}
+	service, field, _ := strings.Cut(picked, "\t")
+	fieldCount := len(data[service])
+	fieldWord := "fields"
+	if fieldCount == 1 {
+		fieldWord = "field"
+	}
+	action, e := a.selectOne("Secret action", []selectChoice{
+		{Value: "copy", Label: "Copy to clipboard", Description: service + "/" + field},
+		{Value: "replace", Label: "Replace value", Description: "Confirm, then enter without echo"},
+		{Value: "remove-field", Label: "Remove field", Description: service + "/" + field},
+		{Value: "remove-service", Label: "Remove service", Description: fmt.Sprintf("%s · %d %s", service, fieldCount, fieldWord)},
+	})
+	if e != nil {
+		return e
+	}
+	if action == "" {
+		return nil
+	}
+	switch action {
+	case "copy":
+		return a.secCopy([]string{service, field})
+	case "replace":
+		return a.secSet([]string{service, field})
+	case "remove-field":
+		return a.secRemove([]string{service, field})
+	case "remove-service":
+		return a.secRemove([]string{service})
+	default:
+		return invalid("unknown secret action")
+	}
+}
+
 func (a *App) secCopy(args []string) error {
 	if len(args) > 2 {
 		return usage("sec copy", "[service] [field]")
@@ -418,26 +563,12 @@ func (a *App) secCopy(args []string) error {
 		field = args[1]
 	}
 	if svc == "" {
-		var c []selectChoice
-		for s, fs := range d {
-			for f := range fs {
-				c = append(c, selectChoice{
-					Value:       s + "\t" + f,
-					Label:       s,
-					Description: f,
-					SearchText:  s + "/" + f,
-				})
-			}
-		}
-		sort.Slice(c, func(i, j int) bool {
-			if c[i].Label == c[j].Label {
-				return c[i].Description < c[j].Description
-			}
-			return c[i].Label < c[j].Label
-		})
-		picked, e := a.selectOne("Secret", c)
+		picked, e := a.selectOne("Secret", secretChoices(d))
 		if e != nil {
 			return e
+		}
+		if picked == "" {
+			return nil
 		}
 		svc, field, _ = strings.Cut(picked, "\t")
 	}

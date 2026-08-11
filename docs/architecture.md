@@ -54,6 +54,8 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/review/clean/state ...` | Preserves the guarded Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; review output uses fresh owner-only XDG state; every destructive path is bounded, confirmed, and re-observed; plan mutation uses a private immutable snapshot |
 | `bb tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Preserves the Trivy workflow and fixed CI/report policies | Direct Trivy arguments; node collector requires confirmation; no config or credential mutation |
 | `bb mcp inventory/audit` | Reports candidate presence and content hashes without returning configuration content | Appends redacted metadata-only `mcp_audit` journal event; never mutates config |
+| `bb sec` | Selects service/field metadata, then a safe copy/replace/remove action | Plaintext never enters selector labels, descriptions, stdout, or the journal |
+| `bb sec exec <service> -- ...` | Decrypts once and overlays normalized fields on one child environment | Parent environment and encrypted store are unchanged; no export text is emitted |
 | `bb export [--output path]` | Exports journal events as JSON | Read-only journal access; optional `0600` output |
 | `bb orca status` | Calls Orca's read-only JSON status endpoint | No Orca mutation or duplicated state |
 

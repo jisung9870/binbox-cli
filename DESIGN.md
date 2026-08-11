@@ -4,8 +4,8 @@
 
 - Status: Active
 - Last refreshed: 2026-08-11
-- Primary product surfaces: interactive selectors used by `tm`, `wenv`, `assume`, and `sec copy`, plus non-Git yes/no mutation confirmations
-- Evidence reviewed: `internal/bb/select.go`, `internal/bb/identity_test.go`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
+- Primary product surfaces: interactive selectors used by `tm`, `wenv`, `assume`, and secret management, plus non-Git yes/no mutation confirmations and scoped child-process execution
+- Evidence reviewed: `internal/bb/select.go`, `internal/bb/confirm.go`, `internal/bb/sec.go`, `internal/bb/identity_test.go`, `docs/sec-manager-smoke-v0.8.0.md`, `docs/sec-audit-v0.7.1.md`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
 
 ## Brand
 
@@ -15,9 +15,9 @@
 
 ## Product goals
 
-- Goals: make search immediately discoverable, make common selection possible without mode knowledge, preserve fast keyboard operation, and present a polished but compact terminal surface.
+- Goals: make search immediately discoverable, make common selection possible without mode knowledge, preserve fast keyboard operation, present a polished but compact terminal surface, and make frequent secret use possible without printing plaintext into the parent shell.
 - Non-goals: pixel compatibility with fzf, mouse-first operation, a general TUI framework, Git workflow expansion, or previews that can expose secrets.
-- Success signals: typing any printable character immediately filters; the first arrow press moves selection; Enter selects; Escape clears the query before cancelling; controls are understandable without documentation; stderr-only rendering and stable-value output remain unchanged.
+- Success signals: typing any printable character immediately filters; the first arrow press moves selection; Enter selects; Escape clears the query before cancelling; secret management exposes only service/field metadata; destructive or overwrite actions default to Cancel; scoped execution passes values only to the child process; stderr-only rendering and stable-value output remain unchanged.
 
 ## Personas and jobs
 
@@ -28,8 +28,8 @@
 ## Information architecture
 
 - Primary navigation: one search field, one ranked result list, and one persistent compact key-hint footer.
-- Core routes/screens: one reusable selector surface plus one reusable default-cancel confirmation card; command-specific content is supplied through metadata rather than separate screens.
-- Content hierarchy: selector title -> search query and result count -> selected result -> supporting metadata -> key hints.
+- Core routes/screens: one reusable selector surface, a secret entry selector followed by a safe action selector, and one reusable default-cancel confirmation card; command-specific content is supplied through metadata rather than separate screens.
+- Content hierarchy: selector title -> search query and result count -> selected service/field metadata -> safe action -> confirmation when required -> key hints.
 
 ## Design principles
 
@@ -37,6 +37,7 @@
 - One key, one visible effect: arrows move on the first press, Enter selects on the first press, and Escape has a predictable clear-then-cancel sequence.
 - Context without clutter: show one muted metadata line only when it helps distinguish choices.
 - Safety survives styling: UI stays on stderr, selected stable values stay on stdout, and sensitive values never become preview metadata.
+- Secret actions are staged: selection never performs a mutation; copy is the default safe action, replacement confirms before hidden entry, and removal confirms before writing.
 - Tradeoffs: direct typing gives up unmodified `j`/`k` navigation while the query is active; arrows and `ctrl+n`/`ctrl+p` remain unambiguous navigation keys.
 
 ## Visual language
@@ -51,8 +52,8 @@
 ## Components
 
 - Existing components to reuse: Bubble Tea program lifecycle, Bubbles fuzzy filter/ranking, Bubbles text input/list behavior where it matches the interaction contract, and Lip Gloss styles already supplied transitively.
-- New/changed components: a bb-owned selector view, always-visible search row, result counter, explicit empty state, compact help footer, command-specific optional detail/keywords, and a default-cancel confirmation card.
-- Variants and states: browsing, searching, filtered, no results, empty source, narrow terminal, no-color, and numbered fallback.
+- New/changed components: a bb-owned selector view, always-visible search row, result counter, explicit empty state, compact help footer, command-specific optional detail/keywords, a default-cancel confirmation card, and a two-stage secret manager that reuses those components.
+- Variants and states: browsing, searching, filtered, no results, empty source, action selection, overwrite confirmation, removal confirmation, narrow terminal, no-color, and numbered fallback.
 - Token/component ownership: selector styles and keymap live beside `internal/bb/select.go`; do not introduce a repository-wide design-system package.
 
 ## Accessibility
@@ -89,7 +90,7 @@
 - Framework/styling system: Go with Bubble Tea, Bubbles, and Lip Gloss; no external `fzf` process and no new dependency for this redesign.
 - Design-token constraints: adaptive ANSI colors, `NO_COLOR`, and terminal width-aware truncation; preserve labels and stable values separately.
 - Performance constraints: filtering and rendering 250 items must remain perceptually immediate and must not start provider or filesystem work per keystroke.
-- Compatibility constraints: all UI writes to stderr; stdout remains byte-stable for shell evaluation and machine consumers; non-TTY, dumb terminal, and `BB_SELECTOR=plain` behavior remain numbered and deterministic.
+- Compatibility constraints: all UI writes to stderr; stdout remains byte-stable for shell evaluation and machine consumers; non-TTY, dumb terminal, and `BB_SELECTOR=plain` behavior remain numbered and deterministic; `sec exec` replaces only the selected service's normalized environment keys in the child and never mutates the parent environment.
 - Test/screenshot expectations: model-level key sequence tests, width/height snapshots or golden text with color disabled, PTY smoke in direct zsh and tmux, and regressions for stdout cleanliness and alternate-screen cleanup.
 
 ## Open questions

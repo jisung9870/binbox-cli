@@ -225,3 +225,17 @@ selection is Cancel. Existing target previews, immutable Terraform snapshots,
 provider re-observation, and the typed Terraform account challenge remain the
 security authority; the TUI changes presentation, not the mutation threshold.
 Git-related CLI behavior remains outside this rollout.
+
+## 2026-08-11 — Frequent secret use stays scoped and metadata-only
+
+Decision: invoking `bb sec` opens a two-stage manager built from the shared
+selector: choose service/field metadata, then choose Copy, Replace field, Remove
+field, or Remove service. Copy is the first safe action. Replace and removal
+remain default-Cancel gates, and hidden entry begins only after overwrite
+approval. Secret values never appear in TUI content.
+
+`bb sec exec <service> -- <command>` overlays normalized service/field variables
+on one child process without printing export statements or changing the parent
+environment. Piped replacement requires `--force`; interactive replacement
+requires confirmation. The existing local age key/ciphertext format remains the
+only storage backend.

@@ -523,6 +523,10 @@ func TestSecHelperProcess(t *testing.T) {
 		_ = os.WriteFile(os.Getenv("SEC_CLIPBOARD_FILE"), b, 0o600)
 		os.Exit(0)
 	}
+	if name == "envcheck" {
+		fmt.Fprintf(os.Stdout, "%s|%s|%s", os.Getenv("SVC_TOKEN"), os.Getenv("SVC_USER_NAME"), os.Getenv("KEEP"))
+		os.Exit(0)
+	}
 	os.Exit(90)
 }
 
@@ -591,6 +595,47 @@ func TestSecSetPromptsWithoutEchoOnTerminal(t *testing.T) {
 	}
 	if got := strings.TrimSpace(out.String()); got != "fake-token" {
 		t.Fatalf("stored value=%q", got)
+	}
+}
+
+func TestSecSetProtectsOverwriteAndForceIsExplicit(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	a.in = strings.NewReader("old-value\n")
+	if err := a.Run([]string{"sec", "set", "svc", "token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.in = strings.NewReader("\n")
+	if err := a.Run([]string{"sec", "set", "svc", "token"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("default overwrite err=%v", err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "svc", "token"}); err != nil || strings.TrimSpace(out.String()) != "old-value" {
+		t.Fatalf("cancelled overwrite value=%q err=%v", out.String(), err)
+	}
+
+	a.in = strings.NewReader("yes\nconfirmed-value\n")
+	if err := a.Run([]string{"sec", "set", "svc", "token"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "svc", "token"}); err != nil || strings.TrimSpace(out.String()) != "confirmed-value" {
+		t.Fatalf("confirmed overwrite value=%q err=%v", out.String(), err)
+	}
+
+	a.in = strings.NewReader("forced-value\n")
+	if err := a.Run([]string{"sec", "set", "svc", "token", "--force"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "svc", "token"}); err != nil || strings.TrimSpace(out.String()) != "forced-value" {
+		t.Fatalf("forced overwrite value=%q err=%v", out.String(), err)
 	}
 }
 
@@ -716,6 +761,184 @@ func TestSecListEnvAndRemovalLifecycle(t *testing.T) {
 	out.Reset()
 	if err := a.Run([]string{"sec", "list"}); err != nil || out.Len() != 0 {
 		t.Fatalf("final list=%q err=%v", out.String(), err)
+	}
+}
+
+func TestSecExecScopesNormalizedValuesToChild(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	a.env = append(a.env, "SVC_TOKEN=parent-value", "KEEP=present")
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ field, value string }{{"token", "child-token"}, {"user-name", "child-user"}} {
+		a.in = strings.NewReader(item.value + "\n")
+		if err := a.Run([]string{"sec", "set", "svc", item.field}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out.Reset()
+	a.in = strings.NewReader("")
+	if err := a.Run([]string{"sec", "exec", "svc", "--", "envcheck"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "child-token|child-user|present"; got != want {
+		t.Fatalf("child environment=%q, want %q", got, want)
+	}
+	if got := a.getenv("SVC_TOKEN"); got != "parent-value" {
+		t.Fatalf("parent environment changed to %q", got)
+	}
+}
+
+func TestSecExecRejectsCollisionBeforeStartingChild(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"api-key", "api_key"} {
+		a.in = strings.NewReader("value\n")
+		if err := a.Run([]string{"sec", "set", "svc", field}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	started := false
+	helperCommand := a.command
+	a.command = func(name string, args ...string) *exec.Cmd {
+		if name == "age" || name == "age-keygen" {
+			return helperCommand(name, args...)
+		}
+		started = true
+		return exec.Command("false")
+	}
+	if err := a.Run([]string{"sec", "exec", "svc", "--", "anything"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("collision err=%v", err)
+	}
+	if started {
+		t.Fatal("child started before environment collision was rejected")
+	}
+}
+
+func TestSecManagerPlainCopyAndReplace(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	clipboard := filepath.Join(dir, "clipboard")
+	enableSecHelper(a, dir)
+	a.env = append(a.env, "BB_SELECTOR=plain", "SEC_CLIPBOARD_FILE="+clipboard)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ service, field, value string }{
+		{"alpha", "password", "alpha-value"},
+		{"zeta", "token", "zeta-value"},
+	} {
+		a.in = strings.NewReader(item.value + "\n")
+		if err := a.Run([]string{"sec", "set", item.service, item.field}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	a.in = strings.NewReader("2\n1\n")
+	out.Reset()
+	if err := a.Run([]string{"sec"}); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 || strings.Contains(stderr.String(), "zeta-value") {
+		t.Fatalf("manager streams stdout=%q stderr=%q", out.String(), stderr.String())
+	}
+	if got, err := os.ReadFile(clipboard); err != nil || string(got) != "zeta-value" {
+		t.Fatalf("clipboard=%q err=%v", got, err)
+	}
+
+	stderr.Reset()
+	a.in = strings.NewReader("1\n2\nyes\nreplaced-value\n")
+	if err := a.Run([]string{"sec"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "alpha", "password"}); err != nil || strings.TrimSpace(out.String()) != "replaced-value" {
+		t.Fatalf("manager replace=%q err=%v", out.String(), err)
+	}
+}
+
+func TestSecManagerPlainRemovalActions(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		action        string
+		remaining     string
+		serviceExists bool
+	}{
+		{name: "field", action: "3", remaining: "beta\n", serviceExists: true},
+		{name: "service", action: "4", serviceExists: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, out, _, _ := testApp(t)
+			dir := t.TempDir()
+			enableSecHelper(a, dir)
+			a.env = append(a.env, "BB_SELECTOR=plain")
+			if err := a.Run([]string{"sec", "init"}); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"alpha", "beta"} {
+				a.in = strings.NewReader(field + "-value\n")
+				if err := a.Run([]string{"sec", "set", "svc", field}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a.in = strings.NewReader("1\n" + tc.action + "\nyes\n")
+			if err := a.Run([]string{"sec"}); err != nil {
+				t.Fatal(err)
+			}
+			out.Reset()
+			err := a.Run([]string{"sec", "list", "svc"})
+			if tc.serviceExists {
+				if err != nil || out.String() != tc.remaining {
+					t.Fatalf("remaining=%q err=%v", out.String(), err)
+				}
+			} else if ExitCode(err) != ExitInvalidInvocation {
+				t.Fatalf("removed service err=%v", err)
+			}
+		})
+	}
+}
+
+func TestSecManagerPlainCancelAtEitherStage(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	a.in = strings.NewReader("value\n")
+	if err := a.Run([]string{"sec", "set", "svc", "field"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"\n", "1\n\n"} {
+		a.in = strings.NewReader(input)
+		out.Reset()
+		if err := a.Run([]string{"sec"}); err != nil {
+			t.Fatalf("input=%q err=%v", input, err)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("cancel input=%q wrote stdout %q", input, out.String())
+		}
+	}
+}
+
+func TestSecManagerEmptyStoreExplainsHowToAdd(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run([]string{"sec"}); ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "bb sec set") {
+		t.Fatalf("empty manager err=%v", err)
 	}
 }
 

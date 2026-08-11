@@ -181,6 +181,55 @@ func TestDoctorJSONPreservesChecksAndAddsWorkbenchCapabilities(t *testing.T) {
 	}
 }
 
+func TestDoctorMissingCapabilityRecoveryIsStable(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	a.lookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	if err := a.Run([]string{"doctor", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Data struct {
+			Capabilities []struct {
+				Name        string  `json:"name"`
+				Scope       string  `json:"scope"`
+				Description string  `json:"description"`
+				Available   bool    `json:"available"`
+				Path        *string `json:"path"`
+				Recovery    *string `json:"recovery"`
+			} `json:"capabilities"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct{ name, purpose, scope string }{
+		{"git", "source and project operations", "core"},
+		{"tmux", "human terminal sessions", "optional"},
+		{"kubectl", "Kubernetes integrations", "optional"},
+		{"aws", "AWS integrations", "optional"},
+		{"terraform", "Terraform integrations", "optional"},
+		{"orca", "read-only Orca status and jump pointers", "optional"},
+		{"docker", "container inspection integrations", "optional"},
+		{"lsof", "local port inspection fallback", "optional"},
+		{"session-manager-plugin", "AWS session manager integrations", "optional"},
+		{"age", "encrypted local export integrations", "optional"},
+		{"age-keygen", "encrypted secret key management", "optional"},
+		{"jq", "JSON query integrations", "optional"},
+		{"trivy", "security scan integrations", "optional"},
+		{"tf-summarize", "Terraform summary integrations", "optional"},
+	}
+	if len(got.Data.Capabilities) != len(want) {
+		t.Fatalf("capability count=%d, want %d", len(got.Data.Capabilities), len(want))
+	}
+	for i, expected := range want {
+		capability := got.Data.Capabilities[i]
+		recovery := "install " + expected.name + " to use " + expected.purpose
+		if capability.Name != expected.name || capability.Scope != expected.scope || capability.Description != expected.purpose || capability.Available || capability.Path != nil || capability.Recovery == nil || *capability.Recovery != recovery {
+			t.Fatalf("capability[%d]=%+v, want name=%q scope=%q description=%q recovery=%q", i, capability, expected.name, expected.scope, expected.purpose, recovery)
+		}
+	}
+}
+
 func TestTMProjectsUsesLazyVimEnvelope(t *testing.T) {
 	a, out, _, _ := testApp(t)
 	project := t.TempDir()
@@ -375,15 +424,20 @@ func TestRunSubcommandJSONErrorUsesEnvelope(t *testing.T) {
 }
 
 func TestSubcommandHelp(t *testing.T) {
-	commands := [][]string{{"version"}, {"doctor"}, {"project"}, {"session"}, {"run"}, {"mcp"}, {"export"}, {"orca"}}
+	commands := [][]string{
+		{"version"}, {"doctor"}, {"setup"}, {"shell"}, {"project"}, {"session"}, {"tm"},
+		{"kx"}, {"assm"}, {"profile"}, {"wenv"}, {"sec"}, {"port"}, {"tfx"}, {"tvx"},
+		{"run"}, {"mcp"}, {"export"}, {"orca"},
+	}
 	for _, command := range commands {
 		t.Run(command[0], func(t *testing.T) {
 			a, out, _, _ := testApp(t)
 			if err := a.Run(append(command, "--help")); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(out.String(), "Usage:") {
-				t.Fatalf("help=%q", out.String())
+			help := out.String() + a.err.(*bytes.Buffer).String()
+			if !strings.Contains(help, "Usage:") {
+				t.Fatalf("help=%q", help)
 			}
 		})
 	}

@@ -119,5 +119,7 @@ See [operations](docs/operations.md) for the release and trust contract.
 See the [command reference](docs/commands.md),
 [legacy comparison](docs/legacy-comparison.md),
 [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
-and [decision log](docs/decision-log.md). The legacy and installer evidence is
+[non-Git parity audit](docs/non-git-parity-audit-2026-08-11.md),
+[selector smoke record](docs/selector-smoke-2026-08-11.md), and
+[decision log](docs/decision-log.md). The legacy and installer evidence is
 preserved under `research/`.

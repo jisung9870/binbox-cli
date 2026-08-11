@@ -144,12 +144,24 @@ func TestCommandSelectorsReturnStableValuesWithoutStdout(t *testing.T) {
 	})
 
 	t.Run("wenv", func(t *testing.T) {
-		a, stdout, stderr := newApp("2\n")
-		got, err := a.chooseWenv(wenvStore{Presets: map[string]map[string]string{"zeta": {}, "alpha": {}}})
-		if err != nil || got != "zeta" {
-			t.Fatalf("environment=%q err=%v", got, err)
+		a, stdout, _, _ := testApp(t)
+		stderr := new(bytes.Buffer)
+		a.err = stderr
+		for _, args := range [][]string{{"wenv", "set", "zeta", "TARGET=zeta"}, {"wenv", "set", "alpha", "TARGET=alpha"}} {
+			if err := a.Run(args); err != nil {
+				t.Fatal(err)
+			}
 		}
-		assertSelectorStreams(t, stdout, stderr)
+		a.in = strings.NewReader("2\n")
+		if err := a.Run([]string{"wenv"}); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := stdout.String(), "export TARGET='zeta'\n"; got != want {
+			t.Fatalf("stdout=%q, want %q", got, want)
+		}
+		if stderr.Len() == 0 {
+			t.Fatal("selector did not write its UI to stderr")
+		}
 	})
 }
 

@@ -20,7 +20,7 @@ Local verification:
 ```sh
 ALLOW_UNTAGGED_BUILD=1 VERSION=0.4.1 COMMIT=$(git rev-parse HEAD) \
   SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) scripts/release.sh
-(cd dist && sha256sum -c checksums.txt)
+go run ./cmd/releasearchive verify --manifest dist/checksums.txt
 ```
 
 ## Install and recovery

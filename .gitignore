@@ -1,2 +1,7 @@
 /.tmp/
 /dist/
+/.omx/cache/
+/.omx/logs/
+/.omx/runtime/
+/.omx/state/
+/.omx/metrics.json

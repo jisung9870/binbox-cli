@@ -6,16 +6,23 @@ ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 TEST_PARENT="$ROOT/.tmp"
 mkdir -p "$TEST_PARENT"
 TEST_ROOT=$(mktemp -d "$TEST_PARENT/bb-release-guard-test.XXXXXX")
-cleanup() { rm -rf "$TEST_ROOT"; rmdir "$TEST_PARENT" 2>/dev/null || true; }
+cleanup() {
+  chmod -R u+w "$TEST_ROOT" 2>/dev/null || true
+  rm -rf "$TEST_ROOT"
+  rmdir "$TEST_PARENT" 2>/dev/null || true
+}
 trap cleanup EXIT
 
 make_repo() {
   repo=$1
   git clone -q --no-hardlinks "$ROOT" "$repo"
+  mkdir -p "$repo/cmd/releasearchive" "$repo/internal/releasearchive"
   cp "$ROOT/scripts/release.sh" "$repo/scripts/release.sh"
+  cp "$ROOT/cmd/releasearchive/main.go" "$repo/cmd/releasearchive/main.go"
+  cp "$ROOT/internal/releasearchive/archive.go" "$repo/internal/releasearchive/archive.go"
   git -C "$repo" config user.name 'bb release guard test'
   git -C "$repo" config user.email 'bb-release-guard@example.invalid'
-  git -C "$repo" add scripts/release.sh
+  git -C "$repo" add scripts/release.sh cmd/releasearchive internal/releasearchive
   # Keep every fixture on a fresh commit even when the cloned script already
   # matches HEAD (the normal case when this test runs from a release tag).
   git -C "$repo" commit --allow-empty -qm 'test release guard'
@@ -70,6 +77,14 @@ mkdir -p "$success/.tmp/cache" "$success/.tmp/modcache" "$success/.tmp/tmp"
     scripts/release.sh
 )
 test -f "$success/dist/checksums.txt"
+cp "$success/dist/checksums.txt" "$TEST_ROOT/first-checksums.txt"
+(
+  cd "$success"
+  VERSION=9.9.9 COMMIT="$success_head" DIST="$success/dist" \
+    TMPDIR="$success/.tmp/tmp" GOCACHE="$success/.tmp/cache" GOMODCACHE="$success/.tmp/modcache" \
+    scripts/release.sh
+)
+cmp "$TEST_ROOT/first-checksums.txt" "$success/dist/checksums.txt"
 
 # The escape hatch is intentionally explicit and is only for local/test builds.
 escape="$TEST_ROOT/escape"

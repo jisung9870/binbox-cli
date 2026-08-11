@@ -484,17 +484,13 @@ func secretChoices(data secretStore) []selectChoice {
 	for service, fields := range data {
 		for field := range fields {
 			choices = append(choices, selectChoice{
-				Value:       service + "\t" + field,
-				Label:       service,
-				Description: field,
-				SearchText:  service + "/" + field,
+				Value:      service + "\t" + field,
+				Label:      service + " / " + field,
+				SearchText: service + "/" + field,
 			})
 		}
 	}
 	sort.Slice(choices, func(i, j int) bool {
-		if choices[i].Label == choices[j].Label {
-			return choices[i].Description < choices[j].Description
-		}
 		return choices[i].Label < choices[j].Label
 	})
 	return choices

@@ -5,7 +5,7 @@
 - Status: Active
 - Last refreshed: 2026-08-11
 - Primary product surfaces: interactive selectors used by `tm`, `wenv`, `assume`, and secret management, plus non-Git yes/no mutation confirmations and scoped child-process execution
-- Evidence reviewed: `internal/bb/select.go`, `internal/bb/confirm.go`, `internal/bb/sec.go`, `internal/bb/identity_test.go`, `docs/sec-manager-smoke-v0.8.0.md`, `docs/sec-audit-v0.7.1.md`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
+- Evidence reviewed: `internal/bb/select.go`, `internal/bb/confirm.go`, `internal/bb/sec.go`, `internal/bb/identity_test.go`, `docs/sec-manager-smoke-v0.8.1.md`, `docs/sec-manager-smoke-v0.8.0.md`, `docs/sec-audit-v0.7.1.md`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
 
 ## Brand
 
@@ -29,13 +29,14 @@
 
 - Primary navigation: one search field, one ranked result list, and one persistent compact key-hint footer.
 - Core routes/screens: one reusable selector surface, a secret entry selector followed by a safe action selector, and one reusable default-cancel confirmation card; command-specific content is supplied through metadata rather than separate screens.
-- Content hierarchy: selector title -> search query and result count -> selected service/field metadata -> safe action -> confirmation when required -> key hints.
+- Content hierarchy: selector title -> search query and result count -> one-line `service / field` identity -> safe action -> confirmation when required -> key hints. Secret fields are not rendered as a subordinate metadata row because each service/field pair is one selectable unit.
 
 ## Design principles
 
 - Search is the default action: printable input filters immediately; `/` remains an optional shortcut, not required knowledge.
 - One key, one visible effect: arrows move on the first press, Enter selects on the first press, and Escape has a predictable clear-then-cancel sequence.
 - Context without clutter: show one muted metadata line only when it helps distinguish choices.
+- Dense secret identity: render `service / field` on one row; reserve the second row for action context, never for repeating the field hierarchy.
 - Safety survives styling: UI stays on stderr, selected stable values stay on stdout, and sensitive values never become preview metadata.
 - Secret actions are staged: selection never performs a mutation; copy is the default safe action, replacement confirms before hidden entry, and removal confirms before writing.
 - Tradeoffs: direct typing gives up unmodified `j`/`k` navigation while the query is active; arrows and `ctrl+n`/`ctrl+p` remain unambiguous navigation keys.

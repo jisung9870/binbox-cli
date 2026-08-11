@@ -329,7 +329,17 @@ func (m *bubbleSelectorModel) move(delta int) {
 	m.ensureVisible()
 }
 
-func (m bubbleSelectorModel) showDescriptions() bool { return m.width >= 50 }
+func (m bubbleSelectorModel) showDescriptions() bool {
+	if m.width < 50 {
+		return false
+	}
+	for _, choice := range m.choices {
+		if choice.description != "" {
+			return true
+		}
+	}
+	return false
+}
 
 func (m bubbleSelectorModel) pageSize() int {
 	reserved := 7
@@ -410,8 +420,6 @@ func (m bubbleSelectorModel) View() string {
 			if m.showDescriptions() && match.choice.description != "" {
 				detail := ansi.Truncate(match.choice.description, max(1, innerWidth-4), "…")
 				rows = append(rows, "    "+m.styles.detail.Render(detail))
-			} else if m.showDescriptions() {
-				rows = append(rows, "")
 			}
 		}
 	}

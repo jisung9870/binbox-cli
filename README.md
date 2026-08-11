@@ -127,7 +127,7 @@ defaults to `~/.local/bin`, never uses sudo, and requires explicit `--force` or
 through the existing authenticated GitHub CLI session:
 
 ```sh
-scripts/install.sh --github-cli --version 0.8.0
+scripts/install.sh --github-cli --version 0.8.1
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.
@@ -137,6 +137,7 @@ See the [command reference](docs/commands.md),
 [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 [non-Git parity audit](docs/non-git-parity-audit-2026-08-11.md),
 [macOS cutover record](docs/cutover-macos-2026-08-11.md),
+[v0.8.1 compact secret manager smoke record](docs/sec-manager-smoke-v0.8.1.md),
 [v0.8.0 secret manager smoke record](docs/sec-manager-smoke-v0.8.0.md),
 [v0.7.1 secret audit](docs/sec-audit-v0.7.1.md),
 [v0.7.0 TUI smoke record](docs/tui-smoke-v0.7.0.md), the historical

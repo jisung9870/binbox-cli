@@ -865,6 +865,20 @@ func TestSecManagerPlainCopyAndReplace(t *testing.T) {
 	}
 }
 
+func TestSecretChoicesRenderServiceAndFieldOnOneLine(t *testing.T) {
+	choices := secretChoices(secretStore{"service": {"field": "not-rendered"}})
+	if len(choices) != 1 {
+		t.Fatalf("choices=%+v", choices)
+	}
+	if got := choices[0]; got.Label != "service / field" || got.Description != "" || got.Value != "service\tfield" {
+		t.Fatalf("choice=%+v", got)
+	}
+	view := newBubbleSelectorModelWithColor("Secret", choices, true).View()
+	if !strings.Contains(view, "> service / field") || strings.Contains(view, "not-rendered") || strings.Contains(view, "> service / field\n\n") {
+		t.Fatalf("secret choice view:\n%s", view)
+	}
+}
+
 func TestSecManagerPlainRemovalActions(t *testing.T) {
 	for _, tc := range []struct {
 		name          string

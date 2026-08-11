@@ -135,7 +135,7 @@ func TestTMDirsOnlyMutatesBBRegistry(t *testing.T) {
 	if err := a.Run([]string{"tm", "dirs", "list"}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out.String()) != directory {
+	if strings.TrimSpace(out.String()) != canonicalPath(directory) {
 		t.Fatalf("dirs=%q", out.String())
 	}
 	if err := a.Run([]string{"tm", "dirs", "remove", "--yes", projectID(directory)}); err != nil {

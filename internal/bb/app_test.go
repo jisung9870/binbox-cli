@@ -205,7 +205,7 @@ func TestTMProjectsUsesLazyVimEnvelope(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.SchemaVersion != SchemaVersion || !got.OK || len(got.Data.Projects) != 1 || got.Data.Projects[0].Path != project || got.Data.Projects[0].ID != projectID(project) {
+	if got.SchemaVersion != SchemaVersion || !got.OK || len(got.Data.Projects) != 1 || got.Data.Projects[0].Path != canonicalPath(project) || got.Data.Projects[0].ID != projectID(project) {
 		t.Fatalf("projects=%s", out.String())
 	}
 }
@@ -231,7 +231,7 @@ func TestTMExplicitProjectUsesTmuxWithoutFZFOrOrca(t *testing.T) {
 	if err := a.Run([]string{"tm", "--project", projectID(project)}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"tmux", "new-session", "-A", "-s", "bb-" + projectID(project), "-c", project}
+	want := []string{"tmux", "new-session", "-A", "-s", "bb-" + projectID(project), "-c", canonicalPath(project)}
 	if strings.Join(requested, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("tmux request=%q want=%q", requested, want)
 	}
@@ -269,7 +269,7 @@ func TestTMExplicitProjectInsideTmuxCreatesAndSwitches(t *testing.T) {
 	session := "bb-" + projectID(project)
 	want := [][]string{
 		{"tmux", "has-session", "-t", session},
-		{"tmux", "new-session", "-d", "-s", session, "-c", project},
+		{"tmux", "new-session", "-d", "-s", session, "-c", canonicalPath(project)},
 		{"tmux", "switch-client", "-t", session},
 	}
 	if !reflect.DeepEqual(requests, want) {
@@ -546,7 +546,7 @@ func TestSessionizerApplyIsIdempotentAndKeepsLegacyBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(records) != 2 || records[0].Origin.Kind != "sessionizer" || records[0].Origin.Source != source {
+	if len(records) != 2 || records[0].Origin.Kind != "sessionizer" || records[0].Origin.Source != canonicalPath(source) {
 		t.Fatalf("records=%+v", records)
 	}
 	backups, err := filepath.Glob(filepath.Join(state, "bb", "migration-backups", "*.dirs"))

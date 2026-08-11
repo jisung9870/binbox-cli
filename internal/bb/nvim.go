@@ -138,6 +138,8 @@ func ClassifyNvimTarget(target, configDir string) (NvimTargetConflict, error) {
 		}
 		resolved, _ = filepath.Abs(filepath.Clean(resolved))
 		desired, _ := filepath.Abs(filepath.Clean(configDir))
+		resolved = canonicalPath(resolved)
+		desired = canonicalPath(desired)
 		if resolved == desired {
 			result.Kind = NvimTargetDesiredLink
 			return result, nil

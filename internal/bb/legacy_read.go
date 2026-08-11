@@ -316,21 +316,13 @@ func parseLsofListeners(output string) []portListener {
 		if len(fields) < 9 || fields[0] == "COMMAND" {
 			continue
 		}
-		name := strings.Join(fields[8:], " ")
-		protocol := ""
-		if strings.HasPrefix(name, "TCP ") {
-			protocol = "tcp"
-		} else if strings.HasPrefix(name, "UDP ") {
-			protocol = "udp"
-		} else {
+		protocol := strings.ToLower(fields[7])
+		if protocol != "tcp" && protocol != "udp" {
 			continue
 		}
-		parts := strings.Fields(name)
 		listener := portListener{Protocol: protocol, Process: fields[0] + " " + fields[1]}
-		if len(parts) > 1 {
-			listener.Address = parts[1]
-		}
-		if strings.Contains(name, "(LISTEN)") {
+		listener.Address = fields[8]
+		if strings.Contains(strings.Join(fields[9:], " "), "(LISTEN)") {
 			listener.State = "LISTEN"
 		}
 		listeners = append(listeners, listener)

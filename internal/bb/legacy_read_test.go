@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -84,24 +85,37 @@ func TestGitLogLimitRejectsUnsafeOrUnboundedValues(t *testing.T) {
 	}
 }
 
-func TestPortInspectPrefersSSAndNeverInvokesKill(t *testing.T) {
+func TestPortInspectUsesPlatformReaderAndNeverInvokesKill(t *testing.T) {
 	a, out, _, _ := testApp(t)
+	reader := "ss"
+	commandOutput := "tcp LISTEN 0 4096 127.0.0.1:4321 0.0.0.0:* users:((\"api\",pid=99,fd=3))\n"
+	if runtime.GOOS == "darwin" {
+		reader = "lsof"
+		commandOutput = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\napi 99 user 3u IPv4 0x0 0t0 TCP 127.0.0.1:4321 (LISTEN)\n"
+	}
 	a.lookPath = func(name string) (string, error) {
-		if name == "ss" {
-			return "/test/ss", nil
+		if name == reader {
+			return "/test/" + reader, nil
 		}
 		return "", os.ErrNotExist
 	}
 	var requests [][]string
-	a.command = outputCommand("tcp LISTEN 0 4096 127.0.0.1:4321 0.0.0.0:* users:((\"api\",pid=99,fd=3))\n", &requests)
+	a.command = outputCommand(commandOutput, &requests)
 	if err := a.Run([]string{"port", "inspect", "4321", "--json"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 1 || requests[0][0] != "ss" || strings.Contains(strings.Join(requests[0], " "), "kill") {
+	if len(requests) != 1 || requests[0][0] != reader || strings.Contains(strings.Join(requests[0], " "), "kill") {
 		t.Fatalf("requests=%q", requests)
 	}
-	if !strings.Contains(out.String(), `"source":"ss"`) || !strings.Contains(out.String(), `"listening":true`) {
+	if !strings.Contains(out.String(), `"source":"`+reader+`"`) || !strings.Contains(out.String(), `"listening":true`) {
 		t.Fatalf("inspect=%s", out.String())
+	}
+}
+
+func TestParseLsofListenersUsesNodeProtocolAndNameAddress(t *testing.T) {
+	listeners := parseLsofListeners("COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\napi 99 user 3u IPv4 0x0 0t0 TCP 127.0.0.1:4321 (LISTEN)\n")
+	if len(listeners) != 1 || listeners[0].Protocol != "tcp" || listeners[0].Address != "127.0.0.1:4321" || listeners[0].State != "LISTEN" || listeners[0].Process != "api 99" {
+		t.Fatalf("listeners=%+v", listeners)
 	}
 }
 
@@ -162,7 +176,7 @@ func TestTMProjectsPlainPreservesPathListCompatibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Fields(out.String())
-	if len(lines) != 2 || lines[0] != first || lines[1] != second {
+	if len(lines) != 2 || lines[0] != canonicalPath(first) || lines[1] != canonicalPath(second) {
 		t.Fatalf("plain projects=%q", out.String())
 	}
 }

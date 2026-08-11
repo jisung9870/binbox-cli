@@ -18,7 +18,7 @@ fixture tests; it must not be used for a release.
 Local verification:
 
 ```sh
-ALLOW_UNTAGGED_BUILD=1 VERSION=0.4.1 COMMIT=$(git rev-parse HEAD) \
+ALLOW_UNTAGGED_BUILD=1 VERSION=0.5.0 COMMIT=$(git rev-parse HEAD) \
   SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) scripts/release.sh
 go run ./cmd/releasearchive verify --manifest dist/checksums.txt
 ```
@@ -26,8 +26,8 @@ go run ./cmd/releasearchive verify --manifest dist/checksums.txt
 ## Install and recovery
 
 ```sh
-scripts/install.sh --version 0.4.1 --dry-run
-scripts/install.sh --version 0.4.1
+scripts/install.sh --version 0.5.0 --dry-run
+scripts/install.sh --version 0.5.0
 ```
 
 For this private repository, use the authenticated GitHub CLI mode instead of
@@ -35,7 +35,7 @@ unauthenticated release URLs:
 
 ```sh
 gh auth status
-scripts/install.sh --github-cli --version 0.4.1
+scripts/install.sh --github-cli --version 0.5.0
 ```
 
 This mode delegates download authorization to `gh`; the installer neither

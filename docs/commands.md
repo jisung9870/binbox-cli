@@ -27,7 +27,9 @@ provider state; `bb doctor` reports whether they are available.
 
 ## State and recovery
 
-- Configuration: `${XDG_CONFIG_HOME:-~/.config}/bb`
+- Configuration: `$XDG_CONFIG_HOME/bb` when set; otherwise the platform user
+  config directory (`~/Library/Application Support/bb` on macOS and commonly
+  `~/.config/bb` on Linux)
 - State and journals: `${XDG_STATE_HOME:-~/.local/state}/bb`
 - AWS profiles: the AWS CLI's existing `~/.aws/config`
 - Secret store: the existing binbox age key/ciphertext paths

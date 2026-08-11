@@ -210,7 +210,7 @@ func TestProfileManagesConfigOnlyAndPreservesFields(t *testing.T) {
 func TestWenvImportRejectsExecutableSyntaxAndExportsSafely(t *testing.T) {
 	a, out, _, _ := testApp(t)
 	legacy := t.TempDir()
-	if e := os.WriteFile(filepath.Join(legacy, "dev"), []byte("AWS_PROFILE=dev\nAWS_REGION=ap-northeast-2\nEXPORTS=(FOO='a b')\n"), 0o600); e != nil {
+	if e := os.WriteFile(filepath.Join(legacy, "dev"), []byte("AWS_PROFILE=dev\nAWS_REGION=ap-northeast-2\nEXPORTS=(\n  FOO='a b'\n  BAR=literal\n)\n"), 0o600); e != nil {
 		t.Fatal(e)
 	}
 	if e := a.Run([]string{"wenv", "import", "--apply", "--dir", legacy}); e != nil {
@@ -220,7 +220,7 @@ func TestWenvImportRejectsExecutableSyntaxAndExportsSafely(t *testing.T) {
 	if e := a.Run([]string{"wenv", "export", "dev"}); e != nil {
 		t.Fatal(e)
 	}
-	if got := out.String(); !strings.Contains(got, "export AWS_PROFILE='dev'") || !strings.Contains(got, "export FOO='a b'") {
+	if got := out.String(); !strings.Contains(got, "export AWS_PROFILE='dev'") || !strings.Contains(got, "export FOO='a b'") || !strings.Contains(got, "export BAR='literal'") {
 		t.Fatalf("exports=%q", got)
 	}
 	if e := os.WriteFile(filepath.Join(legacy, "evil"), []byte("AWS_PROFILE=$(id)\n"), 0o600); e != nil {
@@ -228,6 +228,13 @@ func TestWenvImportRejectsExecutableSyntaxAndExportsSafely(t *testing.T) {
 	}
 	if e := a.Run([]string{"wenv", "import", "--check", "--dir", legacy}); ExitCode(e) != ExitInvalidInvocation {
 		t.Fatalf("err=%v", e)
+	}
+	unterminated := filepath.Join(t.TempDir(), "unterminated")
+	if e := os.WriteFile(unterminated, []byte("EXPORTS=(\nFOO=bar\n"), 0o600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := parseLegacyWenv(unterminated); ExitCode(e) != ExitInvalidInvocation {
+		t.Fatalf("unterminated EXPORTS err=%v", e)
 	}
 }
 

@@ -195,23 +195,44 @@ func parseLegacyWenv(path string) (map[string]string, error) {
 	}
 	defer f.Close()
 	vars := map[string]string{}
+	inExports := false
+	parseExports := func(value string) error {
+		words, splitErr := splitLegacyWords(value)
+		if splitErr != nil {
+			return splitErr
+		}
+		for _, kv := range words {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok || !envKeyRE.MatchString(k) {
+				return invalid("unsupported legacy EXPORTS entry")
+			}
+			vars[k] = strings.Trim(v, "'\"")
+		}
+		return nil
+	}
 	scan := bufio.NewScanner(f)
 	for scan.Scan() {
 		line := strings.TrimSpace(scan.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(line, "EXPORTS=(") && strings.HasSuffix(line, ")") {
-			words, splitErr := splitLegacyWords(strings.TrimSuffix(strings.TrimPrefix(line, "EXPORTS=("), ")"))
-			if splitErr != nil {
-				return nil, splitErr
+		if inExports {
+			if line == ")" {
+				inExports = false
+				continue
 			}
-			for _, kv := range words {
-				k, v, ok := strings.Cut(kv, "=")
-				if !ok || !envKeyRE.MatchString(k) {
-					return nil, invalid("unsupported legacy EXPORTS entry")
-				}
-				vars[k] = strings.Trim(v, "'\"")
+			if e := parseExports(line); e != nil {
+				return nil, e
+			}
+			continue
+		}
+		if line == "EXPORTS=(" {
+			inExports = true
+			continue
+		}
+		if strings.HasPrefix(line, "EXPORTS=(") && strings.HasSuffix(line, ")") {
+			if e := parseExports(strings.TrimSuffix(strings.TrimPrefix(line, "EXPORTS=("), ")")); e != nil {
+				return nil, e
 			}
 			continue
 		}
@@ -220,6 +241,9 @@ func parseLegacyWenv(path string) (map[string]string, error) {
 			return nil, invalid("legacy wenv contains executable or unsupported syntax: " + filepath.Base(path))
 		}
 		vars[k] = strings.Trim(v, "'\"")
+	}
+	if inExports {
+		return nil, invalid("legacy wenv contains an unterminated EXPORTS array: " + filepath.Base(path))
 	}
 	return vars, scan.Err()
 }

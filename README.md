@@ -139,7 +139,9 @@ scripts/install.sh --github-cli --version 0.10.0
 
 See [operations](docs/operations.md) for the release and trust contract.
 
-See the [command reference](docs/commands.md),
+See the [documentation index](docs/README.md), [changelog](CHANGELOG.md),
+[internal implementation guide](docs/internals.md),
+[command reference](docs/commands.md),
 [legacy comparison](docs/legacy-comparison.md),
 [architecture](docs/architecture.md), [migration plan](docs/migration-plan.md),
 [non-Git parity audit](docs/non-git-parity-audit-2026-08-11.md),

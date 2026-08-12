@@ -6,7 +6,7 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
 
 | Disposition | Areas |
 |---|---|
-| Keep/migrate into `bb` | single-command UX, doctor, project discovery/registry, bb-owned session intent, run journal, read-only integration inventory |
+| Keep/migrate into `bb` | single-command UX, doctor, project discovery/registry, and read-only integration metadata audit |
 | Keep outside `bb` | Orca lifecycle; LazyVim/tmux config; transitional Workbench-owned personal data until explicitly migrated |
 | Defer | executable shell presets outside the declarative `wenv` subset, MCP mutation/proxy/install |
 | Retire/archive | libexec dispatcher, checkout-coupled setup/upgrade, authoring helpers, agent-pane inference, repo-coupled `dx`/`md2jira` launchers |
@@ -14,7 +14,7 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
 ## Phases
 
 1. **MVP isolation (implemented).** Ship the Go binary beside the legacy checkout. Validate
-   empty XDG directories, owner-only files, journal redaction, help/minimum
+   empty XDG directories, owner-only files, help/minimum
    behavior, and missing optional tools. Do not change aliases or source data.
 2. **Freeze public data contracts (contract v1 implemented).** The schema-v1
    JSON envelope, structured error classes, exit codes, stable IDs, and atomic

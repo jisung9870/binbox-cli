@@ -2,8 +2,8 @@
 
 ## Intent
 
-`bb` is one installable Go binary for portable local project, session-intent,
-execution-journal, dependency-health, and integration-inventory workflows. It
+`bb` is one installable Go binary for portable local project,
+dependency-health, and integration-audit workflows. It
 does not reproduce Orca lifecycle management, embed the LazyVim configuration,
 or keep the old shell dispatcher/libexec architecture.
 
@@ -11,8 +11,8 @@ or keep the old shell dispatcher/libexec architecture.
 
 | Owner | Owns | Integration boundary |
 |---|---|---|
-| binbox (`bb`) | CLI contract, XDG project/session records, redacted run journal, doctor, MCP inventory/audit, install of its own binary | May invoke declared external CLIs and retain opaque result pointers; must re-check capabilities and never infer lifecycle authority |
-| Orca | Agent, terminal, worktree, Run/Task/Dispatch, scheduler, and DAG lifecycle | `bb` exposes read-only availability/status only; no parallel registry, scheduler, or terminal-control implementation |
+| binbox (`bb`) | CLI contract, XDG project records, doctor, metadata-only MCP audit, install of its own binary | May invoke declared external CLIs; must re-check capabilities and never infer lifecycle authority |
+| Orca | Agent, terminal, worktree, Run/Task/Dispatch, scheduler, and DAG lifecycle | Used directly through its owning app/CLI; `bb` has no Orca command, parallel registry, scheduler, or terminal-control implementation |
 | `lazyvim-config` | Neovim and tmux configuration, plugins, keymaps, lockfiles, and editor-local setup | Future `bb setup nvim` selects/verifies/links a separately versioned checkout; it never embeds or silently overwrites the config |
 | Workbench/setup (transitional) | Existing data and compatibility evidence during migration | No new long-lived features; functions move to `bb`, remain with Orca/LazyVim, or are archived |
 
@@ -31,14 +31,10 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | Surface | Current minimum behavior | State/effect |
 |---|---|---|
 | `bb version` | Prints the CLI version | None |
-| `bb doctor [--json]` | Checks core integrations plus optional Docker, port, AWS session, age, Trivy, and Terraform-summary tools | Read-only PATH inspection; fzf is not required |
+| `bb doctor [--json]` | Checks Git plus optional tools used by current tmux, Kubernetes, AWS, port, secret, Trivy, and Terraform workflows | Read-only PATH inspection; fzf is not required |
 | `bb project add/list/remove` | Maintains a local project registry with stable `prj_` IDs | `$XDG_CONFIG_HOME/bb/projects.json`, mode `0600` |
 | `bb project import sessionizer --check` | Expands the shared parent/`=direct` grammar and reports candidates, dead paths, duplicates, and collisions | Strictly read-only; source and registry remain byte-identical |
 | `bb project import sessionizer --apply` | Adds non-conflicting candidates with stable origin metadata | Writes bb registry/recovery state only; verifies the source hash and preserves source bytes |
-| `bb session start/stop/list` | Maintains bb-owned session intent records with stable `ses_` IDs; it does not claim a tmux/Orca session | `$XDG_STATE_HOME/bb/sessions.json`, mode `0600` |
-| `bb run <command> [args]` | Executes an explicit external command | Journal stores only executable basename, argument count, exit code, and timestamp |
-| `bb run list/show/export` | Reads bb-owned run records with stable `run_` IDs and outcomes | No provider scraping or external lifecycle authority |
-| `bb session open <project-id>` | Returns an explicit backend plan | Never opens or destroys a terminal; Orca is capability-unavailable by design |
 | `bb tm projects [--plain|--json]` | Shows a human project table by default or the sessionizer/LazyVim-compatible normalized project view explicitly | Read-only bb registry; never rewrites the shared legacy source |
 | `bb tm sessions [--json]` | Shows a human session table or preserves legacy typed tmux session fields explicitly | Session-level observation only; no panes, commands, or scrollback |
 | `bb tm [--project <id>]` | Selects through bb's search-first responsive TUI (numbered fallback), then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
@@ -50,17 +46,14 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | bb-owned structured reads | Render labels/tables by default and schema-v1 envelopes with `--json` | Terminal control characters are removed at the human-rendering boundary; external owner streams are unchanged |
 | `bb sec ...` | Uses the existing age-encrypted JSON/key format through Service→Field→Action navigation | Plaintext remains in memory/pipes; field rename moves the in-memory value only; ciphertext mutation is locked, atomic, and backed up |
 | `bb tm attach/kill/dirs/layout` | Operates on an exact tmux session or bb project registry entry; layouts are fixed Go-owned recipes | Destructive actions show targets and re-observe before direct tmux argv; no legacy directory-file writes |
-| `bb git root/branch/log` | Returns bounded Git repository metadata | Direct read-only Git argument vectors; no shell evaluation |
 | `bb gx ...` | Provides explicit Git branch/root/log compatibility without shell or fzf dependence | Branch deletion shows and re-observes the exact ref and refuses the current branch |
 | `bb kx ...` / `bb assm ...` | Streams explicit kubectl and AWS SSM operations | Direct argv only; identifiers/ports are validated and no credentials are read or persisted |
 | `bb port inspect/kill` | Reports listeners and optionally sends SIGTERM to an exact PID set | Kill requires lsof, prints/optionally confirms, then re-observes before mutation |
 | `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/review/clean/state ...` | Preserves the guarded Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; review output uses fresh owner-only XDG state; every destructive path is bounded, confirmed, and re-observed; plan mutation uses a private immutable snapshot |
 | `bb tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Preserves the Trivy workflow and fixed CI/report policies | Direct Trivy arguments; node collector requires confirmation; no config or credential mutation |
-| `bb mcp inventory/audit` | Reports candidate presence and content hashes without returning configuration content | Appends redacted metadata-only `mcp_audit` journal event; never mutates config |
-| `bb sec` | Adds or selects a service and scoped field, then runs a safe copy/replace/rename/remove action | Add choices contain metadata only; plaintext never enters selector labels, descriptions, stdout, or the journal |
+| `bb mcp audit` | Reports presence and content hashes for three fixed candidate paths without returning configuration content | Read-only and stateless; does not parse servers, test connections, install, or mutate config |
+| `bb sec` | Adds or selects a service and scoped field, then runs a safe copy/replace/rename/remove action | Add choices contain metadata only; plaintext never enters selector labels, descriptions, or manager stdout |
 | `bb sec exec <service> -- ...` | Decrypts once and overlays normalized fields on one child environment | Parent environment and encrypted store are unchanged; no export text is emitted |
-| `bb export [--output path]` | Exports journal events as JSON | Read-only journal access; optional `0600` output |
-| `bb orca status` | Calls Orca's read-only JSON status endpoint | No Orca mutation or duplicated state |
 
 Subcommand contracts will be versioned before external consumers switch. Until
 then this is an MVP surface, not a compatibility promise for every legacy shell
@@ -70,16 +63,15 @@ tool.
 
 - Configuration: `${XDG_CONFIG_HOME:-$HOME/.config}/bb`.
 - State: `${XDG_STATE_HOME:-$HOME/.local/state}/bb`.
-- JSON registries are written with owner-only permissions. Journal events are
-  newline-delimited JSON and export as a JSON array.
+- JSON registries are written with owner-only permissions.
 - Mutating registry operations take an exclusive sibling lock and replace state
   through a synced owner-only temporary file plus atomic rename. Concurrent CLI
   writers therefore cannot silently discard one another's update.
 - `--json` uses the schema-v1 envelope with `ok`, `data`, `warnings`, and
   structured `error`. Exit `2` is invalid invocation, `3` is unavailable
   capability, and `1` is an operational failure.
-- Journals use an allowlist. Raw prompts, environments, command arguments,
-  terminal output, credentials, and MCP configuration contents are not stored.
+- Raw prompts, environments, command arguments, terminal output, credentials,
+  and MCP configuration contents are not stored.
 - External resources are observed before action; local records never establish
   ownership of tmux, Workbench, or Orca objects.
 - Git, Kubernetes, AWS SSM, process, and Terraform adapters accept structured
@@ -110,7 +102,7 @@ tool.
   through an anchored filesystem root. They are never placed in a repository.
   Cleanup recognizes only fixed bb artifact names; caller-controlled plan
   environment variables cannot authorize deletion of source files.
-- Recovery-relevant state remains inspectable/exportable. Future state schema
+- Recovery-relevant state remains inspectable. Future state schema
   changes require versioned readers, backups, and non-destructive migration.
 
 ## Distribution and `bb setup nvim`

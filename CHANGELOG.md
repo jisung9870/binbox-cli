@@ -4,6 +4,20 @@ All notable changes to `binbox-cli` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/); entries are derived from annotated
 release tags and the corresponding release records.
 
+## Unreleased
+
+### Changed
+
+- Consolidated MCP metadata inspection under `bb mcp audit`.
+- Limited `bb doctor` to dependencies used by current command surfaces.
+
+### Removed
+
+- Removed unused `agents`, `session`, `orca status`, read-only `git`, `run`, and
+  journal `export` commands. Orca operations now stay with Orca, tmux sessions
+  stay with `bb tm`, Git operations stay with `bb gx`, and bb no longer retains
+  partial command-execution history.
+
 ## 0.14.0 - 2026-08-12
 
 ### Added

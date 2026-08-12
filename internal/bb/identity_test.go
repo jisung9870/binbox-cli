@@ -1061,8 +1061,8 @@ func enableSecHelper(a *App, dir string) {
 	}
 }
 
-func TestSecCompatibleCRUDNeverPlacesValueInJournal(t *testing.T) {
-	a, out, _, state := testApp(t)
+func TestSecCompatibleCRUD(t *testing.T) {
+	a, out, _, _ := testApp(t)
 	dir := t.TempDir()
 	a.env = append(a.env, "BINBOX_SECRETS_FILE="+filepath.Join(dir, "secrets.json.age"), "BINBOX_AGE_KEY="+filepath.Join(dir, "age.key"), "GO_WANT_SEC_HELPER=1")
 	a.lookPath = func(string) (string, error) { return "helper", nil }
@@ -1079,9 +1079,6 @@ func TestSecCompatibleCRUDNeverPlacesValueInJournal(t *testing.T) {
 	out.Reset()
 	if e := a.Run([]string{"sec", "get", "svc", "token"}); e != nil || strings.TrimSpace(out.String()) != "fake-token" {
 		t.Fatalf("out=%q err=%v", out.String(), e)
-	}
-	if b, e := os.ReadFile(filepath.Join(state, "bb", "journal.ndjson")); e == nil && bytes.Contains(b, []byte("fake-token")) {
-		t.Fatal("secret leaked to journal")
 	}
 }
 

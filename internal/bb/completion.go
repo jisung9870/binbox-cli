@@ -44,12 +44,7 @@ _bb() {
       'port:inspect or stop port listeners' \
       'tfx:run guarded Terraform workflows' \
       'tvx:run Trivy policy workflows' \
-      'agents:explain the Orca ownership boundary' \
-      'session:manage local session records' \
-      'run:run and journal a command' \
-      'mcp:inspect MCP configuration safely' \
-      'export:export the redacted journal' \
-      'orca:inspect Orca runtime status'
+      'mcp:inspect MCP configuration safely'
     return
   fi
 
@@ -81,17 +76,6 @@ _bb() {
           show|remove) _bb_dynamic 'project' project ;;
           add) _directories ;;
           import) _bb_static 'source' 'sessionizer:legacy sessionizer source' ;;
-        esac
-      fi
-      ;;
-    session)
-      if (( CURRENT == 3 )); then
-        _bb_static 'session command' 'list:list sessions' 'start:start a session record' 'stop:stop a session record' 'open:plan opening a project' '--json:JSON envelope'
-      elif (( CURRENT == 4 )); then
-        case "${words[3]}" in
-          list) _bb_static 'option' '--json:JSON envelope' ;;
-          stop) _bb_dynamic 'session' session ;;
-          open) _bb_dynamic 'project' project ;;
         esac
       fi
       ;;
@@ -214,27 +198,7 @@ _bb() {
       (( CURRENT == 3 )) && _bb_static 'SSM command' 'shell:start shell session' 'port-forward:start port forwarding'
       ;;
     mcp)
-      (( CURRENT == 3 )) && _bb_static 'MCP command' 'inventory:list candidates' 'audit:audit candidates' '--json:JSON envelope'
-      ;;
-    orca)
-      (( CURRENT == 3 )) && _bb_static 'Orca command' 'status:show runtime status' '--json:JSON envelope'
-      ;;
-    run)
-      if (( CURRENT == 3 )); then
-        _bb_static 'run command' 'list:list journal events' 'show:show journal event' 'export:export events' '--json:JSON envelope'
-      elif (( CURRENT == 4 )); then
-        case "${words[3]}" in
-          list) _bb_static 'option' '--json:JSON envelope' ;;
-          show) _bb_dynamic 'run ID' run ;;
-          export) _bb_static 'option' '--format:export format' '--json:JSON envelope' ;;
-          *) _command_names -e ;;
-        esac
-      elif [[ "${words[3]}" != list && "${words[3]}" != show && "${words[3]}" != export ]]; then
-        _files
-      fi
-      ;;
-    export)
-      (( CURRENT == 3 )) && _bb_static 'option' '--output:write file' '--json:JSON envelope'
+      (( CURRENT == 3 )) && _bb_static 'MCP command' 'audit:audit candidates' '--json:JSON envelope'
       ;;
     version)
       (( CURRENT == 3 )) && _bb_static 'option' '--json:JSON envelope'
@@ -354,22 +318,6 @@ func (a *App) completionCandidates(kind string, parent []string) ([]string, erro
 			values = append(values, record.ID, record.Name)
 		}
 		return values, nil
-	case "session":
-		_, state, err := a.paths()
-		if err != nil {
-			return nil, err
-		}
-		records, err := loadSessions(filepath.Join(state, "sessions.json"))
-		if err != nil {
-			return nil, err
-		}
-		values := make([]string, 0, len(records)*2)
-		for _, record := range records {
-			if record.StoppedAt == nil {
-				values = append(values, record.ID, record.Name)
-			}
-		}
-		return values, nil
 	case "tmux-session":
 		records, err := a.tmSessions()
 		if err != nil {
@@ -378,16 +326,6 @@ func (a *App) completionCandidates(kind string, parent []string) ([]string, erro
 		values := make([]string, 0, len(records))
 		for _, record := range records {
 			values = append(values, record.Name)
-		}
-		return values, nil
-	case "run":
-		records, err := a.readRunEvents()
-		if err != nil {
-			return nil, err
-		}
-		values := make([]string, 0, len(records))
-		for _, record := range records {
-			values = append(values, record.ID)
 		}
 		return values, nil
 	default:

@@ -11,55 +11,6 @@ import (
 	"strings"
 )
 
-// git provides a deliberately small, read-only Git compatibility surface. All
-// invocations pass arguments directly to git; no command is evaluated by a shell.
-func (a *App) git(args []string) error {
-	if helpRequested(args) {
-		_, err := fmt.Fprint(a.out, `Usage:
-  bb git root [--json]
-  bb git branch list [--all] [--json]
-  bb git log [--limit N] [--json]
-`)
-		return err
-	}
-	args, jsonMode := takeFlag(args, "--json")
-	if len(args) == 0 {
-		return usage("git", "root|branch|log [options]")
-	}
-	if _, err := a.lookPath("git"); err != nil {
-		return unavailable("git is not installed; install git to inspect repository metadata")
-	}
-	var data any
-	var err error
-	switch args[0] {
-	case "root":
-		if len(args) != 1 {
-			return usage("git root", "[--json]")
-		}
-		data, err = a.gitRoot()
-	case "branch":
-		if len(args) < 2 || args[1] != "list" || (len(args) == 3 && args[2] != "--all") || len(args) > 3 {
-			return usage("git branch list", "[--all] [--json]")
-		}
-		data, err = a.gitBranches(len(args) == 3)
-	case "log":
-		limit, parseErr := parseLimit(args[1:])
-		if parseErr != nil {
-			return parseErr
-		}
-		data, err = a.gitLog(limit)
-	default:
-		return invalid(fmt.Sprintf("unknown git command %q", args[0]))
-	}
-	if err != nil {
-		return err
-	}
-	if jsonMode {
-		return printEnvelope(a.out, data, nil)
-	}
-	return printJSON(a.out, data)
-}
-
 func (a *App) readCommand(name string, args ...string) (string, error) {
 	cmd := a.command(name, args...)
 	cmd.Env = a.env
@@ -75,81 +26,18 @@ func (a *App) readCommand(name string, args ...string) (string, error) {
 	return output.String(), nil
 }
 
-func (a *App) gitRoot() (map[string]string, error) {
-	output, err := a.readCommand("git", "rev-parse", "--show-toplevel")
-	if err != nil {
-		return nil, err
-	}
-	return map[string]string{"root": strings.TrimSpace(output)}, nil
-}
-
-type gitBranch struct {
-	Name     string `json:"name"`
-	Commit   string `json:"commit"`
-	Current  bool   `json:"current"`
-	Upstream string `json:"upstream,omitempty"`
-}
-
-func (a *App) gitBranches(all bool) ([]gitBranch, error) {
-	args := []string{"for-each-ref", "--format=%(refname:short)%09%(objectname)%09%(HEAD)%09%(upstream:short)", "refs/heads"}
-	if all {
-		args = append(args, "refs/remotes")
-	}
-	output, err := a.readCommand("git", args...)
-	if err != nil {
-		return nil, err
-	}
-	branches := []gitBranch{}
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		fields := strings.Split(line, "\t")
-		if len(fields) < 3 || fields[0] == "" {
-			continue
-		}
-		branch := gitBranch{Name: fields[0], Commit: fields[1], Current: fields[2] == "*"}
-		if len(fields) > 3 {
-			branch.Upstream = fields[3]
-		}
-		branches = append(branches, branch)
-	}
-	return branches, nil
-}
-
-type gitLogEntry struct {
-	Commit     string `json:"commit"`
-	Short      string `json:"short"`
-	Author     string `json:"author"`
-	AuthoredAt string `json:"authored_at"`
-	Subject    string `json:"subject"`
-}
-
 func parseLimit(args []string) (int, error) {
 	if len(args) == 0 {
 		return 20, nil
 	}
 	if len(args) != 2 || args[0] != "--limit" {
-		return 0, usage("git log", "[--limit N] [--json]")
+		return 0, usage("gx log", "[--limit N]")
 	}
 	limit, err := strconv.Atoi(args[1])
 	if err != nil || limit < 1 || limit > 1000 {
-		return 0, invalid("git log limit must be an integer between 1 and 1000")
+		return 0, invalid("gx log limit must be an integer between 1 and 1000")
 	}
 	return limit, nil
-}
-
-func (a *App) gitLog(limit int) ([]gitLogEntry, error) {
-	output, err := a.readCommand("git", "log", "--no-decorate", "--date=iso-strict", "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s", "-n", strconv.Itoa(limit))
-	if err != nil {
-		return nil, err
-	}
-	entries := []gitLogEntry{}
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		fields := strings.Split(line, "\x1f")
-		if len(fields) != 5 || fields[0] == "" {
-			continue
-		}
-		entries = append(entries, gitLogEntry{Commit: fields[0], Short: fields[1], Author: fields[2], AuthoredAt: fields[3], Subject: fields[4]})
-	}
-	return entries, nil
 }
 
 func (a *App) port(args []string) error {

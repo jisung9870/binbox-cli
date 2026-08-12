@@ -121,9 +121,9 @@ opens the chosen directory through external `tmux`. Non-TTY use and
 including scripts and tests. This command neither contacts Orca nor records or
 manages an Orca/tmux lifecycle; `tmux` owns the session it attaches or creates.
 
-The historical `bb agents` surface is not reproduced. It returns capability
-unavailable with an Orca recovery pointer because Orca remains the only agent
-and worktree lifecycle owner.
+The historical `bb agents` surface is not reproduced. Agent and worktree
+lifecycle operations, including status, are invoked directly through the Orca
+app or CLI.
 
 ## LazyVim setup
 

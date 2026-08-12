@@ -1,5 +1,18 @@
 # Decision log
 
+## 2026-08-12 — Remove ownerless and duplicate command surfaces
+
+Decision: remove bb's no-op session-intent and Orca pointer commands, including
+`agents`, and use `bb tm` or the Orca app/CLI directly. Remove the duplicate
+read-only `bb git` surface in favor of `bb gx`, and consolidate identical MCP
+inventory/audit behavior under stateless `bb mcp audit`. Remove the unused
+partial execution journal and its export commands. Doctor reports only
+dependencies used by remaining command surfaces.
+
+Reason: each removed surface either performed no external action, duplicated an
+existing command, described a capability owned by another tool, or retained too
+little execution context to serve as a reliable audit trail.
+
 ## 2026-08-11 — Plan review is a read-only view over the review parser
 
 Decision: `bb tfx browse` renders an existing plan for reading. It runs

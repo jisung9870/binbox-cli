@@ -9,7 +9,7 @@ forwarded through a checkout or embedded shell script.
 | `tm go`, `tm projects` | XDG project registry, `--plain`/`--json`, direct tmux open | Migrated with cutover contract |
 | `tm sessions --json` | Same schema-v1 session fields, no pane scraping | Migrated |
 | `tm attach/layout/kill/dirs` | Exact session re-observation, built-in layouts, and bb-registry-only directory changes | Migrated |
-| `gx root/br/log` | `bb git` typed reads and `bb gx` direct compatibility commands | Migrated |
+| `gx root/br/log` | `bb gx` direct compatibility commands | Migrated |
 | `gx new/switch/clean` | Explicit branch create/switch/delete; destructive delete confirms and re-observes the exact ref | Migrated with explicit-argument contract |
 | `tfx init/validate/fmt/plan/sum` | Direct Terraform/tf-summarize execution | Migrated |
 | `tfx session/status/apply/destroy/end` | Exact legacy TSV, account/scope/expiry/plan revalidation, explicit confirmation | Migrated |
@@ -21,7 +21,7 @@ forwarded through a checkout or embedded shell script.
 | `assume`, `assume profile` | AWS CLI-owned credential resolution plus current-shell/unset/current/exec UX; `bb profile` manages config-only SSO profiles | Migrated without bb credential cache or static/role profile authoring |
 | `wenv` | Strict non-executing import into declarative XDG JSON; show/apply preview and shell wrapper compatibility | Migrated; implicit kubectl mutation retired |
 | `sec` | Existing age key/ciphertext format with in-memory CRUD and ciphertext backups | Migrated; full plaintext editor retired |
-| `agents` | Orca is the lifecycle owner | Retired from bb |
+| `agents` | Orca is the lifecycle owner; no bb command remains | Retired from bb |
 | `dx`, `md2jira`, `bb new/upgrade/check` | Checkout/developer/environment-specific behavior | Retire/archive |
 
 The legacy repositories and shared sessionizer file remain read-only throughout

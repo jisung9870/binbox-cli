@@ -27,7 +27,7 @@ func TestZshCompletionIsNativeDynamicAndOmitsGitCommands(t *testing.T) {
 }
 
 func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
-	a, out, config, state := testApp(t)
+	a, out, config, _ := testApp(t)
 	if err := a.Run([]string{"wenv", "set", "dev", "APP_MODE=local"}); err != nil {
 		t.Fatal(err)
 	}
@@ -42,10 +42,6 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 	if err := a.Run([]string{"project", "add", projectPath, "demo"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Run([]string{"session", "start", "focus"}); err != nil {
-		t.Fatal(err)
-	}
-
 	for _, tc := range []struct {
 		kind string
 		want []string
@@ -54,7 +50,6 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 		{kind: "profile", want: []string{"work"}},
 		{kind: "sso-session", want: []string{"corp"}},
 		{kind: "project", want: []string{"demo", projectID(projectPath)}},
-		{kind: "session", want: []string{"focus"}},
 	} {
 		out.Reset()
 		if err := a.Run([]string{"completion", "candidates", tc.kind}); err != nil {
@@ -68,9 +63,6 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 	}
 
 	if _, err := os.Stat(filepath.Join(config, "bb", "wenv.json")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(state, "bb", "sessions.json")); err != nil {
 		t.Fatal(err)
 	}
 }

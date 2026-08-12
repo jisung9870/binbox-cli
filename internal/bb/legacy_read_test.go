@@ -42,44 +42,10 @@ func TestTMSessionsUsesSessionFormatOnly(t *testing.T) {
 	}
 }
 
-func TestGitReadCommandsUseDirectGitArguments(t *testing.T) {
-	tests := []struct {
-		args []string
-		out  string
-		want []string
-	}{
-		{[]string{"git", "root", "--json"}, "/repo\n", []string{"git", "rev-parse", "--show-toplevel"}},
-		{[]string{"git", "branch", "list", "--all", "--json"}, "main\tabc\t*\torigin/main\norigin/main\tdef\t \t\n", []string{"git", "for-each-ref", "--format=%(refname:short)%09%(objectname)%09%(HEAD)%09%(upstream:short)", "refs/heads", "refs/remotes"}},
-		{[]string{"git", "log", "--limit", "2", "--json"}, "abcdef\x1fabc\x1fAda\x1f2026-08-10T00:00:00Z\x1fsubject\n", []string{"git", "log", "--no-decorate", "--date=iso-strict", "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s", "-n", "2"}},
-	}
-	for _, tt := range tests {
-		t.Run(strings.Join(tt.args[1:3], "-"), func(t *testing.T) {
-			a, _, _, _ := testApp(t)
-			var requests [][]string
-			a.command = outputCommand(tt.out, &requests)
-			if err := a.Run(tt.args); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(requests, [][]string{tt.want}) {
-				t.Fatalf("requests=%q want=%q", requests, tt.want)
-			}
-		})
-	}
-}
-
-func TestGitMissingIsCapabilityUnavailable(t *testing.T) {
-	a, _, _, _ := testApp(t)
-	a.lookPath = func(string) (string, error) { return "", os.ErrNotExist }
-	err := a.Run([]string{"git", "root"})
-	if ExitCode(err) != ExitCapabilityUnavailable {
-		t.Fatalf("err=%v exit=%d", err, ExitCode(err))
-	}
-}
-
-func TestGitLogLimitRejectsUnsafeOrUnboundedValues(t *testing.T) {
+func TestGXLogLimitRejectsUnsafeOrUnboundedValues(t *testing.T) {
 	a, _, _, _ := testApp(t)
 	for _, value := range []string{"0", "1001", "x", "1;evil"} {
-		if err := a.Run([]string{"git", "log", "--limit", value}); ExitCode(err) != ExitInvalidInvocation {
+		if err := a.Run([]string{"gx", "log", "--limit", value}); ExitCode(err) != ExitInvalidInvocation {
 			t.Fatalf("limit %q err=%v", value, err)
 		}
 	}
@@ -152,8 +118,8 @@ func TestPortKillCancellationDoesNotMutate(t *testing.T) {
 	}
 }
 
-func TestPortAndGitHelpAreAvailable(t *testing.T) {
-	for _, command := range [][]string{{"git", "--help"}, {"port", "--help"}, {"tm", "--help"}} {
+func TestPortAndTMHelpAreAvailable(t *testing.T) {
+	for _, command := range [][]string{{"port", "--help"}, {"tm", "--help"}} {
 		a, out, _, _ := testApp(t)
 		if err := a.Run(command); err != nil || !strings.Contains(out.String(), "Usage:") {
 			t.Fatalf("command=%v err=%v help=%q", command, err, out.String())

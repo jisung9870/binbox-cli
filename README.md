@@ -18,10 +18,6 @@ Current operational flows:
 bb project import sessionizer --check --json
 bb project import sessionizer --apply --json
 
-# Inspect bb-owned execution records and produce a non-executing open plan.
-bb run list --json
-bb session open prj_... --backend shell --json
-
 # Compatibility endpoint used by the current LazyVim config.
 bb tm projects --json
 bb tm projects --plain
@@ -30,14 +26,13 @@ bb tm --project prj_...
 bb tm attach --session dev
 bb tm layout --layout golang --session dev --path "$PWD"
 
-# Read-only legacy replacements.
-bb git root --json
-bb git branch list --all --json
-bb git log --limit 20 --json
+# Local port inspection and guarded termination.
 bb port inspect 8080 --json
 bb port kill 8080
 
 # Explicit Git, Kubernetes, and AWS SSM compatibility adapters.
+bb gx root
+bb gx log --limit 20
 bb gx branch switch feature/example
 bb kx log api-pod -n staging --tail 100
 bb kx port-forward api-pod 8080:80 -n staging

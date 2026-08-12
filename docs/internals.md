@@ -32,7 +32,7 @@ modifying the host system. Command routing is centralized in `App.dispatch`.
 | File or area | Responsibility |
 |---|---|
 | `cmd/bb/main.go` | Process entry point, stderr fallback, exit status |
-| `internal/bb/app.go` | Application wiring, top-level dispatch, projects, sessions, doctor, run journal, MCP, Orca status |
+| `internal/bb/app.go` | Application wiring, top-level dispatch, projects, doctor, and metadata-only MCP audit |
 | `internal/bb/contract.go` | Schema-v1 envelope, structured errors, flags, and exit codes |
 | `internal/bb/human.go` | Default labels, nested sections, tables, ordering, and terminal-safe scalar rendering |
 | `internal/bb/storage.go` | Owner-only file locking, synced temporary writes, and atomic replacement |
@@ -100,8 +100,6 @@ The default roots are `${XDG_CONFIG_HOME:-platform config}/bb` and
 |---|---|---|
 | Projects | config `projects.json` | bb-owned; locked atomic JSON, mode `0600` |
 | Wenv presets | config `wenv.json` | bb-owned; declarative values only |
-| Session intent | state `sessions.json` | bb-owned intent, not tmux/Orca ownership |
-| Journal | state `journal.ndjson` | bb-owned, allowlisted metadata only |
 | Migration recovery | state `migration-backups/` | Content-addressed legacy source copy and recovery metadata |
 | AWS profile config | `~/.aws/config` | AWS CLI-owned format; bb creates state backups before atomic writes |
 | Secret store/key | `${BINBOX_SECRETS_FILE}` / `${BINBOX_AGE_KEY}`, defaulting under `~/.config/binbox` | Existing age-compatible format; locked ciphertext replacement and state backup |
@@ -143,7 +141,7 @@ is not a concurrency or identity safeguard by itself.
 Secret plaintext may exist only in memory, the age process pipe, an explicitly
 requested stdout read/export, clipboard delivery, or one child environment.
 It must never enter selector metadata, completion candidates, confirmations,
-journal data, diagnostics, or tests outside synthetic fixtures. Field rename
+diagnostics or tests outside synthetic fixtures. Field rename
 moves the in-memory value and rewrites ciphertext without displaying it.
 
 AWS CLI owns SSO login, credential resolution, and caches. `assume` does not

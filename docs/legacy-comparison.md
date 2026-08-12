@@ -19,9 +19,9 @@ an installed Go binary with typed commands and explicit ownership boundaries.
 | Terraform | Shell guards and session files | Typed direct calls with account/scope/expiry/plan checks and immutable plan snapshot | Apply/destroy require stronger identity confirmation |
 | Trivy | Shell policy wrapper | Typed direct adapter with fixed policy flags | Policy flags cannot be silently overridden |
 | Port inspection | `portcheck` shell helper | `port inspect/kill` with exact PID re-observation | Termination is confirmation-gated |
-| Execution history | Ad hoc shell output | Redacted JSON-exportable journal | Recovery evidence excludes argument and secret values |
+| Execution history | Ad hoc shell output | Not retained by bb; use the owning command/tool directly | No partial execution record to misinterpret as an audit trail |
 | MCP | Implicit environment/config discovery risk | Inventory and redacted audit only | No mutation, proxy, installation, or credential forwarding |
-| Agent/worktree lifecycle | Historical `agents` and Workbench surfaces | Not implemented; read-only Orca status/pointers only | Orca remains the single lifecycle authority |
+| Agent/worktree lifecycle | Historical `agents` and Workbench surfaces | Not implemented; use the Orca app/CLI directly | Orca remains the single lifecycle authority |
 | Editor configuration | Coupled setup scripts and shared project file | Separate LazyVim repository validated/linked by contract | nvim/tmux configuration keeps its own release cycle |
 | Update mechanism | Git checkout upgrade/self-management | Checksummed release assets and atomic installer | Rollback restores the previous binary; source checkout is never deleted |
 

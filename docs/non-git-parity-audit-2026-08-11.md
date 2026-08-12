@@ -8,6 +8,11 @@ state and orchestration adapters; provider state remains with the named
 external tool. Git and `gx` are deliberately excluded from this audit and no
 Git command implementation was changed.
 
+Post-audit note (2026-08-12): unused session-intent, Orca pointer, `agents`,
+execution-journal, and export commands were removed; MCP metadata inspection
+was consolidated under stateless `bb mcp audit`. The table below remains the
+evidence captured on 2026-08-11.
+
 ## Command disposition and evidence
 
 | Surface | Disposition | State/process owner | Smoke and contract evidence | Recovery |

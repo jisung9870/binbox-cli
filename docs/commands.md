@@ -10,9 +10,7 @@ provider state; `bb doctor` reports whether they are available.
 | Shell | `shell init zsh`, `completion zsh` | Emits checkout-independent environment integration and native zsh completion; only successful wenv/AWS-assume environment output is evaluated |
 | Projects | `project list/add/show/remove`, `project import sessionizer --check/--apply` | XDG registry, stable IDs, read-only legacy source, content-addressed recovery copy |
 | Human tmux | `tm`, `tm projects`, `tm sessions`, `tm attach/kill/dirs/layout` | Search-first TUI with project/session metadata and numbered fallback; exact target re-observation; tmux remains process owner |
-| Session intent | `session list/start/stop/open` | bb-owned intent records; explicit `tmux`, `orca`, or `shell` backend |
-| Execution journal | `run`, `run list/show/export`, `export` | Records command basename, argument count, time, and exit only; never argument values |
-| Git | `git root/branch/log`, `gx root/branch/log` | Typed reads plus explicit branch mutations |
+| Git | `gx root/branch/log` | Direct Git reads plus explicit branch mutations |
 | Kubernetes | `kx context/namespace/log/exec/port-forward` | Direct kubectl argv with explicit context, namespace, pod, and ports |
 | AWS SSM | `assm shell/port-forward` | Direct AWS CLI Session Manager invocation with explicit instance and ports |
 | AWS SSO | `aws sso [session]`, `aws sso list` | Search-first SSO-session login; AWS CLI owns browser authentication and the token cache |
@@ -24,8 +22,7 @@ provider state; `bb doctor` reports whether they are available.
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
 | Local ports | `port inspect/kill` | Exact sorted PID observation followed by confirmation and re-observation |
 | LazyVim | `setup nvim` | Validates a separate config identity and links only with apply plus consent |
-| MCP | `mcp inventory/audit` | Redacted, read-only inventory; no mutation, proxy, install, or credentials |
-| Orca | `orca status`, `agents` | Status/pointer only; Orca exclusively owns agents, worktrees, terminals, schedules, and DAGs |
+| MCP | `mcp audit` | Reads existence and SHA-256 metadata for three fixed config paths; no server parsing, connection, mutation, install, or credentials |
 
 Interactive selection renders only on stderr. Printable input searches without a
 mode switch; `↑/↓` or `Ctrl+N/P` move, Enter selects, and Escape clears then

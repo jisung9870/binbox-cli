@@ -696,6 +696,83 @@ func TestWenvShowAndConfirmedApply(t *testing.T) {
 	}
 }
 
+func TestWenvResolvesSecretReferencesOnlyWhenExporting(t *testing.T) {
+	a, out, config, _ := testApp(t)
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	a.in = strings.NewReader("controller-secret\n")
+	if err := a.Run([]string{"sec", "set", "awx", "w-token"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	stderr.Reset()
+	if err := a.Run([]string{"wenv", "set", "awx", "CONTROLLER_HOST=https://at.core.line.games", "CONTROLLER_OAUTH_TOKEN=sec://awx/w-token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	wenvFile, err := os.ReadFile(filepath.Join(config, "bb", "wenv.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(wenvFile, []byte("controller-secret")) || !bytes.Contains(wenvFile, []byte("sec://awx/w-token")) {
+		t.Fatalf("wenv store did not preserve only the reference: %s", wenvFile)
+	}
+
+	if err := a.Run([]string{"wenv", "show", "awx"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "CONTROLLER_HOST='https://at.core.line.games'\nCONTROLLER_OAUTH_TOKEN='sec://awx/w-token'\n"; got != want {
+		t.Fatalf("show=%q, want %q", got, want)
+	}
+	if strings.Contains(out.String(), "controller-secret") {
+		t.Fatal("show exposed the resolved secret")
+	}
+
+	out.Reset()
+	stderr.Reset()
+	a.env = append(a.env, "CONTROLLER_OAUTH_TOKEN=old-controller-secret")
+	if err := a.Run([]string{"wenv", "apply", "awx", "--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "export CONTROLLER_HOST='https://at.core.line.games'\nexport CONTROLLER_OAUTH_TOKEN='controller-secret'\n"; got != want {
+		t.Fatalf("apply=%q, want %q", got, want)
+	}
+	if preview := stderr.String(); strings.Contains(preview, "controller-secret") || !strings.Contains(preview, `CONTROLLER_OAUTH_TOKEN: "<redacted>" -> "<secret:awx/w-token>"`) {
+		t.Fatalf("unsafe or missing secret preview: %q", preview)
+	}
+}
+
+func TestWenvSecretReferencesRejectInvalidAndMissingTargetsWithoutOutput(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	if err := a.Run([]string{"wenv", "set", "literal", "CONTROLLER_OAUTH_TOKEN=plaintext"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("literal token err=%v", err)
+	}
+	if err := a.Run([]string{"wenv", "set", "invalid", "CONTROLLER_OAUTH_TOKEN=sec://awx"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("invalid reference err=%v", err)
+	}
+
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Run([]string{"wenv", "set", "missing", "CONTROLLER_HOST=https://at.core.line.games", "CONTROLLER_OAUTH_TOKEN=sec://awx/w-token"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"wenv", "export", "missing"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("missing secret err=%v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("failed resolution emitted partial exports: %q", out.String())
+	}
+}
+
 func TestConfirmationDefaultsToCancelAndSupportsExplicitConfirm(t *testing.T) {
 	model := newConfirmModel("Remove selected item?", true)
 	cancelled, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})

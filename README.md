@@ -53,6 +53,11 @@ bb wenv import --check
 bb wenv import --apply
 bb wenv show dev
 bb wenv apply dev
+# Keep only an encrypted-secret reference in the wenv preset. Applying the
+# preset resolves it to CONTROLLER_OAUTH_TOKEN in the current shell.
+bb wenv set awx CONTROLLER_HOST=https://at.core.line.games \
+  CONTROLLER_OAUTH_TOKEN=sec://awx/w-token
+bb wenv apply awx
 # Interactive terminals prompt without echo.
 bb sec set github token
 # Automation can still pipe an exact value.

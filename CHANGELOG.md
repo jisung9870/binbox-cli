@@ -4,6 +4,26 @@ All notable changes to `binbox-cli` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/); entries are derived from annotated
 release tags and the corresponding release records.
 
+## 0.12.0 - 2026-08-12
+
+### Added
+
+- Added `sec://<service>/<field>` references to declarative `wenv` presets, so
+  one environment can combine ordinary values with secrets from the encrypted
+  `bb sec` store.
+
+### Security
+
+- Kept only secret references in `wenv.json` and `wenv show` output; plaintext
+  values are resolved only when `wenv apply` or `wenv export` emits exports.
+- Redacted secret-like current values from apply previews and resolved every
+  reference before writing stdout, preventing both preview leaks and partial
+  environment application when a secret target is missing.
+- Continued rejecting plaintext values for secret-like environment keys and
+  invalid secret-reference syntax.
+
+See the [v0.12.0 release record](docs/release-v0.12.0.md).
+
 ## 0.11.0 - 2026-08-12
 
 ### Added

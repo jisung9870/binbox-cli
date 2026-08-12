@@ -19,6 +19,8 @@ type wenvStore struct {
 var envKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var presetNameRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+const wenvSecretReferencePrefix = "sec://"
+
 func (a *App) wenvPath() (string, error) {
 	c, _, e := a.paths()
 	return filepath.Join(c, "wenv.json"), e
@@ -43,7 +45,10 @@ func (a *App) wenv(args []string) error {
   bb wenv list|current
   bb wenv set <name> KEY=VALUE...
   bb wenv rm <name> [--yes]
-	bb wenv import --check|--apply [--dir PATH]
+  bb wenv import --check|--apply [--dir PATH]
+
+Secret-like variables must use sec://<service>/<field>. References remain
+stored and displayed as references, and resolve only for apply/export output.
 `)
 		return e
 	}
@@ -150,6 +155,79 @@ func (a *App) wenvShow(args []string) error {
 	return nil
 }
 
+func parseWenvSecretReference(value string) (string, string, bool) {
+	if !strings.HasPrefix(value, wenvSecretReferencePrefix) {
+		return "", "", false
+	}
+	service, field, ok := strings.Cut(strings.TrimPrefix(value, wenvSecretReferencePrefix), "/")
+	if !ok || !validSecretName(service) || !validSecretName(field) || strings.Contains(field, "/") {
+		return "", "", false
+	}
+	return service, field, true
+}
+
+func isSecretLikeWenvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	for _, word := range []string{"SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "PRIVATE_KEY"} {
+		if strings.Contains(upper, word) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateWenvValue(key, value string) error {
+	if strings.HasPrefix(value, wenvSecretReferencePrefix) {
+		if _, _, valid := parseWenvSecretReference(value); !valid {
+			return invalid("wenv secret references must use sec://<service>/<field>")
+		}
+		return nil
+	}
+	if isSecretLikeWenvKey(key) {
+		return invalid("wenv must not store secret-like variables; use sec://<service>/<field>")
+	}
+	return nil
+}
+
+func wenvPreviewValue(key, value string) string {
+	if service, field, ok := parseWenvSecretReference(value); ok {
+		return fmt.Sprintf("<secret:%s/%s>", service, field)
+	}
+	if isSecretLikeWenvKey(key) && value != "" {
+		return "<redacted>"
+	}
+	return value
+}
+
+func (a *App) resolveWenvValues(vars map[string]string) (map[string]string, error) {
+	resolved := make(map[string]string, len(vars))
+	var secrets secretStore
+	for key, value := range vars {
+		service, field, reference := parseWenvSecretReference(value)
+		if !reference {
+			resolved[key] = value
+			continue
+		}
+		if secrets == nil {
+			var err error
+			secrets, err = a.readSecrets()
+			if err != nil {
+				return nil, fmt.Errorf("resolve wenv secret references: %w", err)
+			}
+		}
+		fields, ok := secrets[service]
+		if !ok {
+			return nil, invalid("wenv secret service not found: " + service)
+		}
+		secret, ok := fields[field]
+		if !ok {
+			return nil, invalid(fmt.Sprintf("wenv secret field not found: %s/%s", service, field))
+		}
+		resolved[key] = secret
+	}
+	return resolved, nil
+}
+
 func (a *App) wenvApply(args []string) error {
 	args, yes := takeFlag(args, "--yes")
 	if len(args) > 1 {
@@ -174,7 +252,7 @@ func (a *App) wenvApply(args []string) error {
 	}
 	fmt.Fprintf(a.err, "Environment %s:\n", name)
 	for _, key := range sortedWenvKeys(vars) {
-		fmt.Fprintf(a.err, "  %s: %q -> %q\n", key, a.getenv(key), vars[key])
+		fmt.Fprintf(a.err, "  %s: %q -> %q\n", key, wenvPreviewValue(key, a.getenv(key)), wenvPreviewValue(key, vars[key]))
 	}
 	if !yes {
 		confirmed, confirmErr := a.confirmAction("Apply this environment?")
@@ -185,7 +263,11 @@ func (a *App) wenvApply(args []string) error {
 			return invalid("wenv apply cancelled")
 		}
 	}
-	return writeWenvExports(a.out, vars)
+	resolved, err := a.resolveWenvValues(vars)
+	if err != nil {
+		return err
+	}
+	return writeWenvExports(a.out, resolved)
 }
 
 func (a *App) wenvExport(args []string) error {
@@ -212,7 +294,11 @@ func (a *App) wenvExport(args []string) error {
 	if !ok {
 		return invalid("wenv preset not found: " + name)
 	}
-	return writeWenvExports(a.out, vars)
+	resolved, e := a.resolveWenvValues(vars)
+	if e != nil {
+		return e
+	}
+	return writeWenvExports(a.out, resolved)
 }
 
 func writeWenvExports(out io.Writer, vars map[string]string) error {
@@ -237,11 +323,8 @@ func (a *App) wenvSet(args []string) error {
 		if !ok || !envKeyRE.MatchString(k) {
 			return invalid("wenv values must use KEY=VALUE")
 		}
-		upper := strings.ToUpper(k)
-		for _, word := range []string{"SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "PRIVATE_KEY"} {
-			if strings.Contains(upper, word) {
-				return invalid("wenv must not store secret-like variables; use bb sec")
-			}
+		if err := validateWenvValue(k, v); err != nil {
+			return err
 		}
 		vars[k] = v
 	}
@@ -300,7 +383,11 @@ func parseLegacyWenv(path string) (map[string]string, error) {
 			if !ok || !envKeyRE.MatchString(k) {
 				return invalid("unsupported legacy EXPORTS entry")
 			}
-			vars[k] = strings.Trim(v, "'\"")
+			v = strings.Trim(v, "'\"")
+			if e := validateWenvValue(k, v); e != nil {
+				return e
+			}
+			vars[k] = v
 		}
 		return nil
 	}
@@ -334,7 +421,11 @@ func parseLegacyWenv(path string) (map[string]string, error) {
 		if !ok || !envKeyRE.MatchString(k) || strings.ContainsAny(v, "`$();") {
 			return nil, invalid("legacy wenv contains executable or unsupported syntax: " + filepath.Base(path))
 		}
-		vars[k] = strings.Trim(v, "'\"")
+		v = strings.Trim(v, "'\"")
+		if e := validateWenvValue(k, v); e != nil {
+			return nil, e
+		}
+		vars[k] = v
 	}
 	if inExports {
 		return nil, invalid("legacy wenv contains an unterminated EXPORTS array: " + filepath.Base(path))

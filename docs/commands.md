@@ -17,7 +17,7 @@ provider state; `bb doctor` reports whether they are available.
 | AWS SSM | `assm shell/port-forward` | Direct AWS CLI Session Manager invocation with explicit instance and ports |
 | AWS profiles | `profile list/show/add/edit/rm/login` | SSO profiles in AWS config only; AWS CLI owns credentials, login, and cache |
 | AWS credentials | `assume [profile]/list/current/unset/exec/profile` | Search-first profile TUI; AWS CLI resolves credentials; bb stores none and emits them only to the shell pipe or a scoped child process |
-| Environments | `wenv list/current/show/apply/set/rm/export/import` | Search-first preset TUI; declarative non-secret XDG JSON; preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
+| Environments | `wenv list/current/show/apply/set/rm/export/import` | Search-first preset TUI; declarative XDG JSON with `sec://service/field` references; redacted preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
 | Secrets | `sec`, `sec init/list/set/rename/get/copy/env/exec/rm` | Service→Field→Action manager without values; default-cancel rename/overwrite/removal; hidden input; child-scoped exec; existing age key/ciphertext format |
 | Terraform | `tfx init/validate/fmt/plan/sum/browse/session/status/apply/destroy/end/state/review/clean` | Account-, scope-, expiry-, and plan-bound destructive safeguards; `browse` only reads a plan |
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
@@ -54,6 +54,11 @@ Writes use owner-only files, locks, atomic replacement, and concurrent-change
 checks where applicable. Destructive commands require explicit targets and
 confirmation. JSON-capable commands use the schema-v1 envelope documented in
 the README.
+
+`wenv` stores secret-like variables only as `sec://<service>/<field>` references.
+`show` displays the reference rather than its value. `apply` and `export` resolve
+all references from the encrypted `bb sec` store before emitting any exports, so
+a missing service or field cannot produce a partially applied environment.
 
 ## Deliberate exclusions
 

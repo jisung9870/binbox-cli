@@ -6,6 +6,8 @@ release tags and the corresponding release records.
 
 ## Unreleased
 
+## 0.15.0 - 2026-08-12
+
 ### Added
 
 - Added an MCP server registry with CLI and staged TUI CRUD, stdio/HTTP
@@ -29,6 +31,8 @@ release tags and the corresponding release records.
   journal `export` commands. Orca operations now stay with Orca, tmux sessions
   stay with `bb tm`, Git operations stay with `bb gx`, and bb no longer retains
   partial command-execution history.
+
+See the [v0.15.0 release record](docs/release-v0.15.0.md).
 
 ## 0.14.0 - 2026-08-12
 

@@ -158,6 +158,7 @@ scripts/install.sh --github-cli --version 0.10.0
 See [operations](docs/operations.md) for the release and trust contract.
 
 See the [documentation index](docs/README.md), [changelog](CHANGELOG.md),
+[v0.15.0 MCP manager release record](docs/release-v0.15.0.md),
 [internal implementation guide](docs/internals.md),
 [command reference](docs/commands.md),
 [legacy comparison](docs/legacy-comparison.md),

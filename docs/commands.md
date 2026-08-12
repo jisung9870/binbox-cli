@@ -22,7 +22,7 @@ provider state; `bb doctor` reports whether they are available.
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
 | Local ports | `port inspect/kill` | Exact sorted PID observation followed by confirmation and re-observation |
 | LazyVim | `setup nvim` | Validates a separate config identity and links only with apply plus consent |
-| MCP | `mcp audit` | Reads existence and SHA-256 metadata for three fixed config paths; no server parsing, connection, mutation, install, or credentials |
+| MCP | `mcp`, `mcp list/show/add/edit/rm/sync/check/audit` | XDG CRUD registry and staged TUI; owner-CLI synchronization to Claude/Codex; required environment names only; no secret values, proxy, or server installation |
 
 Interactive selection renders only on stderr. Printable input searches without a
 mode switch; `↑/↓` or `Ctrl+N/P` move, Enter selects, and Escape clears then
@@ -40,6 +40,15 @@ appends `Add secret` at the service level and `Add field` within an existing
 service. Secret values still use the hidden terminal prompt and encrypted store
 path used by `bb sec set`.
 
+`bb mcp` opens a Server→Action manager. A server uses either local stdio or
+streamable HTTP and declares its Claude/Codex targets. `sync` calls the selected
+client's supported `mcp` CLI rather than editing client configuration files.
+For authenticated servers, the registry stores only environment-variable names.
+Put the actual value in `bb sec`, expose it through a `wenv` `sec://` reference,
+apply that preset before starting the client, and use `mcp check` to find missing
+variables or registrations. Claude performs its own health check during `get`;
+Codex `get` verifies registration, not a protocol handshake.
+
 bb-owned structured reads render human-readable labels or tables by default.
 Pass `--json` to receive the stable schema-v1 envelope. Export commands whose
 explicit purpose is a JSON artifact continue to write JSON. External provider
@@ -53,6 +62,8 @@ streams retain the owning CLI's format.
 - State and journals: `${XDG_STATE_HOME:-~/.local/state}/bb`
 - AWS profiles: the AWS CLI's existing `~/.aws/config`
 - Secret store: the existing binbox age key/ciphertext paths
+- MCP registry: config `mcp.json`, containing server metadata and environment
+  variable names but no environment values
 - LazyVim configuration: a separate `lazyvim-config` checkout selected by path
   and linked under `$XDG_CONFIG_HOME/nvim`, or `~/.config/nvim` when XDG is unset
 
@@ -69,5 +80,5 @@ a missing service or field cannot produce a partially applied environment.
 ## Deliberate exclusions
 
 `bb` does not implement an agent scheduler, worktree manager, dashboard, MCP
-proxy, automatic MCP installer, generic shell dispatcher, or self-mutating
+proxy/server lifecycle, automatic MCP installer, generic shell dispatcher, or self-mutating
 checkout updater. It also does not store AWS credentials or SSO cache data.

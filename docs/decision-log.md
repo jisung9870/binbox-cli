@@ -1,5 +1,24 @@
 # Decision log
 
+## 2026-08-12 — MCP is a registry and sync boundary, not a proxy
+
+Decision: bb owns a small XDG registry for stdio and streamable HTTP MCP server
+metadata and invokes the supported `claude mcp` or `codex mcp` CLI to synchronize
+registrations. Claude and Codex remain the MCP clients, connect to servers
+directly, and own connection/OAuth state. bb does not install, run, proxy, or
+supervise MCP servers.
+
+Credentials: the registry accepts required environment-variable names and an
+optional bearer-token environment-variable name, never values. Operators keep
+the value in `bb sec`, reference it from `wenv`, and start the client from that
+applied environment. `check` reports missing names and delegates registration
+checks to the owner CLI without displaying values.
+
+Reason: Jira, Grafana, and personal servers need one manageable catalog across
+clients, but copying tokens into a second plaintext store would defeat the
+existing encrypted-secret boundary. Owner CLI synchronization also avoids
+directly rewriting version-dependent Claude or Codex config formats.
+
 ## 2026-08-12 — Remove ownerless and duplicate command surfaces
 
 Decision: remove bb's no-op session-intent and Orca pointer commands, including
@@ -108,6 +127,10 @@ Why LazyVim does not: consuming UI must use a versioned command contract rather
 than reading mutable state files directly.
 
 ## 2026-08-10 — MCP starts read-only
+
+Status: superseded on 2026-08-12 by the registry-and-sync decision above. The
+metadata-only audit remains, while explicit credential-free registration sync
+is now approved; proxy, install, and server lifecycle remain excluded.
 
 Decision: implement inventory and redacted audit only. No config mutation,
 automatic install, proxy, credential forwarding, server lifecycle, or sensitive

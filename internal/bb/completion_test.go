@@ -42,6 +42,9 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 	if err := a.Run([]string{"project", "add", projectPath, "demo"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := a.Run([]string{"mcp", "add", "jira", "--http", "https://jira.example.test/mcp"}); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		kind string
 		want []string
@@ -50,6 +53,7 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 		{kind: "profile", want: []string{"work"}},
 		{kind: "sso-session", want: []string{"corp"}},
 		{kind: "project", want: []string{"demo", projectID(projectPath)}},
+		{kind: "mcp", want: []string{"jira"}},
 	} {
 		out.Reset()
 		if err := a.Run([]string{"completion", "candidates", tc.kind}); err != nil {

@@ -13,6 +13,10 @@ execution-journal, and export commands were removed; MCP metadata inspection
 was consolidated under stateless `bb mcp audit`. The table below remains the
 evidence captured on 2026-08-11.
 
+Post-audit update (2026-08-12): bb now owns an explicit MCP metadata registry
+and synchronizes registrations through Claude/Codex owner CLIs. It still owns no
+MCP connection lifecycle, proxy, installation, OAuth state, or secret values.
+
 ## Command disposition and evidence
 
 | Surface | Disposition | State/process owner | Smoke and contract evidence | Recovery |

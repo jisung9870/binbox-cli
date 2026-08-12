@@ -69,6 +69,18 @@ bb sec rename github token access-token
 # Scope normalized secret variables to one child process.
 bb sec exec database -- psql
 
+# Register MCP servers once in bb, then synchronize the selected clients.
+# Only environment-variable names are stored; values remain in bb sec/wenv.
+bb mcp add jira --http https://jira.example.test/mcp \
+  --bearer-token-env JIRA_TOKEN --targets claude,codex
+bb wenv set mcp JIRA_TOKEN=sec://jira/token
+bb wenv apply mcp
+bb mcp sync claude jira
+bb mcp sync codex jira
+bb mcp check jira
+# Run without arguments for staged add/show/edit/sync/check/remove management.
+bb mcp
+
 # Checkout-independent zsh integration. Add this to ~/.zshrc so `bb wenv apply dev`
 # changes the current shell and native bb completion is registered without sourcing
 # the legacy binbox repository.
@@ -101,7 +113,7 @@ bb setup nvim --config-dir /path/to/lazyvim-config --apply --consent --json
 bb doctor nvim --config-dir /path/to/lazyvim-config --json
 ```
 
-The MVP stores configuration under `$XDG_CONFIG_HOME/bb` and state/journals
+The MVP stores configuration under `$XDG_CONFIG_HOME/bb` and operational state
 under `$XDG_STATE_HOME/bb` (with standard home-directory fallbacks). It does
 not require `BB_ROOT`, a `libexec` tree, or helper scripts on `PATH`.
 Interactive choices use bb's search-first Bubble Tea TUI on real terminals:

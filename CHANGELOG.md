@@ -6,10 +6,22 @@ release tags and the corresponding release records.
 
 ## Unreleased
 
+### Added
+
+- Added an MCP server registry with CLI and staged TUI CRUD, stdio/HTTP
+  definitions, Claude/Codex synchronization through their owner CLIs, safe
+  completion candidates, and registration/environment checks.
+
 ### Changed
 
 - Consolidated MCP metadata inspection under `bb mcp audit`.
 - Limited `bb doctor` to dependencies used by current command surfaces.
+
+### Security
+
+- MCP records store environment-variable names only. Secret values remain in
+  the existing `bb sec`/`wenv` flow and are never copied into `mcp.json`, command
+  output, completion, or synchronization arguments.
 
 ### Removed
 

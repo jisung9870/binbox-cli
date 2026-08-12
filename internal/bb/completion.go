@@ -44,7 +44,7 @@ _bb() {
       'port:inspect or stop port listeners' \
       'tfx:run guarded Terraform workflows' \
       'tvx:run Trivy policy workflows' \
-      'mcp:inspect MCP configuration safely'
+      'mcp:manage and synchronize MCP servers'
     return
   fi
 
@@ -198,7 +198,22 @@ _bb() {
       (( CURRENT == 3 )) && _bb_static 'SSM command' 'shell:start shell session' 'port-forward:start port forwarding'
       ;;
     mcp)
-      (( CURRENT == 3 )) && _bb_static 'MCP command' 'audit:audit candidates' '--json:JSON envelope'
+      if (( CURRENT == 3 )); then
+        _bb_static 'MCP command' 'list:list servers' 'show:show a server' 'add:add a server' 'edit:edit a server' 'rm:remove a server' 'sync:synchronize a client' 'check:validate registrations' 'audit:audit config metadata'
+      elif (( CURRENT == 4 )); then
+        case "${words[3]}" in
+          show|edit|rm|check) _bb_dynamic 'MCP server' mcp ;;
+          sync) _bb_static 'MCP client' 'claude:Claude Code' 'codex:Codex' ;;
+          list|audit) _bb_static 'option' '--json:JSON envelope' ;;
+          add) _bb_static 'option' '--stdio:stdio command' '--http:streamable HTTP URL' '--description:purpose' '--arg:stdio argument' '--env:required environment name' '--bearer-token-env:bearer token environment name' '--targets:registration targets' ;;
+        esac
+      elif (( CURRENT == 5 )); then
+        case "${words[3]}" in
+          sync) _bb_dynamic 'MCP server' mcp ;;
+          rm) _bb_static 'option' '--yes:skip confirmation' ;;
+          edit) _bb_static 'option' '--stdio:stdio command' '--http:streamable HTTP URL' '--description:purpose' '--arg:replace stdio arguments' '--env:replace required environment names' '--bearer-token-env:bearer token environment name' '--targets:registration targets' '--clear-args:remove arguments' '--clear-env:remove environment names' '--clear-bearer-token-env:remove bearer token environment name' ;;
+        esac
+      fi
       ;;
     version)
       (( CURRENT == 3 )) && _bb_static 'option' '--json:JSON envelope'
@@ -302,6 +317,16 @@ func (a *App) completionCandidates(kind string, parent []string) ([]string, erro
 		values := make([]string, 0, len(fields))
 		for field := range fields {
 			values = append(values, field)
+		}
+		return values, nil
+	case "mcp":
+		store, _, err := a.loadMCP()
+		if err != nil {
+			return nil, err
+		}
+		values := make([]string, 0, len(store.Servers))
+		for name := range store.Servers {
+			values = append(values, name)
 		}
 		return values, nil
 	case "project":

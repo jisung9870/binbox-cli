@@ -37,7 +37,7 @@ func TestVersionAndHelp(t *testing.T) {
 	if err := a.Run([]string{"help"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "mcp audit") {
+	if !strings.Contains(out.String(), "mcp ...") {
 		t.Fatal("help missing mcp")
 	}
 	if !strings.Contains(out.String(), "shell init zsh") {
@@ -137,7 +137,7 @@ func TestDoctorChecksDocumentedExternalDependencies(t *testing.T) {
 	if err := a.Run([]string{"doctor", "--json"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"git", "tmux", "kubectl", "aws", "terraform", "lsof"} {
+	for _, command := range []string{"git", "tmux", "kubectl", "aws", "terraform", "lsof", "claude", "codex"} {
 		if !strings.Contains(out.String(), `"command":"`+command+`"`) {
 			t.Fatalf("doctor output missing %s: %s", command, out.String())
 		}
@@ -172,7 +172,7 @@ func TestDoctorJSONPreservesChecksAndAddsWorkbenchCapabilities(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.SchemaVersion != 1 || len(got.Data.Checks) != 11 || len(got.Data.Capabilities) != 11 {
+	if got.SchemaVersion != 1 || len(got.Data.Checks) != 13 || len(got.Data.Capabilities) != 13 {
 		t.Fatalf("doctor shape=%s", out.String())
 	}
 	if got.Data.Capabilities[0].Name != "git" || got.Data.Capabilities[0].Scope != "core" || !got.Data.Capabilities[0].Available || got.Data.Capabilities[0].Path == nil || *got.Data.Capabilities[0].Path != "/usr/bin/git" || got.Data.Capabilities[0].Recovery != nil {
@@ -215,10 +215,12 @@ func TestDoctorMissingCapabilityRecoveryIsStable(t *testing.T) {
 		{"terraform", "Terraform integrations", "optional"},
 		{"lsof", "local port inspection fallback", "optional"},
 		{"session-manager-plugin", "AWS session manager integrations", "optional"},
-		{"age", "encrypted local export integrations", "optional"},
+		{"age", "encrypted secret store integrations", "optional"},
 		{"age-keygen", "encrypted secret key management", "optional"},
 		{"trivy", "security scan integrations", "optional"},
 		{"tf-summarize", "Terraform summary integrations", "optional"},
+		{"claude", "Claude MCP registration integrations", "optional"},
+		{"codex", "Codex MCP registration integrations", "optional"},
 	}
 	if len(got.Data.Capabilities) != len(want) {
 		t.Fatalf("capability count=%d, want %d", len(got.Data.Capabilities), len(want))

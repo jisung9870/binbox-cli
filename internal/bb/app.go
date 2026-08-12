@@ -4,7 +4,6 @@ package bb
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -152,7 +151,7 @@ Commands:
   port inspect|kill ...  Inspect a local port or terminate an exact re-observed PID set
   tfx ...                 Guarded Terraform compatibility workflow
   tvx ...                 Direct Trivy compatibility adapter with fixed policies
-  mcp audit               Audit MCP configuration metadata without content
+  mcp ...                 Manage and synchronize MCP server registrations
 `)
 	return err
 }
@@ -449,10 +448,12 @@ func (a *App) doctor(args []string) error {
 		{"terraform", "Terraform integrations", "optional", []string{"terraform"}},
 		{"lsof", "local port inspection fallback", "optional", []string{"lsof"}},
 		{"session-manager-plugin", "AWS session manager integrations", "optional", []string{"session-manager-plugin"}},
-		{"age", "encrypted local export integrations", "optional", []string{"age"}},
+		{"age", "encrypted secret store integrations", "optional", []string{"age"}},
 		{"age-keygen", "encrypted secret key management", "optional", []string{"age-keygen"}},
 		{"trivy", "security scan integrations", "optional", []string{"trivy"}},
 		{"tf-summarize", "Terraform summary integrations", "optional", []string{"tf-summarize"}},
+		{"claude", "Claude MCP registration integrations", "optional", []string{"claude"}},
+		{"codex", "Codex MCP registration integrations", "optional", []string{"codex"}},
 	}
 	checks := make([]check, 0, len(dependencies))
 	capabilities := make([]capability, 0, len(dependencies))
@@ -489,44 +490,4 @@ func (a *App) doctor(args []string) error {
 		fmt.Fprintf(a.out, "%-10s %s\n", c.Command, status)
 	}
 	return nil
-}
-
-func (a *App) mcp(args []string) error {
-	if helpRequested(args) {
-		_, err := fmt.Fprintln(a.out, "Usage: bb mcp audit [--json]")
-		return err
-	}
-	args, jsonMode := takeFlag(args, "--json")
-	if len(args) != 1 || args[0] != "audit" {
-		return usage("mcp", "audit [--json]")
-	}
-	config, _, err := a.paths()
-	if err != nil {
-		return err
-	}
-	candidates := []string{filepath.Join(config, "mcp.json"), filepath.Join(a.getenv("HOME"), ".config", "Claude", "claude_desktop_config.json"), filepath.Join(a.getenv("HOME"), ".codex", "mcp.json")}
-	type item struct {
-		Path   string `json:"path"`
-		Exists bool   `json:"exists"`
-		SHA256 string `json:"sha256,omitempty"`
-	}
-	items := make([]item, 0, len(candidates))
-	for _, path := range candidates {
-		b, readErr := os.ReadFile(path)
-		if errors.Is(readErr, os.ErrNotExist) {
-			items = append(items, item{Path: path})
-			continue
-		}
-		if readErr != nil {
-			return fmt.Errorf("read MCP config %s: %w", path, readErr)
-		}
-		sum := sha256.Sum256(b)
-		i := item{Path: path, Exists: true, SHA256: hex.EncodeToString(sum[:])}
-		items = append(items, i)
-	}
-	data := map[string]any{"mode": args[0], "read_only": true, "content_inspected": false, "items": items}
-	if jsonMode {
-		return printEnvelope(a.out, data, nil)
-	}
-	return printHuman(a.out, data)
 }

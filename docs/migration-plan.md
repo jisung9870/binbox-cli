@@ -8,7 +8,7 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
 |---|---|
 | Keep/migrate into `bb` | single-command UX, doctor, project discovery/registry, and read-only integration metadata audit |
 | Keep outside `bb` | Orca lifecycle; LazyVim/tmux config; transitional Workbench-owned personal data until explicitly migrated |
-| Defer | executable shell presets outside the declarative `wenv` subset, MCP mutation/proxy/install |
+| Defer | executable shell presets outside the declarative `wenv` subset, MCP proxy/server lifecycle/install |
 | Retire/archive | libexec dispatcher, checkout-coupled setup/upgrade, authoring helpers, agent-pane inference, repo-coupled `dx`/`md2jira` launchers |
 
 ## Phases
@@ -86,7 +86,7 @@ The detailed read-only inventory is in `research/legacy-analysis.md`. In short:
 ## Compatibility stop points
 
 Implementation pauses for an explicit decision before changing a persisted
-legacy format/public command, storing credentials, mutating MCP configuration,
+legacy format/public command, storing credentials, adding MCP proxy/lifecycle,
 or requiring a write to legacy binbox/LazyVim. Until approved, adapters are
 read-only/check-first and source data is preserved.
 
@@ -117,8 +117,9 @@ read-only/check-first and source data is preserved.
   not touch an unapproved existing path.
 - LazyVim consumes the new contract asynchronously with schema checks and a
   tested fallback during the compatibility window.
-- MCP audit exports no secret/config content and never mutates, proxies, or
-  installs; Orca remains the sole live lifecycle owner.
+- MCP registry/audit exports no secret values; registration changes go through
+  Claude/Codex owner CLIs, and bb never proxies, installs, or owns server
+  lifecycle. Orca remains the sole live agent lifecycle owner.
 - CI contains negative migration tests, and a documented rollback window plus
   user/usage evidence shows no remaining legacy-only dependency.
 

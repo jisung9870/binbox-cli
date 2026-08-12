@@ -20,7 +20,7 @@ an installed Go binary with typed commands and explicit ownership boundaries.
 | Trivy | Shell policy wrapper | Typed direct adapter with fixed policy flags | Policy flags cannot be silently overridden |
 | Port inspection | `portcheck` shell helper | `port inspect/kill` with exact PID re-observation | Termination is confirmation-gated |
 | Execution history | Ad hoc shell output | Not retained by bb; use the owning command/tool directly | No partial execution record to misinterpret as an audit trail |
-| MCP | Implicit environment/config discovery risk | Inventory and redacted audit only | No mutation, proxy, installation, or credential forwarding |
+| MCP | Implicit environment/config discovery risk | Explicit XDG registry, redacted audit, owner-CLI sync/check | No secret values, proxy, server lifecycle, or installation |
 | Agent/worktree lifecycle | Historical `agents` and Workbench surfaces | Not implemented; use the Orca app/CLI directly | Orca remains the single lifecycle authority |
 | Editor configuration | Coupled setup scripts and shared project file | Separate LazyVim repository validated/linked by contract | nvim/tmux configuration keeps its own release cycle |
 | Update mechanism | Git checkout upgrade/self-management | Checksummed release assets and atomic installer | Rollback restores the previous binary; source checkout is never deleted |

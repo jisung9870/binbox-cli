@@ -11,7 +11,7 @@ or keep the old shell dispatcher/libexec architecture.
 
 | Owner | Owns | Integration boundary |
 |---|---|---|
-| binbox (`bb`) | CLI contract, XDG project records, doctor, metadata-only MCP audit, install of its own binary | May invoke declared external CLIs; must re-check capabilities and never infer lifecycle authority |
+| binbox (`bb`) | CLI contract, XDG project/MCP records, doctor, MCP registration synchronization, install of its own binary | May invoke declared external CLIs; stores no MCP secret values and never becomes the connection proxy or server lifecycle owner |
 | Orca | Agent, terminal, worktree, Run/Task/Dispatch, scheduler, and DAG lifecycle | Used directly through its owning app/CLI; `bb` has no Orca command, parallel registry, scheduler, or terminal-control implementation |
 | `lazyvim-config` | Neovim and tmux configuration, plugins, keymaps, lockfiles, and editor-local setup | Future `bb setup nvim` selects/verifies/links a separately versioned checkout; it never embeds or silently overwrites the config |
 | Workbench/setup (transitional) | Existing data and compatibility evidence during migration | No new long-lived features; functions move to `bb`, remain with Orca/LazyVim, or are archived |
@@ -51,7 +51,7 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb port inspect/kill` | Reports listeners and optionally sends SIGTERM to an exact PID set | Kill requires lsof, prints/optionally confirms, then re-observes before mutation |
 | `bb tfx init/validate/fmt/plan/sum/session/apply/destroy/status/end/review/clean/state ...` | Preserves the guarded Terraform workflow and legacy account-bound safety session | Direct execution; exact legacy TSV compatibility; review output uses fresh owner-only XDG state; every destructive path is bounded, confirmed, and re-observed; plan mutation uses a private immutable snapshot |
 | `bb tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Preserves the Trivy workflow and fixed CI/report policies | Direct Trivy arguments; node collector requires confirmation; no config or credential mutation |
-| `bb mcp audit` | Reports presence and content hashes for three fixed candidate paths without returning configuration content | Read-only and stateless; does not parse servers, test connections, install, or mutate config |
+| `bb mcp ...` | Manages a local stdio/HTTP server registry, synchronizes registrations through Claude/Codex owner CLIs, and checks local prerequisites/registration | `$XDG_CONFIG_HOME/bb/mcp.json`, mode `0600`; environment names only; no secret values, protocol proxy, lifecycle ownership, or server installation |
 | `bb sec` | Adds or selects a service and scoped field, then runs a safe copy/replace/rename/remove action | Add choices contain metadata only; plaintext never enters selector labels, descriptions, or manager stdout |
 | `bb sec exec <service> -- ...` | Decrypts once and overlays normalized fields on one child environment | Parent environment and encrypted store are unchanged; no export text is emitted |
 
@@ -70,8 +70,9 @@ tool.
 - `--json` uses the schema-v1 envelope with `ok`, `data`, `warnings`, and
   structured `error`. Exit `2` is invalid invocation, `3` is unavailable
   capability, and `1` is an operational failure.
-- Raw prompts, environments, command arguments, terminal output, credentials,
-  and MCP configuration contents are not stored.
+- Raw prompts, environment values, terminal output, and credentials are not
+  stored. MCP registry records contain connection metadata, command arguments,
+  targets, and environment-variable names only.
 - External resources are observed before action; local records never establish
   ownership of tmux, Workbench, or Orca objects.
 - Git, Kubernetes, AWS SSM, process, and Terraform adapters accept structured
@@ -122,6 +123,6 @@ the binary never embeds or silently clones the configuration.
 
 ## Explicit non-goals
 
-No dashboard; no MCP proxy/config mutation/automatic install; no credential
+No dashboard; no MCP proxy/server lifecycle/automatic install; no credential
 store; no shell evaluation; no generic legacy script forwarding; and no Orca
 agent/worktree/scheduler/DAG implementation.

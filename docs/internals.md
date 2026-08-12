@@ -32,7 +32,8 @@ modifying the host system. Command routing is centralized in `App.dispatch`.
 | File or area | Responsibility |
 |---|---|
 | `cmd/bb/main.go` | Process entry point, stderr fallback, exit status |
-| `internal/bb/app.go` | Application wiring, top-level dispatch, projects, doctor, and metadata-only MCP audit |
+| `internal/bb/app.go` | Application wiring, top-level dispatch, projects, and doctor |
+| `internal/bb/mcp.go` | MCP registry CRUD/TUI, client synchronization, checks, and metadata-only audit |
 | `internal/bb/contract.go` | Schema-v1 envelope, structured errors, flags, and exit codes |
 | `internal/bb/human.go` | Default labels, nested sections, tables, ordering, and terminal-safe scalar rendering |
 | `internal/bb/storage.go` | Owner-only file locking, synced temporary writes, and atomic replacement |
@@ -100,6 +101,7 @@ The default roots are `${XDG_CONFIG_HOME:-platform config}/bb` and
 |---|---|---|
 | Projects | config `projects.json` | bb-owned; locked atomic JSON, mode `0600` |
 | Wenv presets | config `wenv.json` | bb-owned; declarative values only |
+| MCP servers | config `mcp.json` | bb-owned; locked atomic metadata and environment names only; no secret values |
 | Migration recovery | state `migration-backups/` | Content-addressed legacy source copy and recovery metadata |
 | AWS profile config | `~/.aws/config` | AWS CLI-owned format; bb creates state backups before atomic writes |
 | Secret store/key | `${BINBOX_SECRETS_FILE}` / `${BINBOX_AGE_KEY}`, defaulting under `~/.config/binbox` | Existing age-compatible format; locked ciphertext replacement and state backup |
@@ -154,6 +156,11 @@ may read local names and IDs from bb state, AWS config, and encrypted secret
 metadata, but it must not return secret values, AWS credentials, terminal
 control characters, or duplicates. Completion must call the installed `bb`
 binary and remain independent of a repository checkout.
+
+MCP synchronization invokes `claude mcp` or `codex mcp` with a direct argument
+vector. The registry may contain required environment-variable names and a
+bearer-token environment-variable name, never their values. HTTP connections
+remain direct from the owner client; stdio processes remain client-owned.
 
 ## External command boundary
 

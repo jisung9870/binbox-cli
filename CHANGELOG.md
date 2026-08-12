@@ -4,7 +4,7 @@ All notable changes to `binbox-cli` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/); entries are derived from annotated
 release tags and the corresponding release records.
 
-## Unreleased
+## 0.11.0 - 2026-08-12
 
 ### Added
 

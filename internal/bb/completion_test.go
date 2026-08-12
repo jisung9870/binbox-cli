@@ -35,7 +35,7 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(awsConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(awsConfig, []byte("[profile work]\nregion = ap-northeast-2\n"), 0o600); err != nil {
+	if err := os.WriteFile(awsConfig, []byte("[sso-session corp]\nsso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-2\n\n[profile work]\nsso_session = corp\nregion = ap-northeast-2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	projectPath := t.TempDir()
@@ -52,6 +52,7 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 	}{
 		{kind: "wenv", want: []string{"dev"}},
 		{kind: "profile", want: []string{"work"}},
+		{kind: "sso-session", want: []string{"corp"}},
 		{kind: "project", want: []string{"demo", projectID(projectPath)}},
 		{kind: "session", want: []string{"focus"}},
 	} {

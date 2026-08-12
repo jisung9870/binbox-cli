@@ -45,10 +45,10 @@ bb assm shell i-0123456789abcdef0
 
 # AWS SSO, declarative environments, and the existing age store.
 bb profile add dev --sso-session corp --account-id 123456789012 --role-name Admin
-bb profile login dev
-bb assume dev
-bb assume current
-bb assume exec dev -- aws sts get-caller-identity
+bb aws sso corp
+bb aws assume dev
+bb aws assume current
+bb aws assume exec dev -- aws sts get-caller-identity
 bb wenv import --check
 bb wenv import --apply
 bb wenv show dev

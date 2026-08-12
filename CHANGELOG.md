@@ -4,6 +4,23 @@ All notable changes to `binbox-cli` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/); entries are derived from annotated
 release tags and the corresponding release records.
 
+## 0.13.0 - 2026-08-12
+
+### Added
+
+- Added `bb aws sso [session]` for session-scoped SSO authentication and
+  `bb aws assume [profile]` for profile-scoped account/role credentials.
+- Added searchable SSO-session selection and safe completion candidates from
+  `[sso-session NAME]` sections.
+
+### Changed
+
+- Updated expired-credential guidance to point directly to the profile's
+  configured `bb aws sso <session>` login when available.
+- Kept `bb profile` and `bb assume` as compatibility surfaces.
+
+See the [v0.13.0 release record](docs/release-v0.13.0.md).
+
 ## 0.12.0 - 2026-08-12
 
 ### Added

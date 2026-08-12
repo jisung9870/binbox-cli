@@ -45,6 +45,10 @@ func TestAssumeHelperProcess(t *testing.T) {
 		fmt.Fprint(os.Stdout, `{"Account":"123456789012","Arn":"arn:aws:iam::123456789012:user/test"}`)
 		os.Exit(0)
 	}
+	if name == "aws" && len(args) == 4 && args[0] == "sso" && args[1] == "login" && args[2] == "--sso-session" {
+		fmt.Fprint(os.Stdout, "logged-in:"+args[3])
+		os.Exit(0)
+	}
 	if name == "envcheck" {
 		fmt.Fprintf(os.Stdout, "%s|%s|%s|%s", os.Getenv("BINBOX_ASSUME_PROFILE"), os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_REGION"), os.Getenv("AWS_PROFILE"))
 		os.Exit(0)
@@ -59,7 +63,7 @@ func assumeTestApp(t *testing.T, input string) (*App, *bytes.Buffer, *bytes.Buff
 	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	contents := "[profile alpha]\nregion = us-east-1\n\n[profile prod]\nregion = ap-northeast-2\n"
+	contents := "[sso-session corp]\nsso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-2\n\n[profile alpha]\nsso_session = corp\nregion = us-east-1\n\n[profile prod]\nsso_session = corp\nregion = ap-northeast-2\n"
 	if err := os.WriteFile(config, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +100,41 @@ func TestAssumeSelectsProfileAndEmitsShellExports(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("exports missing %q: %s", want, out.String())
 		}
+	}
+}
+
+func TestAWSSSOSelectsSessionAndAssumeUsesProfile(t *testing.T) {
+	a, out, _ := assumeTestApp(t, "1\n")
+	if err := a.Run([]string{"aws", "sso"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "logged-in:corp"; got != want {
+		t.Fatalf("sso login=%q, want %q", got, want)
+	}
+
+	out.Reset()
+	if err := a.Run([]string{"aws", "assume", "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "export BINBOX_ASSUME_PROFILE='prod'") || !strings.Contains(out.String(), "export AWS_REGION='ap-northeast-2'") {
+		t.Fatalf("aws assume exports=%q", out.String())
+	}
+}
+
+func TestAWSSSOListsSessionsAndRejectsMissingSession(t *testing.T) {
+	a, out, _ := assumeTestApp(t, "")
+	if err := a.Run([]string{"aws", "sso", "list"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "corp\n"; got != want {
+		t.Fatalf("sessions=%q, want %q", got, want)
+	}
+	out.Reset()
+	if err := a.Run([]string{"aws", "sso", "missing"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("missing session err=%v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("missing session wrote stdout: %q", out.String())
 	}
 }
 
@@ -139,7 +178,7 @@ func TestAssumeCredentialFailuresEmitNoShellOutput(t *testing.T) {
 		profile string
 		want    string
 	}{
-		{profile: "expired", want: "bb profile login expired"},
+		{profile: "expired", want: "bb aws sso"},
 		{profile: "incomplete", want: "incomplete credentials"},
 	} {
 		t.Run(test.profile, func(t *testing.T) {

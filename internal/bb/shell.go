@@ -30,6 +30,19 @@ bb() {
         eval "$_bb_output"
         ;;
     esac
+  elif [[ "${1:-}" == "aws" && "${2:-}" == "assume" ]]; then
+    case "${3:-}" in
+      list|current|exec|profile|help|-h|--help)
+        command bb "$@"
+        ;;
+      *)
+        local _bb_output _bb_status
+        _bb_output="$(command bb "$@")"
+        _bb_status=$?
+        (( _bb_status == 0 )) || return "$_bb_status"
+        eval "$_bb_output"
+        ;;
+    esac
   else
     command bb "$@"
   fi
@@ -42,7 +55,7 @@ func (a *App) shell(args []string) error {
   bb shell init zsh
 
 Print shell integration to stdout. Evaluate it from .zshrc to make
-"bb wenv [name]" and "bb assume [profile]" update the current shell without
+"bb wenv [name]" and "bb aws assume [profile]" update the current shell without
 sourcing a checkout. Native zsh completion is registered at the same time.
 `)
 		return err

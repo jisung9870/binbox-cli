@@ -42,8 +42,9 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb tm projects [--plain|--json]` | Shows a human project table by default or the sessionizer/LazyVim-compatible normalized project view explicitly | Read-only bb registry; never rewrites the shared legacy source |
 | `bb tm sessions [--json]` | Shows a human session table or preserves legacy typed tmux session fields explicitly | Session-level observation only; no panes, commands, or scrollback |
 | `bb tm [--project <id>]` | Selects through bb's search-first responsive TUI (numbered fallback), then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
-| `bb profile ...` | Manages AWS SSO profiles and delegates login | Writes only `~/.aws/config` atomically with backups; credentials/cache remain AWS CLI-owned |
-| `bb assume ...` | Restores current-shell and scoped-command credential UX through AWS CLI resolution | No bb credential parsing/cache; stdout credentials are refused on a terminal and evaluated only through generated shell integration |
+| `bb aws sso ...` | Selects a configured SSO session and delegates login | Reads `[sso-session NAME]`; credentials/cache remain AWS CLI-owned |
+| `bb aws assume ...` | Restores current-shell and scoped-command credential UX through AWS CLI resolution | Selects account/role profiles; no bb credential cache; stdout credentials are evaluated only through generated shell integration |
+| `bb profile ...`, `bb assume ...` | Preserves the existing profile configuration and assume surfaces | Compatibility commands retain their prior contracts while new AWS workflows use the grouped entry point |
 | `bb wenv ...` | Imports an allowlisted non-executable legacy subset and previews/applies declarative environments | XDG JSON, secret-like key rejection, search-first selector, default-cancel confirmation, numbered fallback |
 | `bb completion zsh` | Registers native command, option, and safe local-metadata completion | Git commands are omitted; candidates contain names/IDs only and call the installed binary without checkout coupling |
 | bb-owned structured reads | Render labels/tables by default and schema-v1 envelopes with `--json` | Terminal control characters are removed at the human-rendering boundary; external owner streams are unchanged |

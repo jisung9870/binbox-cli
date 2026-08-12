@@ -36,8 +36,9 @@ _bb() {
       'tm:manage tmux projects and sessions' \
       'kx:run Kubernetes helpers' \
       'assm:open AWS SSM sessions' \
-      'assume:apply AWS credentials safely' \
-      'profile:manage AWS SSO profiles' \
+      'aws:authenticate SSO or apply AWS credentials' \
+      'assume:compatibility alias for aws assume' \
+      'profile:compatibility AWS profile configuration' \
       'wenv:manage environment presets' \
       'sec:manage encrypted secrets' \
       'port:inspect or stop port listeners' \
@@ -139,6 +140,24 @@ _bb() {
           add|edit) _bb_static 'profile field' '--sso-session:SSO session' '--account-id:AWS account ID' '--role-name:role name' '--region:AWS region' '--sso-start-url:SSO start URL' '--sso-region:SSO region' ;;
           rm) _bb_static 'option' '--yes:skip confirmation' ;;
         esac
+      fi
+      ;;
+    aws)
+      if (( CURRENT == 3 )); then
+        _bb_static 'AWS command' 'sso:log in to an SSO session' 'assume:apply profile credentials'
+      elif (( CURRENT == 4 )); then
+        case "${words[3]}" in
+          sso)
+            _bb_static 'SSO command' 'list:list SSO sessions'
+            _bb_dynamic 'AWS SSO session' sso-session
+            ;;
+          assume)
+            _bb_static 'assume command' 'list:list profiles' 'current:show current identity' 'unset:clear credentials' 'exec:run a scoped command'
+            _bb_dynamic 'AWS profile' profile
+            ;;
+        esac
+      elif (( CURRENT == 5 )) && [[ "${words[3]}" == assume && "${words[4]}" == exec ]]; then
+        _bb_dynamic 'AWS profile' profile
       fi
       ;;
     assume)
@@ -286,6 +305,12 @@ func (a *App) completionCandidates(kind string, parent []string) ([]string, erro
 			return nil, err
 		}
 		return profileNames(data), nil
+	case "sso-session":
+		data, err := a.readAWSConfig()
+		if err != nil {
+			return nil, err
+		}
+		return ssoSessionNames(data), nil
 	case "secret-service":
 		data, err := a.readSecrets()
 		if err != nil {

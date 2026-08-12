@@ -29,7 +29,7 @@ func (a *App) assume(args []string) error {
   bb assume profile [profile arguments...]
 
 Credentials are resolved by "aws configure export-credentials" and are never
-stored or journaled by bb. Run "bb profile login <name>" when SSO login is needed.
+stored or journaled by bb. Run "bb aws sso [session]" when SSO login is needed.
 `)
 		return err
 	}
@@ -115,7 +115,13 @@ func (a *App) resolveAssumeCredentials(profile string) (assumeCredentials, error
 		if message == "" {
 			message = err.Error()
 		}
-		return assumeCredentials{}, fmt.Errorf("resolve AWS credentials for %s: %s; run 'bb profile login %s' if SSO login is required", profile, message, profile)
+		loginHint := "bb aws sso"
+		if config, readErr := a.readAWSConfig(); readErr == nil {
+			if session := sectionFields(config, profileHeader(profile))["sso_session"]; session != "" {
+				loginHint += " " + session
+			}
+		}
+		return assumeCredentials{}, fmt.Errorf("resolve AWS credentials for %s: %s; run '%s' if SSO login is required", profile, message, loginHint)
 	}
 	var credentials assumeCredentials
 	if err := json.Unmarshal(stdout.Bytes(), &credentials); err != nil {

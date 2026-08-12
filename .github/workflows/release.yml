@@ -64,3 +64,8 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*
+      - name: Report releases outside retention policy
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-retention.sh --repo "$GITHUB_REPOSITORY" --dry-run

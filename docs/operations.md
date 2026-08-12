@@ -23,6 +23,36 @@ ALLOW_UNTAGGED_BUILD=1 VERSION=0.5.0 COMMIT=$(git rev-parse HEAD) \
 go run ./cmd/releasearchive verify --manifest dist/checksums.txt
 ```
 
+### Release retention
+
+Git tags and `CHANGELOG.md` entries are permanent release history. Published
+GitHub Release assets use a smaller operational window:
+
+- Keep the newest five stable releases.
+- Keep the newest one prerelease.
+- Ignore drafts; retention automation must not alter them.
+- Delete only the GitHub Release and its attached assets, never its Git tag.
+- Remove a compromised or broken release immediately instead of waiting for
+  the normal retention window.
+
+After a release is published successfully, the Release workflow runs the
+retention reporter. The initial implementation is deliberately dry-run only:
+it prints `KEEP` and `DELETE_CANDIDATE` records but has no deletion path. Review
+the workflow output before a later change introduces an explicit apply mode.
+
+Run the same report locally with an authenticated GitHub CLI session:
+
+```sh
+scripts/release-retention.sh --repo jisung9870/binbox-cli --dry-run
+```
+
+The reporter contract test uses a fake `gh` command and never contacts or
+changes GitHub:
+
+```sh
+scripts/test-release-retention.sh
+```
+
 ## Install and recovery
 
 ```sh

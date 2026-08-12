@@ -163,7 +163,7 @@ Commands:
   aws sso|assume ...     Authenticate SSO sessions or apply profile credentials
   assume ...             Compatibility alias for "bb aws assume"
   profile ...            Compatibility profile configuration surface
-  wenv ...               Inspect and apply declarative environment presets
+  wenv ...               Manage and apply declarative environment presets
   sec ...                Manage the existing age-encrypted secret store
   port inspect|kill ...  Inspect a local port or terminate an exact re-observed PID set
   tfx ...                 Guarded Terraform compatibility workflow

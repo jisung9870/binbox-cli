@@ -18,8 +18,8 @@ provider state; `bb doctor` reports whether they are available.
 | AWS SSO | `aws sso [session]`, `aws sso list` | Search-first SSO-session login; AWS CLI owns browser authentication and the token cache |
 | AWS credentials | `aws assume [profile]/list/current/unset/exec` | Search-first account/role profile selection; AWS CLI resolves credentials; bb stores none and emits them only to the shell pipe or a scoped child process |
 | AWS compatibility | `profile ...`, `assume ...` | Existing profile configuration and assume commands remain available as compatibility surfaces |
-| Environments | `wenv list/current/show/apply/set/rm/export/import` | Search-first preset TUI; declarative XDG JSON with `sec://service/field` references; redacted preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
-| Secrets | `sec`, `sec init/list/set/rename/get/copy/env/exec/rm` | Service→Field→Action manager without values; default-cancel rename/overwrite/removal; hidden input; child-scoped exec; existing age key/ciphertext format |
+| Environments | `wenv`, `wenv list/current/show/apply/set/rm/export/import` | Staged preset CRUD TUI; declarative XDG JSON with `sec://service/field` references; redacted preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
+| Secrets | `sec`, `sec init/list/set/rename/get/copy/env/exec/rm` | Service→Field→Action manager with `Add secret`/`Add field` metadata-only choices; default-cancel rename/overwrite/removal; hidden input; child-scoped exec; existing age key/ciphertext format |
 | Terraform | `tfx init/validate/fmt/plan/sum/browse/session/status/apply/destroy/end/state/review/clean` | Account-, scope-, expiry-, and plan-bound destructive safeguards; `browse` only reads a plan |
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
 | Local ports | `port inspect/kill` | Exact sorted PID observation followed by confirmation and re-observation |
@@ -34,6 +34,14 @@ Action→Field→Service before exiting and each level keeps the query and curso
 had when you left it; Ctrl+C exits immediately. `BB_SELECTOR=plain` forces
 numbered prompts, where an empty answer steps back one level, and `NO_COLOR=1`
 retains the TUI layout without ANSI color.
+
+`bb wenv` opens a Preset→Action→Variable manager. Existing presets can be
+applied, inspected, updated, renamed, or removed; `Add preset` creates a preset
+from one or more `KEY=VALUE` entries. Management actions emit no stdout, so the
+shell wrapper evaluates output only when Apply succeeds. `bb sec` similarly
+appends `Add secret` at the service level and `Add field` within an existing
+service. Secret values still use the hidden terminal prompt and encrypted store
+path used by `bb sec set`.
 
 bb-owned structured reads render human-readable labels or tables by default.
 Pass `--json` to receive the stable schema-v1 envelope. Export commands whose

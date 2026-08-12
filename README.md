@@ -53,6 +53,8 @@ bb wenv import --check
 bb wenv import --apply
 bb wenv show dev
 bb wenv apply dev
+# Interactively apply/inspect presets and create, update, rename, or remove them.
+bb wenv
 # Keep only an encrypted-secret reference in the wenv preset. Applying the
 # preset resolves it to CONTROLLER_OAUTH_TOKEN in the current shell.
 bb wenv set awx CONTROLLER_HOST=https://at.core.line.games \
@@ -64,7 +66,8 @@ bb sec set github token
 printf '%s' "$TOKEN" | bb sec set github token
 # Existing values require confirmation or an explicit automation override.
 printf '%s' "$TOKEN" | bb sec set github token --force
-# Search and manage existing entries without displaying values.
+# Create or manage entries without displaying values. Empty stores offer
+# Add secret; existing services offer Add field.
 bb sec
 # Rename a field without exposing or re-entering its value.
 bb sec rename github token access-token

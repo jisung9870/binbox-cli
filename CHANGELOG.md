@@ -4,6 +4,22 @@ All notable changes to `binbox-cli` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/); entries are derived from annotated
 release tags and the corresponding release records.
 
+## 0.14.0 - 2026-08-12
+
+### Added
+
+- Added a staged preset CRUD manager to `bb wenv`: apply, inspect, add/update/
+  remove variables, rename/remove presets, and create presets from an empty store.
+- Added `Add secret` and `Add field` to the existing `bb sec` CRUD manager,
+  including a useful empty-store flow.
+
+### Security
+
+- Kept `bb wenv` management output away from stdout so shell integration only
+  evaluates exports from the explicit Apply action.
+- Kept secret values on the existing no-echo encrypted write path; selectors
+  expose only service/field metadata and reject duplicate targets.
+
 ## 0.13.0 - 2026-08-12
 
 ### Added

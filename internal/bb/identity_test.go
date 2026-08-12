@@ -773,6 +773,144 @@ func TestWenvSecretReferencesRejectInvalidAndMissingTargetsWithoutOutput(t *test
 	}
 }
 
+func TestWenvTUIAddsPresetAndPreservesExistingChoices(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	a.in = strings.NewReader("1\nawx\nCONTROLLER_HOST=https://at.core.line.games\nCONTROLLER_OAUTH_TOKEN=sec://awx/w-token\n\n")
+	if err := a.Run([]string{"wenv"}); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("add preset emitted eval output: %q", out.String())
+	}
+	out.Reset()
+	if err := a.Run([]string{"wenv", "show", "awx"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "CONTROLLER_HOST='https://at.core.line.games'\nCONTROLLER_OAUTH_TOKEN='sec://awx/w-token'\n"; got != want {
+		t.Fatalf("added preset=%q, want %q", got, want)
+	}
+
+	out.Reset()
+	stderr.Reset()
+	a.in = strings.NewReader("1\n2\n")
+	if err := a.Run([]string{"wenv"}); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 || !strings.Contains(stderr.String(), "CONTROLLER_OAUTH_TOKEN='sec://awx/w-token'") {
+		t.Fatalf("inspect stdout=%q stderr=%q", out.String(), stderr.String())
+	}
+	out.Reset()
+	stderr.Reset()
+	a.in = strings.NewReader("1\n1\nyes\n")
+	if err := a.Run([]string{"wenv"}); err == nil || !strings.Contains(err.Error(), "resolve wenv secret references") {
+		t.Fatalf("existing preset was not first choice: err=%v", err)
+	}
+}
+
+func TestWenvTUICancelsAndRejectsDuplicateOrEmptyPreset(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	if err := a.Run([]string{"wenv", "set", "existing", "APP_MODE=dev"}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.in = strings.NewReader("2\n\n")
+	if err := a.Run([]string{"wenv"}); err != nil {
+		t.Fatalf("cancel add err=%v", err)
+	}
+	out.Reset()
+	a.in = strings.NewReader("2\nexisting\n")
+	if err := a.Run([]string{"wenv"}); ExitCode(err) != ExitInvalidInvocation || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate preset err=%v", err)
+	}
+	out.Reset()
+	a.in = strings.NewReader("2\nempty\n\n")
+	if err := a.Run([]string{"wenv"}); ExitCode(err) != ExitInvalidInvocation || !strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("empty preset err=%v", err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"wenv", "show", "existing"}); err != nil || out.String() != "APP_MODE='dev'\n" {
+		t.Fatalf("existing preset changed=%q err=%v", out.String(), err)
+	}
+}
+
+func TestWenvTUIUpdatesRenamesAndRemovesPreset(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	stderr := new(bytes.Buffer)
+	a.err = stderr
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	if err := a.Run([]string{"wenv", "set", "dev", "APP_MODE=dev", "REGION=us"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add DEBUG, update APP_MODE, then remove DEBUG. Management actions must
+	// never emit shell text on stdout.
+	for _, input := range []string{
+		"1\n3\nDEBUG=true\n",
+		"1\n4\n1\nprod\n",
+		"1\n5\n2\nyes\n",
+	} {
+		a.in = strings.NewReader(input)
+		out.Reset()
+		stderr.Reset()
+		if err := a.Run([]string{"wenv"}); err != nil {
+			t.Fatalf("input=%q err=%v", input, err)
+		}
+		if out.Len() != 0 {
+			t.Fatalf("management input=%q emitted eval output %q", input, out.String())
+		}
+	}
+	out.Reset()
+	if err := a.Run([]string{"wenv", "show", "dev"}); err != nil || out.String() != "APP_MODE='prod'\nREGION='us'\n" {
+		t.Fatalf("updated preset=%q err=%v", out.String(), err)
+	}
+
+	a.in = strings.NewReader("1\n6\nprod\nyes\n")
+	out.Reset()
+	if err := a.Run([]string{"wenv"}); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("rename emitted eval output: %q", out.String())
+	}
+	out.Reset()
+	if err := a.Run([]string{"wenv", "show", "prod"}); err != nil || out.String() != "APP_MODE='prod'\nREGION='us'\n" {
+		t.Fatalf("renamed preset=%q err=%v", out.String(), err)
+	}
+	if err := a.Run([]string{"wenv", "show", "dev"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("old preset still exists: %v", err)
+	}
+
+	a.in = strings.NewReader("1\n7\nyes\n")
+	out.Reset()
+	if err := a.Run([]string{"wenv"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"wenv", "show", "prod"}); ExitCode(err) != ExitInvalidInvocation {
+		t.Fatalf("removed preset still exists: %v", err)
+	}
+}
+
+func TestWenvTUIRejectsDuplicateVariableAndLastVariableRemoval(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	if err := a.Run([]string{"wenv", "set", "dev", "APP_MODE=dev"}); err != nil {
+		t.Fatal(err)
+	}
+	a.in = strings.NewReader("1\n3\nAPP_MODE=prod\n")
+	if err := a.Run([]string{"wenv"}); ExitCode(err) != ExitInvalidInvocation || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate variable err=%v", err)
+	}
+	a.in = strings.NewReader("1\n5\n1\n")
+	if err := a.Run([]string{"wenv"}); ExitCode(err) != ExitInvalidInvocation || !strings.Contains(err.Error(), "last wenv variable") {
+		t.Fatalf("last variable removal err=%v", err)
+	}
+}
+
 func TestConfirmationDefaultsToCancelAndSupportsExplicitConfirm(t *testing.T) {
 	model := newConfirmModel("Remove selected item?", true)
 	cancelled, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -1415,15 +1553,62 @@ func TestSecManagerPlainCancelAtEveryNavigationStage(t *testing.T) {
 	}
 }
 
-func TestSecManagerEmptyStoreExplainsHowToAdd(t *testing.T) {
-	a, _, _, _ := testApp(t)
+func TestSecManagerAddsSecretFromEmptyStore(t *testing.T) {
+	a, out, _, _ := testApp(t)
 	dir := t.TempDir()
 	enableSecHelper(a, dir)
+	a.env = append(a.env, "BB_SELECTOR=plain")
 	if err := a.Run([]string{"sec", "init"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Run([]string{"sec"}); ExitCode(err) != ExitCapabilityUnavailable || !strings.Contains(err.Error(), "bb sec set") {
-		t.Fatalf("empty manager err=%v", err)
+	a.in = strings.NewReader("1\njenkins\ntoken\nsecret-value\n")
+	if err := a.Run([]string{"sec"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "jenkins", "token"}); err != nil || strings.TrimSpace(out.String()) != "secret-value" {
+		t.Fatalf("added secret=%q err=%v", out.String(), err)
+	}
+}
+
+func TestSecManagerAddsFieldAndCancelsAdd(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	dir := t.TempDir()
+	enableSecHelper(a, dir)
+	a.env = append(a.env, "BB_SELECTOR=plain")
+	if err := a.Run([]string{"sec", "init"}); err != nil {
+		t.Fatal(err)
+	}
+	a.in = strings.NewReader("first-value\n")
+	if err := a.Run([]string{"sec", "set", "svc", "first"}); err != nil {
+		t.Fatal(err)
+	}
+
+	a.in = strings.NewReader("1\n2\nsecond\nsecond-value\n")
+	if err := a.Run([]string{"sec"}); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "get", "svc", "second"}); err != nil || strings.TrimSpace(out.String()) != "second-value" {
+		t.Fatalf("added field=%q err=%v", out.String(), err)
+	}
+
+	a.in = strings.NewReader("2\n\n")
+	if err := a.Run([]string{"sec"}); err != nil {
+		t.Fatalf("cancel add err=%v", err)
+	}
+	out.Reset()
+	if err := a.Run([]string{"sec", "list"}); err != nil || out.String() != "svc\n" {
+		t.Fatalf("cancel changed services=%q err=%v", out.String(), err)
+	}
+
+	a.in = strings.NewReader("2\nsvc\n")
+	if err := a.Run([]string{"sec"}); ExitCode(err) != ExitInvalidInvocation || !strings.Contains(err.Error(), "service already exists") {
+		t.Fatalf("duplicate service err=%v", err)
+	}
+	a.in = strings.NewReader("1\n3\nfirst\n")
+	if err := a.Run([]string{"sec"}); ExitCode(err) != ExitInvalidInvocation || !strings.Contains(err.Error(), "field already exists") {
+		t.Fatalf("duplicate field err=%v", err)
 	}
 }
 

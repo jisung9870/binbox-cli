@@ -55,8 +55,9 @@ func (a *App) shell(args []string) error {
   bb shell init zsh
 
 Print shell integration to stdout. Evaluate it from .zshrc to make
-"bb wenv [name]" and "bb aws assume [profile]" update the current shell without
-sourcing a checkout. Native zsh completion is registered at the same time.
+The Apply action in "bb wenv" and "bb aws assume [profile]" update the current
+shell without sourcing a checkout. Native zsh completion is registered at the
+same time.
 `)
 		return err
 	}

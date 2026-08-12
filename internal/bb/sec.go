@@ -19,6 +19,11 @@ var regexpNonEnv = regexp.MustCompile(`[^A-Za-z0-9_]`)
 
 const maxSecretValueBytes = 16 << 20
 
+const (
+	secAddSecretAction = "::add-secret::"
+	secAddFieldAction  = "::add-field::"
+)
+
 func (a *App) secPaths() (string, string) {
 	store := a.getenv("BINBOX_SECRETS_FILE")
 	key := a.getenv("BINBOX_AGE_KEY")
@@ -34,7 +39,7 @@ func (a *App) secPaths() (string, string) {
 func (a *App) sec(args []string) error {
 	if helpRequested(args) {
 		_, e := fmt.Fprint(a.out, `Usage:
-  bb sec                            Open the secret manager
+  bb sec                            Open the add/manage secret manager
   bb sec init
   bb sec list [service]
   bb sec set <service> <field> [--force]
@@ -569,9 +574,11 @@ func (a *App) secManage() error {
 		return e
 	}
 	services := secretServiceChoices(data)
-	if len(services) == 0 {
-		return unavailable("secret store is empty; add one with 'bb sec set <service> <field>'")
-	}
+	services = append(services, selectChoice{
+		Value:       secAddSecretAction,
+		Label:       "Add secret",
+		Description: "Create a service and field",
+	})
 
 	// Service -> Field -> Action. Each level is derived from the values already
 	// chosen, so a field list can only ever belong to the selected service.
@@ -582,12 +589,24 @@ func (a *App) secManage() error {
 		switch len(path) {
 		case 1:
 			service := path[0]
+			if service == secAddSecretAction {
+				return nil
+			}
+			fields := secretFieldChoices(service, data[service])
+			fields = append(fields, selectChoice{
+				Value:       secAddFieldAction,
+				Label:       "Add field",
+				Description: service,
+			})
 			return &selectStage{
 				Prompt:  "Field in " + service,
-				Choices: secretFieldChoices(service, data[service]),
+				Choices: fields,
 			}
 		case 2:
 			service, field := path[0], path[1]
+			if field == secAddFieldAction {
+				return nil
+			}
 			return &selectStage{
 				Prompt:  "Action for " + service + "/" + field,
 				Choices: secretActionChoices(service, field, len(data[service])),
@@ -601,7 +620,34 @@ func (a *App) secManage() error {
 	if e != nil {
 		return e
 	}
-	if outcome.Cancelled || len(outcome.Path) < 3 {
+	if outcome.Cancelled || len(outcome.Path) == 0 {
+		return nil
+	}
+	if outcome.Path[0] == secAddSecretAction {
+		service, promptErr := a.promptSecretName("Service name")
+		if promptErr != nil || service == "" {
+			return promptErr
+		}
+		if _, exists := data[service]; exists {
+			return invalid("secret service already exists: " + service)
+		}
+		field, promptErr := a.promptSecretName("Field name")
+		if promptErr != nil || field == "" {
+			return promptErr
+		}
+		return a.secSet([]string{service, field})
+	}
+	if len(outcome.Path) == 2 && outcome.Path[1] == secAddFieldAction {
+		field, promptErr := a.promptSecretName("Field name")
+		if promptErr != nil || field == "" {
+			return promptErr
+		}
+		if _, exists := data[outcome.Path[0]][field]; exists {
+			return invalid("secret field already exists: " + outcome.Path[0] + "/" + field)
+		}
+		return a.secSet([]string{outcome.Path[0], field})
+	}
+	if len(outcome.Path) < 3 {
 		return nil
 	}
 
@@ -644,19 +690,23 @@ func secretActionChoices(service, field string, fieldCount int) []selectChoice {
 }
 
 func (a *App) promptSecretFieldName() (string, error) {
-	if _, e := fmt.Fprint(a.err, "New field name [Enter=cancel]: "); e != nil {
+	return a.promptSecretName("New field name")
+}
+
+func (a *App) promptSecretName(label string) (string, error) {
+	if _, e := fmt.Fprintf(a.err, "%s [Enter=cancel]: ", label); e != nil {
 		return "", e
 	}
 	value, e := readLine(a.in)
 	value = strings.TrimSpace(value)
 	if e != nil && value == "" {
-		return "", fmt.Errorf("read new secret field name: %w", e)
+		return "", fmt.Errorf("read secret name: %w", e)
 	}
 	if value == "" {
 		return "", nil
 	}
 	if !validSecretName(value) {
-		return "", invalid("secret field names may contain only letters, digits, dot, underscore, and hyphen")
+		return "", invalid("secret names may contain only letters, digits, dot, underscore, and hyphen")
 	}
 	return value, nil
 }

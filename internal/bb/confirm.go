@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -52,17 +52,24 @@ type confirmModel struct {
 }
 
 func newConfirmModel(question string, noColor bool) confirmModel {
-	return confirmModel{question: safeTerminalText(question), styles: newSelectorStyles(noColor), width: 80, height: 12}
+	return confirmModel{question: safeTerminalText(question), styles: newSelectorStyles(noColor, true), width: 80, height: 12}
 }
 
-func (m confirmModel) Init() tea.Cmd { return nil }
+func (m confirmModel) Init() tea.Cmd {
+	if m.styles.noColor {
+		return nil
+	}
+	return tea.RequestBackgroundColor
+}
 
 func (m confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = max(1, msg.Width)
 		m.height = max(1, msg.Height)
-	case tea.KeyMsg:
+	case tea.BackgroundColorMsg:
+		m.styles = newSelectorStyles(m.styles.noColor, msg.IsDark())
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "left", "shift+tab", "h":
 			m.selected = 0
@@ -84,7 +91,7 @@ func (m confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m confirmModel) View() string {
+func (m confirmModel) View() tea.View {
 	outerWidth := max(1, min(m.width, 80))
 	bordered := outerWidth >= 48 && m.height >= 8
 	width := outerWidth
@@ -122,12 +129,12 @@ func (m confirmModel) View() string {
 	}
 	content := strings.Join(parts, "\n")
 	if m.done {
-		return ""
+		return tea.NewView("")
 	}
 	if bordered {
-		return m.styles.box.Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(width + 2).Render(content)
+		return tea.NewView(m.styles.box.Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(width + 4).Render(content))
 	}
-	return lipgloss.NewStyle().Width(width).Render(content)
+	return tea.NewView(lipgloss.NewStyle().Width(width).Render(content))
 }
 
 func clampTextLines(value string, limit, width int) string {

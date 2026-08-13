@@ -3,6 +3,7 @@ package bb
 import (
 	"bytes"
 	"fmt"
+	"image/color"
 	"io"
 	"os"
 	"os/exec"
@@ -12,9 +13,26 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func keyPress(code rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: code}
+}
+
+func keyText(value string) tea.KeyPressMsg {
+	runes := []rune(value)
+	code := rune(0)
+	if len(runes) == 1 {
+		code = runes[0]
+	}
+	return tea.KeyPressMsg{Code: code, Text: value}
+}
+
+func ctrlC() tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+}
 
 func TestBuiltInSelectorUsesNumberOrExactName(t *testing.T) {
 	a, _, _, _ := testApp(t)
@@ -25,15 +43,38 @@ func TestBuiltInSelectorUsesNumberOrExactName(t *testing.T) {
 	}
 }
 
+func TestTUIBackgroundDetectionRunsInsideBubbleTeaAndRespectsNoColor(t *testing.T) {
+	choices := []selectChoice{{Value: "dev", Label: "Development"}}
+	noColor := newBubbleSelectorModelWithColor("Pick", choices, true)
+	if _, ok := noColor.Init()().(tea.BatchMsg); ok {
+		t.Fatal("NO_COLOR selector requested terminal background detection")
+	}
+	if newConfirmModel("Continue?", true).Init() != nil {
+		t.Fatal("NO_COLOR confirmation requested terminal background detection")
+	}
+
+	colored := newBubbleSelectorModelWithColor("Pick", choices, false)
+	batch, ok := colored.Init()().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("colored selector init=%T len=%d, want blink plus background request", colored.Init()(), len(batch))
+	}
+	before := fmt.Sprint(colored.styles.title.GetForeground())
+	updated, _ := colored.Update(tea.BackgroundColorMsg{Color: color.White})
+	after := fmt.Sprint(updated.(bubbleSelectorModel).styles.title.GetForeground())
+	if before == after {
+		t.Fatalf("background response did not update adaptive styles: %q", after)
+	}
+}
+
 func TestBubbleSelectorSelectsStableValueAndCancels(t *testing.T) {
 	model := newBubbleSelectorModel("Pick", []selectChoice{{Value: "dev", Label: "Development"}, {Value: "prod", Label: "Production"}})
-	selected, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	selected, _ := model.Update(keyPress(tea.KeyEnter))
 	selectedModel := selected.(bubbleSelectorModel)
 	if selectedModel.selected != "dev" || selectedModel.cancelled {
 		t.Fatalf("selected=%q cancelled=%v", selectedModel.selected, selectedModel.cancelled)
 	}
 
-	cancelled, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	cancelled, _ := model.Update(ctrlC())
 	cancelledModel := cancelled.(bubbleSelectorModel)
 	if !cancelledModel.cancelled || !cancelledModel.interrupted || cancelledModel.selected != "" {
 		t.Fatalf("selected=%q cancelled=%v interrupted=%v", cancelledModel.selected, cancelledModel.cancelled, cancelledModel.interrupted)
@@ -47,7 +88,7 @@ func TestBubbleSelectorFiltersAndReturnsStableValue(t *testing.T) {
 		t.Fatalf("visible items=%d, want 1", got)
 	}
 
-	selected, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	selected, _ := model.Update(keyPress(tea.KeyEnter))
 	selectedModel := selected.(bubbleSelectorModel)
 	if selectedModel.selected != "prod-id" || selectedModel.cancelled {
 		t.Fatalf("selected=%q cancelled=%v", selectedModel.selected, selectedModel.cancelled)
@@ -61,7 +102,7 @@ func TestBubbleSelectorEmptyFilterDoesNotExit(t *testing.T) {
 		t.Fatalf("visible items=%d, want 0", got)
 	}
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	updatedModel := updated.(bubbleSelectorModel)
 	if updatedModel.selected != "" || updatedModel.cancelled {
 		t.Fatalf("selected=%q cancelled=%v", updatedModel.selected, updatedModel.cancelled)
@@ -77,13 +118,13 @@ func TestBubbleSelectorEscapeClearsFilterBeforeCancelling(t *testing.T) {
 	model := newBubbleSelectorModel("Pick", []selectChoice{{Value: "dev", Label: "Development"}, {Value: "prod", Label: "Production"}})
 	model = typeInSelector(model, "prod")
 
-	cleared, _ := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	cleared, _ := model.Update(keyPress(tea.KeyEsc))
 	clearedModel := cleared.(bubbleSelectorModel)
 	if clearedModel.cancelled || clearedModel.input.Value() != "" || len(clearedModel.matches) != 2 {
 		t.Fatalf("cancelled=%v query=%q matches=%d", clearedModel.cancelled, clearedModel.input.Value(), len(clearedModel.matches))
 	}
 
-	cancelled, _ := clearedModel.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	cancelled, _ := clearedModel.Update(keyPress(tea.KeyEsc))
 	cancelledModel := cancelled.(bubbleSelectorModel)
 	if !cancelledModel.cancelled || cancelledModel.interrupted {
 		t.Fatalf("second Escape cancellation: cancelled=%v interrupted=%v", cancelledModel.cancelled, cancelledModel.interrupted)
@@ -110,7 +151,7 @@ func TestBubbleSelectorResizesAndHandlesLongLists(t *testing.T) {
 	}
 
 	largeModel = typeInSelector(largeModel, "needle target")
-	selected, _ := largeModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	selected, _ := largeModel.Update(keyPress(tea.KeyEnter))
 	if got := selected.(bubbleSelectorModel).selected; got != "id-173" {
 		t.Fatalf("selected=%q, want id-173", got)
 	}
@@ -126,13 +167,13 @@ func TestBubbleSelectorFirstArrowMovesWhileSearchRemainsActive(t *testing.T) {
 	if model.cursor != 0 || len(model.matches) != 2 {
 		t.Fatalf("cursor=%d matches=%d", model.cursor, len(model.matches))
 	}
-	moved, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	moved, _ := model.Update(keyPress(tea.KeyDown))
 	movedModel := moved.(bubbleSelectorModel)
 	if movedModel.cursor != 1 || movedModel.input.Value() != "prod" {
 		t.Fatalf("cursor=%d query=%q", movedModel.cursor, movedModel.input.Value())
 	}
 	want := movedModel.matches[1].choice.value
-	selected, _ := movedModel.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	selected, _ := movedModel.Update(keyPress(tea.KeyEnter))
 	if got := selected.(bubbleSelectorModel).selected; got != want {
 		t.Fatalf("selected=%q, want second visible result %q", got, want)
 	}
@@ -145,7 +186,7 @@ func TestBubbleSelectorViewIsSearchFirstResponsiveAndNoColor(t *testing.T) {
 	}, true)
 	resized, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	model = resized.(bubbleSelectorModel)
-	view := model.View()
+	view := model.View().Content
 	for _, want := range []string{"Select Project", "Search", "Type to search", "2/2 results", "> Development", "/workspace/dev", "enter select"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
@@ -156,13 +197,13 @@ func TestBubbleSelectorViewIsSearchFirstResponsiveAndNoColor(t *testing.T) {
 	}
 
 	narrow, _ := model.Update(tea.WindowSizeMsg{Width: 49, Height: 12})
-	narrowView := narrow.(bubbleSelectorModel).View()
+	narrowView := narrow.(bubbleSelectorModel).View().Content
 	if strings.Contains(narrowView, "/workspace/dev") {
 		t.Fatalf("narrow view showed metadata:\n%s", narrowView)
 	}
 
 	filtered := typeInSelector(model, "missing")
-	if got := filtered.View(); !strings.Contains(got, `No matches for "missing"`) || !strings.Contains(got, "0/2 results") {
+	if got := filtered.View().Content; !strings.Contains(got, `No matches for "missing"`) || !strings.Contains(got, "0/2 results") {
 		t.Fatalf("empty search view:\n%s", got)
 	}
 }
@@ -175,7 +216,7 @@ func TestBubbleSelectorLayoutNeverExceedsTerminal(t *testing.T) {
 	for _, size := range []struct{ width, height int }{{24, 8}, {40, 9}, {49, 12}, {50, 12}, {80, 20}, {120, 40}} {
 		model := newBubbleSelectorModelWithColor("Environment", choices, true)
 		resized, _ := model.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
-		view := resized.(bubbleSelectorModel).View()
+		view := resized.(bubbleSelectorModel).View().Content
 		lines := strings.Split(view, "\n")
 		if len(lines) > size.height {
 			t.Fatalf("%dx%d rendered %d lines:\n%s", size.width, size.height, len(lines), view)
@@ -205,7 +246,7 @@ func TestBubbleSelectorSearchesMetadataAndHandlesUnicodeEditing(t *testing.T) {
 		t.Fatalf("metadata matches=%+v", model.matches)
 	}
 	for range len([]rune("backend")) {
-		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		updated, _ := model.Update(keyPress(tea.KeyBackspace))
 		model = updated.(bubbleSelectorModel)
 	}
 	model = typeInSelector(model, "개발")
@@ -216,7 +257,7 @@ func TestBubbleSelectorSearchesMetadataAndHandlesUnicodeEditing(t *testing.T) {
 
 func typeInSelector(model bubbleSelectorModel, value string) bubbleSelectorModel {
 	for _, r := range value {
-		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		updated, _ := model.Update(keyText(string(r)))
 		model = updated.(bubbleSelectorModel)
 	}
 	return model
@@ -273,7 +314,7 @@ func pressStaged(t *testing.T, model stagedSelectorModel, msg tea.Msg) (stagedSe
 func typeInStagedSelector(t *testing.T, model stagedSelectorModel, value string) stagedSelectorModel {
 	t.Helper()
 	for _, r := range value {
-		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		updated, _ := model.Update(keyText(string(r)))
 		model = updated.(stagedSelectorModel)
 	}
 	return model
@@ -283,7 +324,7 @@ func TestStagedSelectorWalksLevelsWithoutQuittingInBetween(t *testing.T) {
 	root, next := secretWalk()
 	model := newStagedSelectorModel(root, next, true)
 
-	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, quits := pressStaged(t, model, keyPress(tea.KeyEnter))
 	if quits {
 		t.Fatal("entering a service ended the program instead of pushing the next level")
 	}
@@ -291,7 +332,7 @@ func TestStagedSelectorWalksLevelsWithoutQuittingInBetween(t *testing.T) {
 		t.Fatalf("stack=%d prompt=%q", len(model.stack), model.stack[len(model.stack)-1].prompt)
 	}
 
-	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, quits = pressStaged(t, model, keyPress(tea.KeyEnter))
 	if quits {
 		t.Fatal("entering a field ended the program instead of pushing the next level")
 	}
@@ -299,7 +340,7 @@ func TestStagedSelectorWalksLevelsWithoutQuittingInBetween(t *testing.T) {
 		t.Fatalf("stack=%d prompt=%q", len(model.stack), model.stack[len(model.stack)-1].prompt)
 	}
 
-	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, quits = pressStaged(t, model, keyPress(tea.KeyEnter))
 	if !quits {
 		t.Fatal("a complete path did not end the program")
 	}
@@ -314,22 +355,22 @@ func TestStagedSelectorEscapeClearsQueryThenPopsThenExits(t *testing.T) {
 	model := newStagedSelectorModel(root, next, true)
 
 	model = typeInStagedSelector(t, model, "zet")
-	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	model, quits := pressStaged(t, model, keyPress(tea.KeyEsc))
 	if quits || len(model.stack) != 1 || model.stack[0].input.Value() != "" {
 		t.Fatalf("first Escape should only clear the query: stack=%d query=%q quits=%v", len(model.stack), model.stack[0].input.Value(), quits)
 	}
 
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEnter))
 	if len(model.stack) != 2 {
 		t.Fatalf("stack=%d, want 2", len(model.stack))
 	}
 
-	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	model, quits = pressStaged(t, model, keyPress(tea.KeyEsc))
 	if quits || len(model.stack) != 1 || len(model.path) != 0 {
 		t.Fatalf("Escape should pop one level: stack=%d path=%v quits=%v", len(model.stack), model.path, quits)
 	}
 
-	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	model, quits = pressStaged(t, model, keyPress(tea.KeyEsc))
 	if !quits || !model.outcome.Cancelled || model.outcome.Interrupted {
 		t.Fatalf("Escape at the outermost level should cancel: %+v quits=%v", model.outcome, quits)
 	}
@@ -340,14 +381,14 @@ func TestStagedSelectorKeepsLevelStateWhenReturning(t *testing.T) {
 	model := newStagedSelectorModel(root, next, true)
 
 	model = typeInStagedSelector(t, model, "zeta")
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEnter))
 	model = typeInStagedSelector(t, model, "token")
 	if got := model.stack[1].matches; len(got) != 1 || got[0].choice.value != "token" {
 		t.Fatalf("field level did not filter: %+v", got)
 	}
 
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEsc))
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEsc))
 	if len(model.stack) != 1 {
 		t.Fatalf("stack=%d, want 1", len(model.stack))
 	}
@@ -359,7 +400,7 @@ func TestStagedSelectorKeepsLevelStateWhenReturning(t *testing.T) {
 	}
 
 	// The cleared selection must not immediately re-enter the level we left.
-	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'!'}})
+	model, quits := pressStaged(t, model, keyText("!"))
 	if quits || len(model.stack) != 1 {
 		t.Fatalf("typing after returning changed levels: stack=%d quits=%v", len(model.stack), quits)
 	}
@@ -379,12 +420,12 @@ func TestStagedSelectorReadOnlyLevelIsReadNotChosen(t *testing.T) {
 		}
 	}
 	model := newStagedSelectorModel(root, next, true)
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEnter))
 	if len(model.stack) != 2 || !model.stack[1].readOnly {
 		t.Fatalf("stack=%d readOnly=%v", len(model.stack), model.stack[len(model.stack)-1].readOnly)
 	}
 
-	view := model.View()
+	view := model.View().Content
 	if !strings.Contains(view, "destroy  aws_s3_bucket.logs") || strings.Contains(view, "Select ") {
 		t.Fatalf("read-only level should use its own title:\n%s", view)
 	}
@@ -393,12 +434,12 @@ func TestStagedSelectorReadOnlyLevelIsReadNotChosen(t *testing.T) {
 	}
 
 	// Enter must not close the viewer or complete the walk.
-	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, quits := pressStaged(t, model, keyPress(tea.KeyEnter))
 	if quits || len(model.stack) != 2 || len(model.outcome.Path) != 0 {
 		t.Fatalf("Enter on a read-only level: stack=%d outcome=%+v quits=%v", len(model.stack), model.outcome, quits)
 	}
 
-	model, quits = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	model, quits = pressStaged(t, model, keyPress(tea.KeyEsc))
 	if quits || len(model.stack) != 1 {
 		t.Fatalf("Escape should return to the resource list: stack=%d quits=%v", len(model.stack), quits)
 	}
@@ -442,13 +483,13 @@ func TestSelectStagesPlainShowsReadOnlyLevelThenSteps(t *testing.T) {
 func TestStagedSelectorCtrlCExitsFromAnyLevel(t *testing.T) {
 	root, next := secretWalk()
 	model := newStagedSelectorModel(root, next, true)
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEnter))
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEnter))
 	if len(model.stack) != 3 {
 		t.Fatalf("stack=%d, want 3", len(model.stack))
 	}
 
-	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyCtrlC})
+	model, quits := pressStaged(t, model, ctrlC())
 	if !quits || !model.outcome.Interrupted || !model.outcome.Cancelled || len(model.outcome.Path) != 0 {
 		t.Fatalf("Ctrl+C from a deep level: %+v quits=%v", model.outcome, quits)
 	}
@@ -457,7 +498,7 @@ func TestStagedSelectorCtrlCExitsFromAnyLevel(t *testing.T) {
 func TestStagedSelectorResizeReachesLevelsThatAreNotVisible(t *testing.T) {
 	root, next := secretWalk()
 	model := newStagedSelectorModel(root, next, true)
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEnter))
 
 	model, _ = pressStaged(t, model, tea.WindowSizeMsg{Width: 44, Height: 12})
 	for i, level := range model.stack {
@@ -466,8 +507,8 @@ func TestStagedSelectorResizeReachesLevelsThatAreNotVisible(t *testing.T) {
 		}
 	}
 
-	model, _ = pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEsc})
-	if view := model.View(); ansi.StringWidth(strings.Split(view, "\n")[0]) > 44 {
+	model, _ = pressStaged(t, model, keyPress(tea.KeyEsc))
+	if view := model.View().Content; ansi.StringWidth(strings.Split(view, "\n")[0]) > 44 {
 		t.Fatalf("view is wider than the terminal after returning:\n%s", view)
 	}
 }
@@ -479,7 +520,7 @@ func TestStagedSelectorTreatsAnEmptyNextLevelAsComplete(t *testing.T) {
 	}
 	model := newStagedSelectorModel(root, next, true)
 
-	model, quits := pressStaged(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model, quits := pressStaged(t, model, keyPress(tea.KeyEnter))
 	if !quits {
 		t.Fatal("an empty following level was pushed instead of completing the walk")
 	}
@@ -913,19 +954,19 @@ func TestWenvTUIRejectsDuplicateVariableAndLastVariableRemoval(t *testing.T) {
 
 func TestConfirmationDefaultsToCancelAndSupportsExplicitConfirm(t *testing.T) {
 	model := newConfirmModel("Remove selected item?", true)
-	cancelled, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	cancelled, _ := model.Update(keyPress(tea.KeyEnter))
 	if got := cancelled.(confirmModel); got.confirmed || !got.done {
 		t.Fatalf("default confirmation=%v done=%v", got.confirmed, got.done)
 	}
 
 	model = newConfirmModel("Remove selected item?", true)
-	moved, _ := model.Update(tea.KeyMsg{Type: tea.KeyRight})
-	confirmed, _ := moved.(confirmModel).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	moved, _ := model.Update(keyPress(tea.KeyRight))
+	confirmed, _ := moved.(confirmModel).Update(keyPress(tea.KeyEnter))
 	if got := confirmed.(confirmModel); !got.confirmed || !got.done {
 		t.Fatalf("explicit confirmation=%v done=%v", got.confirmed, got.done)
 	}
 
-	view := newConfirmModel("Remove selected item?", true).View()
+	view := newConfirmModel("Remove selected item?", true).View().Content
 	for _, want := range []string{"Confirm action", "Remove selected item?", "[ Cancel ]", "[ Confirm ]", "enter accept"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("confirmation view missing %q:\n%s", want, view)
@@ -938,7 +979,7 @@ func TestConfirmationDefaultsToCancelAndSupportsExplicitConfirm(t *testing.T) {
 	for _, size := range []struct{ width, height int }{{24, 8}, {40, 9}, {50, 12}, {80, 20}} {
 		long := newConfirmModel("Apply plan "+strings.Repeat("a", 100)+"?", true)
 		resized, _ := long.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
-		view := resized.(confirmModel).View()
+		view := resized.(confirmModel).View().Content
 		lines := strings.Split(view, "\n")
 		if len(lines) > size.height {
 			t.Fatalf("confirmation %dx%d rendered %d lines", size.width, size.height, len(lines))
@@ -965,16 +1006,16 @@ func TestTUIEscapesTerminalControlSequences(t *testing.T) {
 		t.Fatalf("selected=%q err=%v", selected, err)
 	}
 	queryModel := newBubbleSelectorModelWithColor("Query", []selectChoice{{Value: "stable", Label: "safe"}}, true)
-	updated, _ := queryModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(unsafe)})
+	updated, _ := queryModel.Update(keyText(unsafe))
 	queryModel = updated.(bubbleSelectorModel)
 	if strings.ContainsAny(queryModel.input.Value(), "\x1b\a") || strings.Contains(queryModel.input.Value(), "\u202e") {
 		t.Fatalf("terminal control sequence survived query sanitization: %q", queryModel.input.Value())
 	}
 	for _, output := range []string{
 		plain.String(),
-		newBubbleSelectorModelWithColor(unsafe, []selectChoice{choice}, true).View(),
-		queryModel.View(),
-		newConfirmModel(unsafe, true).View(),
+		newBubbleSelectorModelWithColor(unsafe, []selectChoice{choice}, true).View().Content,
+		queryModel.View().Content,
+		newConfirmModel(unsafe, true).View().Content,
 	} {
 		if strings.ContainsAny(output, "\x1b\a") || strings.Contains(output, "\u202e") {
 			t.Fatalf("terminal control sequence survived sanitization: %q", output)
@@ -1470,7 +1511,7 @@ func TestSecretChoicesSeparateServicesAndFieldsWithoutValues(t *testing.T) {
 	if len(services) != 1 || services[0].Value != "service" || services[0].Label != "service" || services[0].Description != "2 fields" {
 		t.Fatalf("service choices=%+v", services)
 	}
-	serviceView := newBubbleSelectorModelWithColor("Secret service", services, true).View()
+	serviceView := newBubbleSelectorModelWithColor("Secret service", services, true).View().Content
 	if !strings.Contains(serviceView, "> service") || !strings.Contains(serviceView, "2 fields") || strings.Contains(serviceView, "not-rendered") || strings.Contains(serviceView, "also-secret") {
 		t.Fatalf("service view:\n%s", serviceView)
 	}
@@ -1479,7 +1520,7 @@ func TestSecretChoicesSeparateServicesAndFieldsWithoutValues(t *testing.T) {
 	if len(fields) != 2 || fields[0].Value != "alpha" || fields[0].Label != "alpha" || fields[1].Value != "beta" {
 		t.Fatalf("field choices=%+v", fields)
 	}
-	fieldView := newBubbleSelectorModelWithColor("Field in service", fields, true).View()
+	fieldView := newBubbleSelectorModelWithColor("Field in service", fields, true).View().Content
 	if !strings.Contains(fieldView, "> alpha") || strings.Contains(fieldView, "not-rendered") || strings.Contains(fieldView, "also-secret") {
 		t.Fatalf("field view:\n%s", fieldView)
 	}

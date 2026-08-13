@@ -9,10 +9,10 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -158,9 +158,10 @@ type selectorMatch struct {
 
 type selectorStyles struct {
 	box, title, count, prompt, query, selected, normal, detail, matched, footer, empty lipgloss.Style
+	noColor                                                                            bool
 }
 
-func newSelectorStyles(noColor bool) selectorStyles {
+func newSelectorStyles(noColor, dark bool) selectorStyles {
 	styles := selectorStyles{
 		box:      lipgloss.NewStyle(),
 		title:    lipgloss.NewStyle(),
@@ -173,14 +174,21 @@ func newSelectorStyles(noColor bool) selectorStyles {
 		matched:  lipgloss.NewStyle(),
 		footer:   lipgloss.NewStyle(),
 		empty:    lipgloss.NewStyle(),
+		noColor:  noColor,
 	}
 	if noColor {
 		return styles
 	}
-	accent := lipgloss.AdaptiveColor{Light: "#5B50D6", Dark: "#A78BFA"}
-	selectedBackground := lipgloss.AdaptiveColor{Light: "#E9E7FF", Dark: "#2D2842"}
-	muted := lipgloss.AdaptiveColor{Light: "#626262", Dark: "#9A9A9A"}
-	border := lipgloss.AdaptiveColor{Light: "#C9C7D8", Dark: "#4C465F"}
+	accent := lipgloss.Color("#5B50D6")
+	selectedBackground := lipgloss.Color("#E9E7FF")
+	muted := lipgloss.Color("#626262")
+	border := lipgloss.Color("#C9C7D8")
+	if dark {
+		accent = lipgloss.Color("#A78BFA")
+		selectedBackground = lipgloss.Color("#2D2842")
+		muted = lipgloss.Color("#9A9A9A")
+		border = lipgloss.Color("#4C465F")
+	}
 	styles.box = styles.box.BorderForeground(border)
 	styles.title = styles.title.Bold(true).Foreground(accent)
 	styles.count = styles.count.Foreground(muted)
@@ -247,11 +255,15 @@ func newBubbleSelectorModelWithColor(prompt string, choices []selectChoice, noCo
 	query.Placeholder = "Type to search…"
 	query.CharLimit = 128
 	query.Focus()
+	if noColor {
+		query.SetStyles(textinput.Styles{})
+		query.SetVirtualCursor(false)
+	}
 	model := bubbleSelectorModel{
 		prompt:  safeTerminalText(prompt),
 		choices: items,
 		input:   query,
-		styles:  newSelectorStyles(noColor),
+		styles:  newSelectorStyles(noColor, true),
 		width:   80,
 		height:  20,
 		noColor: noColor,
@@ -260,7 +272,12 @@ func newBubbleSelectorModelWithColor(prompt string, choices []selectChoice, noCo
 	return model
 }
 
-func (m bubbleSelectorModel) Init() tea.Cmd { return textinput.Blink }
+func (m bubbleSelectorModel) Init() tea.Cmd {
+	if m.noColor {
+		return textinput.Blink
+	}
+	return tea.Batch(textinput.Blink, tea.RequestBackgroundColor)
+}
 
 func (m bubbleSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -269,7 +286,9 @@ func (m bubbleSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = max(1, msg.Height)
 		m.ensureVisible()
 		return m, nil
-	case tea.KeyMsg:
+	case tea.BackgroundColorMsg:
+		m.styles = newSelectorStyles(m.noColor, msg.IsDark())
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "/":
 			if m.input.Value() == "" {
@@ -397,7 +416,7 @@ func (m *bubbleSelectorModel) ensureVisible() {
 	m.offset = min(max(0, m.offset), maxOffset)
 }
 
-func (m bubbleSelectorModel) View() string {
+func (m bubbleSelectorModel) View() tea.View {
 	boxWidth := max(1, min(m.width, 96))
 	bordered := boxWidth >= 50 && m.height >= 10
 	innerWidth := boxWidth
@@ -423,11 +442,15 @@ func (m bubbleSelectorModel) View() string {
 
 	input := m.input
 	input.SetValue(safeTerminalText(input.Value()))
-	input.Width = max(1, innerWidth-8)
+	inputWidth := max(1, innerWidth-lipgloss.Width("Search  "))
+	input.SetWidth(inputWidth)
+	input.Placeholder = ansi.Truncate(input.Placeholder, inputWidth, "")
 	if !m.noColor {
-		input.TextStyle = m.styles.query
-		input.PlaceholderStyle = m.styles.detail
-		input.Cursor.Style = m.styles.prompt
+		inputStyles := input.Styles()
+		inputStyles.Focused.Text = m.styles.query
+		inputStyles.Focused.Placeholder = m.styles.detail
+		inputStyles.Cursor.Color = m.styles.prompt.GetForeground()
+		input.SetStyles(inputStyles)
 	}
 	search := m.styles.prompt.Render("Search") + "  " + input.View()
 	separator := strings.Repeat("─", innerWidth)
@@ -490,11 +513,15 @@ func (m bubbleSelectorModel) View() string {
 	}, "\n")
 
 	if bordered {
-		box := m.styles.box.Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(innerWidth + 2).Render(content)
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+		box := m.styles.box.Border(lipgloss.RoundedBorder()).Padding(0, 1).Width(innerWidth + 4).Render(content)
+		view := tea.NewView(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box))
+		view.AltScreen = true
+		return view
 	}
 	box := lipgloss.NewStyle().Padding(0, 1).Width(innerWidth + 2).Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	view := tea.NewView(lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box))
+	view.AltScreen = true
+	return view
 }
 
 func highlightLabelMatches(label string, indexes []int, matched, base lipgloss.Style) string {
@@ -655,7 +682,12 @@ func newStagedSelectorModel(root selectStage, next func(path []string) *selectSt
 	}
 }
 
-func (m stagedSelectorModel) Init() tea.Cmd { return textinput.Blink }
+func (m stagedSelectorModel) Init() tea.Cmd {
+	if m.noColor {
+		return textinput.Blink
+	}
+	return tea.Batch(textinput.Blink, tea.RequestBackgroundColor)
+}
 
 func (m stagedSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Every level keeps its own cursor and offset, so a resize has to reach the
@@ -666,6 +698,13 @@ func (m stagedSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i := range m.stack {
 			resized, _ := m.stack[i].Update(msg)
 			m.stack[i] = resized.(bubbleSelectorModel)
+		}
+		return m, nil
+	}
+	if background, ok := msg.(tea.BackgroundColorMsg); ok {
+		for i := range m.stack {
+			updated, _ := m.stack[i].Update(background)
+			m.stack[i] = updated.(bubbleSelectorModel)
 		}
 		return m, nil
 	}
@@ -706,7 +745,7 @@ func (m stagedSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m stagedSelectorModel) View() string {
+func (m stagedSelectorModel) View() tea.View {
 	return m.stack[len(m.stack)-1].View()
 }
 
@@ -715,7 +754,6 @@ func (a *App) selectStagesBubble(root selectStage, next func(path []string) *sel
 		newStagedSelectorModel(root, next, a.getenv("NO_COLOR") != ""),
 		tea.WithInput(a.in),
 		tea.WithOutput(a.err),
-		tea.WithAltScreen(),
 	)
 	result, err := program.Run()
 	if err != nil {
@@ -733,7 +771,6 @@ func (a *App) selectOneBubbleOutcome(prompt string, choices []selectChoice) (sel
 		newBubbleSelectorModelWithColor(prompt, choices, a.getenv("NO_COLOR") != ""),
 		tea.WithInput(a.in),
 		tea.WithOutput(a.err),
-		tea.WithAltScreen(),
 	)
 	result, err := program.Run()
 	if err != nil {

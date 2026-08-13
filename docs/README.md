@@ -41,7 +41,7 @@ Release summaries are available for
 [v0.9.0](release-v0.9.0.md), [v0.10.0](release-v0.10.0.md),
 [v0.12.0](release-v0.12.0.md),
 [v0.13.0](release-v0.13.0.md), [v0.14.0](release-v0.14.0.md), and
-[v0.15.0](release-v0.15.0.md).
+[v0.15.0](release-v0.15.0.md), and [v0.15.1](release-v0.15.1.md).
 
 Focused smoke and audit evidence:
 

@@ -6,6 +6,20 @@ release tags and the corresponding release records.
 
 ## Unreleased
 
+## 0.15.1 - 2026-08-13
+
+### Fixed
+
+- Upgraded the interactive selector and confirmation UI to Bubble Tea v2 so
+  terminal background-color responses are consumed by the active TUI instead
+  of leaking into the shell input buffer as `11;rgb:...` text.
+- Preserved light/dark adaptive styling without the Bubble Tea v1 package-level
+  terminal query, and skipped background detection entirely under `NO_COLOR`.
+- Preserved responsive TUI layout, search, keyboard navigation, alternate-screen
+  behavior, and control-sequence sanitization across the v2 API migration.
+
+See the [v0.15.1 release record](docs/release-v0.15.1.md).
+
 ## 0.15.0 - 2026-08-12
 
 ### Added

@@ -69,7 +69,7 @@ For automation, use a scoped "bb aws query ... --json" command.
 	if !terminal.Interactive() {
 		return a.reportAWSBrowserTTYGuidance()
 	}
-	runner := awsbrowser.NewRunner(nil)
+	runner := awsbrowser.NewRunner(a.awsBrowserDispatcher)
 	err = runner.Run(context.Background(), terminal, awsbrowser.Config{
 		Profile: opts.Profile, Region: opts.Region,
 		Selector: strings.ToLower(strings.TrimSpace(a.getenv("BB_SELECTOR"))),

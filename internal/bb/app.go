@@ -24,16 +24,17 @@ var (
 )
 
 type App struct {
-	in                 io.Reader
-	out, err           io.Writer
-	env                []string
-	now                func() time.Time
-	lookPath           func(string) (string, error)
-	command            func(string, ...string) *exec.Cmd
-	isTerminal         func(uintptr) bool
-	readPassword       func(uintptr) ([]byte, error)
-	awsBrowserTerminal func() awsbrowser.Terminal
-	awsQueryService    awsQueryServiceFactory
+	in                   io.Reader
+	out, err             io.Writer
+	env                  []string
+	now                  func() time.Time
+	lookPath             func(string) (string, error)
+	command              func(string, ...string) *exec.Cmd
+	isTerminal           func(uintptr) bool
+	readPassword         func(uintptr) ([]byte, error)
+	awsBrowserTerminal   func() awsbrowser.Terminal
+	awsBrowserDispatcher awsbrowser.IntentDispatcher
+	awsQueryService      awsQueryServiceFactory
 }
 
 func New(out, err io.Writer, env []string) *App {
@@ -63,7 +64,9 @@ func New(out, err io.Writer, env []string) *App {
 		}
 		return terminal
 	}
-	a.awsQueryService = unavailableAWSQueryService
+	runtime := newLazyAWSRuntime(a)
+	a.awsBrowserDispatcher = runtime
+	a.awsQueryService = runtime.QueryService
 	return a
 }
 

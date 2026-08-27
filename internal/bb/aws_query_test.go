@@ -295,8 +295,9 @@ func TestAWSQueryInvalidJSONUsesErrorEnvelopeWithoutBackend(t *testing.T) {
 	}
 }
 
-func TestAWSQueryDefaultBackendIsCapabilityUnavailable(t *testing.T) {
+func TestAWSQueryDefaultBackendIsCapabilityUnavailableWithoutAWSCLI(t *testing.T) {
 	app := New(new(bytes.Buffer), new(bytes.Buffer), nil)
+	app.lookPath = func(string) (string, error) { return "", errors.New("not found") }
 	err := app.Run([]string{"aws", "query", "ec2", "instances"})
 	if ExitCode(err) != ExitCapabilityUnavailable {
 		t.Fatalf("err=%v exit=%d", err, ExitCode(err))

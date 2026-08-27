@@ -693,7 +693,12 @@ func (m *Model) finishFrame(frame *routeFrame) {
 		m.finalizeRefresh(frame, "cancelled")
 		return
 	}
+	fence := !frame.terminalUpdate && (frame.dispatchCancel != nil || frame.stream != nil)
 	m.releaseFrame(frame)
+	if fence {
+		m.nextGeneration++
+		frame.generation = m.nextGeneration
+	}
 }
 
 func (m *Model) finalizeRefresh(frame *routeFrame, outcome string) {

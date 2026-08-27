@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -278,6 +280,107 @@ func TestPlainCanCancelBlockingDispatchBeforeStreamAcquisition(t *testing.T) {
 	case <-dispatcher.done:
 	case <-time.After(time.Second):
 		t.Fatal("plain Back did not cancel blocking Dispatch")
+	}
+}
+
+type latePlainStream struct {
+	updates   chan IntentUpdate
+	cancelled chan struct{}
+	cancels   atomic.Int32
+}
+
+func (stream *latePlainStream) Updates() <-chan IntentUpdate { return stream.updates }
+func (stream *latePlainStream) Cancel() {
+	if stream.cancels.Add(1) == 1 {
+		close(stream.cancelled)
+	}
+}
+
+type latePlainDispatcher struct {
+	started chan struct{}
+	stream  IntentStream
+}
+
+func (dispatcher *latePlainDispatcher) Dispatch(ctx context.Context, _ Intent) (IntentStream, error) {
+	close(dispatcher.started)
+	<-ctx.Done()
+	return dispatcher.stream, nil
+}
+
+func TestPlainPreAcquisitionExitCancelsLateStream(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		input   string
+		wantErr error
+	}{
+		{name: "back", input: "back\nquit\n"},
+		{name: "quit", input: "quit\n"},
+		{name: "input closure", wantErr: ErrNoInput},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stream := &latePlainStream{updates: make(chan IntentUpdate), cancelled: make(chan struct{})}
+			dispatcher := &latePlainDispatcher{started: make(chan struct{}), stream: stream}
+			var out bytes.Buffer
+			done := make(chan error, 1)
+			go func() {
+				done <- (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{
+					In: strings.NewReader("open 1\n" + test.input), Err: &out,
+				}, Config{})
+			}()
+
+			select {
+			case <-dispatcher.started:
+			case <-time.After(time.Second):
+				t.Fatal("Dispatch did not start")
+			}
+			select {
+			case err := <-done:
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("err=%v want %v", err, test.wantErr)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("pre-acquisition exit blocked")
+			}
+			select {
+			case <-stream.cancelled:
+			case <-time.After(time.Second):
+				t.Fatal("late acquired stream was not cancelled")
+			}
+			if got := stream.cancels.Load(); got != 1 {
+				t.Fatalf("stream cancellations=%d", got)
+			}
+		})
+	}
+}
+
+func TestPlainPreAcquisitionContextCancellationCancelsLateStream(t *testing.T) {
+	stream := &latePlainStream{updates: make(chan IntentUpdate), cancelled: make(chan struct{})}
+	dispatcher := &latePlainDispatcher{started: make(chan struct{}), stream: stream}
+	ctx, cancel := context.WithCancel(context.Background())
+	inputs := &plainInputSource{ch: make(chan plainInput)}
+	done := make(chan error, 1)
+	go func() {
+		done <- (Plain{Dispatcher: dispatcher}).load(ctx, io.Discard, Config{}, &plainFrame{target: "ec2-instances"}, Intent{
+			Kind: IntentOpen, Target: "ec2-instances",
+		}, inputs, false)
+	}()
+	<-dispatcher.started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("context cancellation blocked")
+	}
+	select {
+	case <-stream.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("late acquired stream was not cancelled")
+	}
+	if got := stream.cancels.Load(); got != 1 {
+		t.Fatalf("stream cancellations=%d", got)
 	}
 }
 

@@ -247,10 +247,19 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 		}
 	}
 	frame.intent = intent
-	started := make(chan plainDispatchResult, 1)
+	started := make(chan plainDispatchResult)
 	go func() {
 		stream, err := p.Dispatcher.Dispatch(dispatchCtx, intent)
-		started <- plainDispatchResult{stream: stream, err: err}
+		select {
+		case started <- plainDispatchResult{stream: stream, err: err}:
+			// The load loop owns every stream after acquisition.
+		case <-dispatchCtx.Done():
+			// The caller exited before acquisition. Keep late stream cleanup
+			// with the producer so cancellation never needs a blocking drain.
+			if stream != nil {
+				stream.Cancel()
+			}
+		}
 	}()
 	var stream IntentStream
 	var err error

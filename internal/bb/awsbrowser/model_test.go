@@ -164,6 +164,53 @@ func TestModelTerminalUpdateIsStickyAgainstLateMessages(t *testing.T) {
 	}
 }
 
+func TestModelCancelledListFrameRejectsQueuedMessagesAfterNavigationBack(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		navigate tea.KeyPressMsg
+	}{
+		{name: "detail", navigate: key(tea.KeyEnter)},
+		{name: "search", navigate: ctrl('g')},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stream := newTestIntentStream()
+			dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
+			model, wait := runModelCommand(t, NewModel(context.Background(), Config{}, dispatcher), key(tea.KeyEnter))
+			original := resourceProjection("original", "loading")
+			stream.updates <- IntentUpdate{
+				Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadLoading}},
+				Projection: IntentProjection{Resources: []ResourceProjection{original}},
+			}
+			model, wait = model.Update(wait())
+
+			stream.updates <- IntentUpdate{
+				Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadLoading}},
+				Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("late", "loading")}},
+			}
+			queuedUpdate := wait()
+			concrete := model.(Model)
+			generation := concrete.current().generation
+			close(stream.updates)
+			queuedClose := waitIntent(generation, stream)()
+
+			model, _ = model.Update(test.navigate)
+			model, _ = model.Update(key(tea.KeyEscape))
+			model, _ = model.Update(queuedUpdate)
+			model, _ = model.Update(queuedClose)
+
+			concrete = model.(Model)
+			frame := concrete.current()
+			if frame == nil || frame.generation == generation || len(frame.projection.Resources) != 1 ||
+				frame.projection.Resources[0].Title != "original" || strings.Contains(frame.status, "incomplete") {
+				t.Fatalf("queued messages mutated cancelled frame: %+v", frame)
+			}
+			if stream.cancels != 1 {
+				t.Fatalf("stream cancellations=%d", stream.cancels)
+			}
+		})
+	}
+}
+
 func TestSearchEditorIsLocalUntilExplicitSubmit(t *testing.T) {
 	dispatcher := new(recordingDispatcher)
 	model, command := NewModel(context.Background(), Config{}, dispatcher).Update(ctrl('g'))

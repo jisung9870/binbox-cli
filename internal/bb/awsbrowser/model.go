@@ -54,6 +54,7 @@ type routeFrame struct {
 	terminalUpdate   bool
 	dispatchCancel   context.CancelFunc
 	coverage         *SearchCoverage
+	stagedCoverage   *SearchCoverage
 	searchKind       int
 	searchScope      int
 	searchValue      string
@@ -361,10 +362,16 @@ func (m Model) refreshCurrent() (tea.Model, tea.Cmd) {
 	frame.dispatchCancel = cancel
 	frame.refreshing = true
 	frame.terminalUpdate = false
+	frame.stagedCoverage = nil
 	frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
 	intent := frame.intent
 	if intent.Kind != IntentSearch || intent.Target != "cross-profile-search" {
-		intent = Intent{Kind: IntentRefresh, Target: frame.target, Profile: intent.Profile, Region: intent.Region}
+		intent = Intent{Kind: IntentRefresh, Target: frame.target}
+		if frame.context != nil && frame.context.Validate() == nil {
+			intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
+		} else {
+			intent.Profile, intent.Region = frame.intent.Profile, frame.intent.Region
+		}
 	}
 	return m, m.dispatch(dispatchCtx, intent, frame.generation)
 }
@@ -405,26 +412,40 @@ func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
 		frame.context = &copy
 	}
 	projection := update.Projection
-	if update.Coverage != nil {
-		frame.coverage = cloneSearchCoverage(update.Coverage)
-	}
 	if len(projection.Resources) == 0 && update.Query.Snapshot.ResourceCount() != 0 {
 		projection = ProjectQueryUpdate(update.Query)
 	}
 	state := update.Query.Snapshot.State
+	searchRefresh := frame.refreshing && frame.intent.Kind == IntentSearch && frame.intent.Target == "cross-profile-search"
+	if update.Coverage != nil {
+		if searchRefresh {
+			frame.stagedCoverage = cloneSearchCoverage(update.Coverage)
+		} else {
+			frame.coverage = cloneSearchCoverage(update.Coverage)
+		}
+	}
 	preserve := frame.refreshing && !terminalLoadState(state) && len(frame.projection.Resources) != 0
-	if !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty) {
+	replace := !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty)
+	if replace {
 		frame.projection = projection
+		if searchRefresh && frame.stagedCoverage != nil {
+			frame.coverage = frame.stagedCoverage
+		}
 		if frame.selected >= len(frame.projection.Resources) {
 			frame.selected = max(0, len(frame.projection.Resources)-1)
 		}
 	}
-	frame.status = queryStatus(update.Query, len(frame.projection.Resources))
-	if frame.coverage != nil {
-		frame.status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+	if preserve && searchRefresh {
+		frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
+	} else {
+		frame.status = queryStatus(update.Query, len(frame.projection.Resources))
+		if frame.coverage != nil {
+			frame.status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+		}
 	}
 	if state != LoadRefreshing && state != LoadLoading && state != LoadQueued {
 		frame.refreshing = false
+		frame.stagedCoverage = nil
 	}
 }
 

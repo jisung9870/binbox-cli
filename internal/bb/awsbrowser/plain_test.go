@@ -80,6 +80,28 @@ func TestPlainRefreshKeepsCachedProjectionUntilReady(t *testing.T) {
 	}
 }
 
+func TestPlainNonSearchRefreshPinsResolvedContext(t *testing.T) {
+	initial, refresh := newTestIntentStream(), newTestIntentStream()
+	resolved := testStoreContext(t, "dev", "123456789012", "us-west-2", 1)
+	initial.updates <- IntentUpdate{
+		Context:    &resolved,
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("old", "running")}},
+		Done:       true,
+	}
+	refresh.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}}, Done: true}
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 1\nrefresh\nquit\n"), Err: &out}, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.intents) != 2 || dispatcher.intents[0].Profile != "" || dispatcher.intents[0].Region != "" ||
+		dispatcher.intents[1].Kind != IntentRefresh || dispatcher.intents[1].Profile != "dev" || dispatcher.intents[1].Region != "us-west-2" {
+		t.Fatalf("plain non-search refresh did not pin resolved context: %+v", dispatcher.intents)
+	}
+}
+
 func TestPlainSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) {
 	initial, refresh := newTestIntentStream(), newTestIntentStream()
 	audit := testStoreContext(t, "audit", "999999999999", "us-west-2", 2)
@@ -87,13 +109,17 @@ func TestPlainSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) 
 		Context:    &audit,
 		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
 		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("old-role", "matched")}},
-		Coverage:   &SearchCoverage{Profiles: []SearchProfileCoverage{{Profile: "audit", Status: "matched", Matches: 1}}},
+		Coverage:   &SearchCoverage{DiscoveryStatus: "cached-discovery", Profiles: []SearchProfileCoverage{{Profile: "audit", Status: "matched", Matches: 1}}},
 		Done:       true,
+	}
+	refresh.updates <- IntentUpdate{
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
+		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("new-role", "matched")}},
+		Coverage:   &SearchCoverage{DiscoveryStatus: "replacement-discovery", Profiles: []SearchProfileCoverage{{Profile: "dev", Status: "matched", Matches: 1}}},
 	}
 	refresh.updates <- IntentUpdate{
 		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
 		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("new-role", "matched")}},
-		Coverage:   &SearchCoverage{Profiles: []SearchProfileCoverage{{Profile: "dev", Status: "matched", Matches: 1}}},
 		Done:       true,
 	}
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
@@ -110,8 +136,20 @@ func TestPlainSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) 
 	}
 	output := out.String()
 	refreshing := strings.LastIndex(output, "Showing cached 1 · refreshing")
-	ready := strings.LastIndex(output, "Ready · 1 resources")
-	if refreshing < 0 || ready < refreshing || !strings.Contains(output[:ready], "old-role") || !strings.Contains(output[ready:], "new-role") || strings.Contains(output, "unsupported") {
+	readyOffset := -1
+	if refreshing >= 0 {
+		readyOffset = strings.Index(output[refreshing:], "Ready · 1 resources")
+	}
+	if refreshing < 0 || readyOffset < 0 {
+		t.Fatalf("plain search refresh output:\n%s", output)
+	}
+	ready := refreshing + readyOffset
+	refreshOutput := output[refreshing:ready]
+	readyOutput := output[ready:]
+	if !strings.Contains(refreshOutput, "old-role") || strings.Contains(refreshOutput, "new-role") ||
+		!strings.Contains(refreshOutput, "cached-discovery") || strings.Contains(refreshOutput, "replacement-discovery") ||
+		!strings.Contains(readyOutput, "new-role") || strings.Contains(readyOutput, "cached-discovery") ||
+		!strings.Contains(readyOutput, "replacement-discovery") || strings.Contains(output, "unsupported") {
 		t.Fatalf("plain search refresh output:\n%s", output)
 	}
 }

@@ -271,6 +271,31 @@ func TestModelRefreshPreservesOldProjectionAndRejectsLateStream(t *testing.T) {
 	}
 }
 
+func TestModelNonSearchRefreshPinsResolvedContext(t *testing.T) {
+	initial, refresh := newTestIntentStream(), newTestIntentStream()
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
+	model, wait := runModelCommand(t, NewModel(context.Background(), Config{}, dispatcher), key(tea.KeyEnter))
+	resolved := testStoreContext(t, "dev", "123456789012", "us-west-2", 1)
+	initial.updates <- IntentUpdate{
+		Context: &resolved,
+		Query:   QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{
+			resourceProjection("old-instance", "running"),
+		}},
+		Done: true,
+	}
+	model, _ = model.Update(wait())
+	model, dispatch := model.Update(ctrl('r'))
+	if dispatch == nil {
+		t.Fatal("refresh did not dispatch")
+	}
+	_, _ = model.Update(dispatch())
+	if len(dispatcher.intents) != 2 || dispatcher.intents[0].Profile != "" || dispatcher.intents[0].Region != "" ||
+		dispatcher.intents[1].Kind != IntentRefresh || dispatcher.intents[1].Profile != "dev" || dispatcher.intents[1].Region != "us-west-2" {
+		t.Fatalf("non-search refresh did not pin resolved context: %+v", dispatcher.intents)
+	}
+}
+
 func TestModelSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) {
 	initial, refresh := newTestIntentStream(), newTestIntentStream()
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
@@ -287,7 +312,7 @@ func TestModelSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) 
 		Context:    &audit,
 		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
 		Projection: IntentProjection{Resources: []ResourceProjection{old}},
-		Coverage:   &SearchCoverage{Profiles: []SearchProfileCoverage{{Profile: "audit", Status: "matched", Matches: 1}}},
+		Coverage:   &SearchCoverage{DiscoveryStatus: "cached-discovery", Profiles: []SearchProfileCoverage{{Profile: "audit", Status: "matched", Matches: 1}}},
 		Done:       true,
 	}
 	model, _ = model.Update(wait())
@@ -306,13 +331,24 @@ func TestModelSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) 
 	}
 	newResource := resourceProjection("new-role", "matched")
 	refresh.updates <- IntentUpdate{
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
+		Projection: IntentProjection{Resources: []ResourceProjection{newResource}},
+		Coverage:   &SearchCoverage{DiscoveryStatus: "replacement-discovery", Profiles: []SearchProfileCoverage{{Profile: "dev", Status: "matched", Matches: 1}}},
+	}
+	model, wait = model.Update(wait())
+	refreshingView := model.View().Content
+	if !strings.Contains(refreshingView, "Showing cached 1 · refreshing") || !strings.Contains(refreshingView, "old-role") ||
+		strings.Contains(refreshingView, "new-role") || !strings.Contains(refreshingView, "cached-discovery") || strings.Contains(refreshingView, "replacement-discovery") {
+		t.Fatalf("search refresh exposed staged coverage or results: %s", refreshingView)
+	}
+	refresh.updates <- IntentUpdate{
 		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
 		Projection: IntentProjection{Resources: []ResourceProjection{newResource}},
-		Coverage:   &SearchCoverage{Profiles: []SearchProfileCoverage{{Profile: "dev", Status: "matched", Matches: 1}}},
 		Done:       true,
 	}
 	model, _ = model.Update(wait())
-	if strings.Contains(model.View().Content, "old-role") || !strings.Contains(model.View().Content, "new-role") || strings.Contains(model.View().Content, "unsupported") {
+	if strings.Contains(model.View().Content, "old-role") || !strings.Contains(model.View().Content, "new-role") ||
+		strings.Contains(model.View().Content, "cached-discovery") || !strings.Contains(model.View().Content, "replacement-discovery") || strings.Contains(model.View().Content, "unsupported") {
 		t.Fatalf("search refresh did not atomically install results: %s", model.View().Content)
 	}
 }

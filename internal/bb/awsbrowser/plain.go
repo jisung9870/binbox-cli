@@ -18,14 +18,15 @@ type Plain struct{ Dispatcher IntentDispatcher }
 var plainCatalog = []catalogItem{homeCatalog[0], homeCatalog[1], homeCatalog[2], homeCatalog[4]}
 
 type plainFrame struct {
-	target, label string
-	intent        Intent
-	projection    IntentProjection
-	context       *AWSContext
-	detail        *ResourceProjection
-	coverage      *SearchCoverage
-	status        string
-	search        bool
+	target, label  string
+	intent         Intent
+	projection     IntentProjection
+	context        *AWSContext
+	detail         *ResourceProjection
+	coverage       *SearchCoverage
+	stagedCoverage *SearchCoverage
+	status         string
+	search         bool
 }
 
 type plainInput struct {
@@ -103,8 +104,14 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 			frame := &history[len(history)-1]
 			intent := frame.intent
 			if intent.Kind != IntentSearch || intent.Target != "cross-profile-search" {
-				intent = Intent{Kind: IntentRefresh, Target: frame.target, Profile: intent.Profile, Region: intent.Region}
+				intent = Intent{Kind: IntentRefresh, Target: frame.target}
+				if frame.context != nil && frame.context.Validate() == nil {
+					intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
+				} else {
+					intent.Profile, intent.Region = frame.intent.Profile, frame.intent.Region
+				}
 			}
+			frame.stagedCoverage = nil
 			frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
 			fmt.Fprintln(terminal.Err, frame.status)
 			if err := p.load(ctx, terminal.Err, config, frame, intent, inputs, true); err != nil {
@@ -364,20 +371,36 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 		frame.context = &copy
 	}
 	projection := update.Projection
-	if update.Coverage != nil {
-		frame.coverage = cloneSearchCoverage(update.Coverage)
-	}
 	if len(projection.Resources) == 0 && update.Query.Snapshot.ResourceCount() != 0 {
 		projection = ProjectQueryUpdate(update.Query)
 	}
 	state := update.Query.Snapshot.State
+	searchRefresh := refreshing && frame.intent.Kind == IntentSearch && frame.intent.Target == "cross-profile-search"
+	if update.Coverage != nil {
+		if searchRefresh {
+			frame.stagedCoverage = cloneSearchCoverage(update.Coverage)
+		} else {
+			frame.coverage = cloneSearchCoverage(update.Coverage)
+		}
+	}
 	preserve := refreshing && !terminalLoadState(state) && len(frame.projection.Resources) != 0
-	if !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty) {
+	replace := !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty)
+	if replace {
 		frame.projection = projection
+		if searchRefresh && frame.stagedCoverage != nil {
+			frame.coverage = frame.stagedCoverage
+		}
 	}
 	status := queryStatus(update.Query, len(frame.projection.Resources))
-	if frame.coverage != nil {
-		status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+	if preserve && searchRefresh {
+		status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
+	} else {
+		if frame.coverage != nil {
+			status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+		}
+	}
+	if terminalLoadState(state) {
+		frame.stagedCoverage = nil
 	}
 	frame.status = status
 	if _, err := fmt.Fprintln(out, status); err != nil {

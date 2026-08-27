@@ -27,6 +27,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Test, vet, race, and acceptance preflight
+        env:
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          go test ./...
+          go vet ./...
+          go test -race ./internal/bb/awsbrowser/...
+          scripts/check-awsbrowser-test-skips.sh
+          scripts/test-check-awsbrowser-size.sh
+          scripts/check-awsbrowser-size.sh
       - name: Build reproducible release archives
         env:
           VERSION: ${{ inputs.version || github.ref_name }}

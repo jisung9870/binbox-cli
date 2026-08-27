@@ -34,3 +34,13 @@ func TestTerminalMessagesAreExact(t *testing.T) {
 		t.Fatalf("minimum size message changed: %q", MinimumSizeMessage)
 	}
 }
+
+func TestTerminalUnknownDimensionsStayInteractiveAndUseAdaptiveTUI(t *testing.T) {
+	terminal := Terminal{StdinTTY: true, StderrTTY: true}
+	if !terminal.Interactive() {
+		t.Fatal("TTYs with temporarily unknown dimensions must remain interactive")
+	}
+	if terminal.Small() {
+		t.Fatal("unknown dimensions must not force the plain small-terminal fallback")
+	}
+}

@@ -299,14 +299,6 @@ func TestPhase0CLIHasZeroResourceDataCapabilities(t *testing.T) {
 	}
 }
 
-// TestPhase0DeferredDomainRoleTTFAndQueryLayerZeroSubprocessEvidence is
-// intentionally skipped: it needs real profile/domain fixtures and the later
-// provider/query layer, neither of which exists in this Phase 0 runtime seam.
-// A passing fake runtime test must not be read as evidence for either gate.
-func TestPhase0DeferredDomainRoleTTFAndQueryLayerZeroSubprocessEvidence(t *testing.T) {
-	t.Skip("deferred: requires provider/query layer and approved real-profile latency fixture")
-}
-
 func assertPhase0NamedEnvironment(t *testing.T, profile string, env []string) {
 	t.Helper()
 	values := make(map[string]string, len(env))

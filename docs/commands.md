@@ -7,7 +7,7 @@ provider state; `bb doctor` reports whether they are available.
 | Area | Commands | Contract |
 |---|---|---|
 | Build and health | `version`, `doctor`, `doctor nvim` | Versioned output and required/optional capability checks |
-| Shell | `shell init zsh`, `completion zsh` | Emits checkout-independent environment integration and native zsh completion; only successful wenv/AWS-assume environment output is evaluated |
+| Shell | `setup shell`, `shell init zsh`, `completion zsh` | `setup shell` adds the idempotent `.zshrc` integration; emitted integration includes native completion and evaluates only successful wenv/AWS-assume environment output |
 | Projects | `project list/add/show/remove`, `project import sessionizer --check/--apply` | XDG registry, stable IDs, read-only legacy source, content-addressed recovery copy |
 | Human tmux | `tm`, `tm projects`, `tm sessions`, `tm attach/kill/dirs/layout` | Search-first TUI with project/session metadata and numbered fallback; exact target re-observation; tmux remains process owner |
 | Git | `gx root/branch/log` | Direct Git reads plus explicit branch mutations |

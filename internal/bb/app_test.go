@@ -72,6 +72,139 @@ func TestShellInitRejectsUnsupportedShell(t *testing.T) {
 		t.Fatalf("exit=%d err=%v", ExitCode(err), err)
 	}
 }
+
+func TestSetupShellAddsManagedZshBlockAndIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	zshrc := filepath.Join(home, ".zshrc")
+	original := []byte("export EDITOR=nvim")
+	if err := os.WriteFile(zshrc, original, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	out := new(bytes.Buffer)
+	a := New(out, new(bytes.Buffer), []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")})
+
+	if err := a.Run([]string{"setup", "shell"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(zshrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"export EDITOR=nvim\n", zshSetupStart, zshSetupLine, zshSetupEnd} {
+		if !strings.Contains(string(first), want) {
+			t.Fatalf("configured .zshrc missing %q:\n%s", want, first)
+		}
+	}
+	info, err := os.Stat(zshrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("mode=%v", info.Mode().Perm())
+	}
+
+	out.Reset()
+	if err := a.Run([]string{"setup", "shell"}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(zshrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("second setup changed .zshrc:\n%s", second)
+	}
+	if !strings.Contains(out.String(), "already configured") {
+		t.Fatalf("idempotent output=%q", out.String())
+	}
+}
+
+func TestSetupShellCreatesMissingZshRC(t *testing.T) {
+	home := t.TempDir()
+	zshrc := filepath.Join(home, ".zshrc")
+	a := New(new(bytes.Buffer), new(bytes.Buffer), []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")})
+
+	if err := a.Run([]string{"setup", "shell"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(zshrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := zshSetupStart + "\n" + zshSetupLine + "\n" + zshSetupEnd + "\n"
+	if string(got) != want {
+		t.Fatalf("created .zshrc=%q, want %q", got, want)
+	}
+	info, err := os.Stat(zshrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode=%v", info.Mode().Perm())
+	}
+}
+
+func TestSetupShellHonorsZDOTDIRAndExistingInitLine(t *testing.T) {
+	home := t.TempDir()
+	zdotdir := filepath.Join(home, "zsh")
+	if err := os.Mkdir(zdotdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	zshrc := filepath.Join(zdotdir, ".zshrc")
+	original := []byte("# existing setup\n" + zshSetupLine + "\n")
+	if err := os.WriteFile(zshrc, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := new(bytes.Buffer)
+	a := New(out, new(bytes.Buffer), []string{"HOME=" + home, "ZDOTDIR=" + zdotdir, "PATH=" + os.Getenv("PATH")})
+
+	if err := a.Run([]string{"setup", "shell"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(zshrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("existing setup changed:\n%s", got)
+	}
+	if strings.Contains(string(got), zshSetupStart) {
+		t.Fatalf("existing setup was duplicated:\n%s", got)
+	}
+}
+
+func TestSetupShellPreservesZshRCSymlink(t *testing.T) {
+	home := t.TempDir()
+	dotfiles := t.TempDir()
+	target := filepath.Join(dotfiles, "zshrc")
+	if err := os.WriteFile(target, []byte("setopt autocd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	zshrc := filepath.Join(home, ".zshrc")
+	if err := os.Symlink(target, zshrc); err != nil {
+		t.Fatal(err)
+	}
+	a := New(new(bytes.Buffer), new(bytes.Buffer), []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")})
+
+	if err := a.Run([]string{"setup", "shell"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(zshrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf(".zshrc symlink was not preserved: mode=%v", info.Mode())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "setopt autocd\n\n"+zshSetupStart) {
+		t.Fatalf("symlink target was not configured:\n%s", got)
+	}
+}
+
 func TestProjectPersistsInXDG(t *testing.T) {
 	a, _, config, _ := testApp(t)
 	project := t.TempDir()

@@ -14,7 +14,7 @@ func TestZshCompletionIsNativeDynamicAndOmitsGitCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	completion := out.String()
-	for _, want := range []string{"_bb()", "compdef _bb bb", "command bb completion candidates", "secret-service", "tmux-session"} {
+	for _, want := range []string{"_bb()", "compdef _bb bb", "command bb completion candidates", "shell:configure zsh startup", "secret-service", "tmux-session"} {
 		if !strings.Contains(completion, want) {
 			t.Fatalf("completion missing %q", want)
 		}

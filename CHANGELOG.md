@@ -6,6 +6,11 @@ release tags and the corresponding release records.
 
 ## Unreleased
 
+### Added
+
+- Added `bb setup shell` to register the checkout-independent zsh integration
+  and native completion in `.zshrc` without duplicating an existing setup.
+
 ## 0.15.1 - 2026-08-13
 
 ### Fixed

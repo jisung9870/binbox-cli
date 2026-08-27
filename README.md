@@ -81,9 +81,10 @@ bb mcp check jira
 # Run without arguments for staged add/show/edit/sync/check/remove management.
 bb mcp
 
-# Checkout-independent zsh integration. Add this to ~/.zshrc so `bb wenv apply dev`
-# changes the current shell and native bb completion is registered without sourcing
-# the legacy binbox repository.
+# Add checkout-independent zsh integration and native completion to ~/.zshrc.
+bb setup shell
+
+# The equivalent manual configuration is:
 eval "$(bb shell init zsh)"
 
 # Completion can also be loaded independently.
@@ -153,6 +154,7 @@ through the existing authenticated GitHub CLI session:
 
 ```sh
 scripts/install.sh --github-cli --version 0.10.0
+bb setup shell
 ```
 
 See [operations](docs/operations.md) for the release and trust contract.

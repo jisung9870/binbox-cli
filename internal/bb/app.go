@@ -135,7 +135,7 @@ Usage: bb <command> [arguments]
 Commands:
   version                 Print bb version
   doctor [--json]         Check external CLI capabilities
-  setup nvim ...          Plan or link a selected LazyVim config
+  setup shell|nvim ...    Configure zsh integration or a selected LazyVim config
   shell init zsh          Print checkout-independent zsh integration
   completion zsh          Print native zsh completion
   project ...             Manage/import the local project registry

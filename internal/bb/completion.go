@@ -29,7 +29,7 @@ _bb() {
     _bb_static 'bb command' \
       'version:print version information' \
       'doctor:check external capabilities' \
-      'setup:validate or link editor configuration' \
+      'setup:configure shell or editor integration' \
       'shell:print shell integration' \
       'completion:print shell completion' \
       'project:manage local projects' \
@@ -63,7 +63,7 @@ _bb() {
       fi
       ;;
     setup)
-      if (( CURRENT == 3 )); then _bb_static 'target' 'nvim:configure Neovim'
+      if (( CURRENT == 3 )); then _bb_static 'target' 'shell:configure zsh startup' 'nvim:configure Neovim'
       elif [[ "${words[3]}" == nvim ]]; then _bb_static 'option' '--config-dir:configuration directory' '--repository:expected repository' '--revision:expected revision' '--lockfile-sha256:expected lockfile hash' '--dry-run:preview setup' '--apply:apply setup' '--consent:confirm link mutation' '--json:JSON envelope'
       fi
       ;;

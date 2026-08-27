@@ -10,8 +10,13 @@ import (
 
 func (a *App) setup(args []string) error {
 	if len(args) == 0 || helpRequested(args) {
-		_, err := fmt.Fprintln(a.out, "Usage: bb setup nvim --config-dir <path> [--repository <url>] [--revision <commit>] [--lockfile-sha256 <sha>] [--dry-run | --apply --consent] [--json]")
+		_, err := fmt.Fprintln(a.out, `Usage:
+  bb setup shell
+  bb setup nvim --config-dir <path> [--repository <url>] [--revision <commit>] [--lockfile-sha256 <sha>] [--dry-run | --apply --consent] [--json]`)
 		return err
+	}
+	if args[0] == "shell" {
+		return a.setupShell(args[1:])
 	}
 	if args[0] != "nvim" {
 		return invalid(fmt.Sprintf("unknown setup command %q", args[0]))

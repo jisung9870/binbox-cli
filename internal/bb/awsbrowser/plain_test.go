@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+type plainDispatchStub struct {
+	stream IntentStream
+	err    error
+}
+
+func (dispatcher plainDispatchStub) Dispatch(context.Context, Intent) (IntentStream, error) {
+	return dispatcher.stream, dispatcher.err
+}
+
 func TestPlainStartupAndQuitAreZeroCall(t *testing.T) {
 	dispatcher := new(recordingDispatcher)
 	var out bytes.Buffer
@@ -283,5 +292,147 @@ func TestPlainPrematureStreamClosureIsFailure(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "query failed") || !strings.Contains(out.String(), "incomplete stream") {
 		t.Fatalf("plain premature closure was silent: %s", out.String())
+	}
+}
+
+func TestPlainRefreshEarlyTerminalStatesPreserveCachedFrame(t *testing.T) {
+	stagedUpdate := IntentUpdate{
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
+		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("staged", "pending")}},
+		Coverage:   &SearchCoverage{DiscoveryStatus: "staged-discovery", Profiles: []SearchProfileCoverage{{Profile: "staged", Status: "matched", Matches: 1}}},
+	}
+	tests := []struct {
+		name       string
+		dispatcher IntentDispatcher
+		want       []string
+	}{
+		{
+			name:       "dispatch error",
+			dispatcher: plainDispatchStub{err: errors.New("boom\x1b[31m")},
+			want:       []string{"refresh failed", "cross-profile-search: boom"},
+		},
+		{
+			name:       "nil stream",
+			dispatcher: plainDispatchStub{},
+			want:       []string{"refresh failed", "no update stream"},
+		},
+		{
+			name: "terminal cancellation",
+			dispatcher: func() IntentDispatcher {
+				stream := newTestIntentStream()
+				stream.updates <- stagedUpdate
+				stream.updates <- IntentUpdate{
+					Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadCancelled}},
+					Projection: stagedUpdate.Projection,
+					Coverage:   stagedUpdate.Coverage,
+					Done:       true,
+				}
+				return plainDispatchStub{stream: stream}
+			}(),
+			want: []string{"refresh cancelled"},
+		},
+		{
+			name: "premature stream close",
+			dispatcher: func() IntentDispatcher {
+				stream := newTestIntentStream()
+				stream.updates <- stagedUpdate
+				close(stream.updates)
+				return plainDispatchStub{stream: stream}
+			}(),
+			want: []string{"refresh query failed", "incomplete stream"},
+		},
+		{
+			name: "nonterminal done",
+			dispatcher: func() IntentDispatcher {
+				stream := newTestIntentStream()
+				update := stagedUpdate
+				update.Done = true
+				stream.updates <- update
+				return plainDispatchStub{stream: stream}
+			}(),
+			want: []string{"refresh query failed", "incomplete stream"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			frame := cachedPlainRefreshFrame()
+			inputs := &plainInputSource{ch: make(chan plainInput)}
+			var out bytes.Buffer
+			err := (Plain{Dispatcher: test.dispatcher}).load(context.Background(), &out, Config{}, &frame, frame.intent, inputs, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCachedPlainRefreshTerminal(t, frame, test.want...)
+		})
+	}
+}
+
+func TestPlainRefreshInputCancellationClearsStagedStateAndPersists(t *testing.T) {
+	frame := cachedPlainRefreshFrame()
+	stagedCoverage := frame.stagedCoverage
+	stream := &testIntentStream{updates: make(chan IntentUpdate)}
+	inputs := make(chan plainInput, 1)
+	go func() {
+		stream.updates <- IntentUpdate{
+			Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
+			Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("staged", "pending")}},
+			Coverage:   stagedCoverage,
+		}
+		inputs <- plainInput{line: "cancel\n"}
+	}()
+	frame.stagedCoverage = nil
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: plainDispatchStub{stream: stream}}).load(
+		context.Background(), &out, Config{}, &frame, frame.intent, &plainInputSource{ch: inputs}, true,
+	)
+	if !errors.Is(err, errPlainBack) {
+		t.Fatalf("err=%v", err)
+	}
+	assertCachedPlainRefreshTerminal(t, frame, "refresh cancelled")
+}
+
+func cachedPlainRefreshFrame() plainFrame {
+	return plainFrame{
+		target:     "cross-profile-search",
+		label:      "Search results · reader",
+		intent:     Intent{Kind: IntentSearch, Target: "cross-profile-search", SearchKind: "role", Query: "reader", Scope: "all"},
+		projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("cached", "running")}},
+		coverage:   &SearchCoverage{DiscoveryStatus: "cached-discovery", Profiles: []SearchProfileCoverage{{Profile: "cached", Status: "matched", Matches: 1}}},
+		stagedCoverage: &SearchCoverage{
+			DiscoveryStatus: "staged-discovery",
+			Profiles:        []SearchProfileCoverage{{Profile: "staged", Status: "matched", Matches: 1}},
+		},
+		status: "Showing cached 1 · refreshing… · Esc cancel",
+	}
+}
+
+func assertCachedPlainRefreshTerminal(t *testing.T, frame plainFrame, statuses ...string) {
+	t.Helper()
+	if len(frame.projection.Resources) != 1 || frame.projection.Resources[0].Title != "cached" {
+		t.Fatalf("cached projection replaced: %+v", frame.projection.Resources)
+	}
+	if frame.coverage == nil || frame.coverage.DiscoveryStatus != "cached-discovery" {
+		t.Fatalf("cached coverage replaced: %+v", frame.coverage)
+	}
+	if frame.stagedCoverage != nil {
+		t.Fatalf("staged coverage retained: %+v", frame.stagedCoverage)
+	}
+	if strings.Contains(frame.status, "refreshing") || strings.Contains(frame.status, "\x1b") {
+		t.Fatalf("unsafe or nonterminal status persisted: %q", frame.status)
+	}
+	for _, status := range append([]string{"Showing cached 1"}, statuses...) {
+		if !strings.Contains(frame.status, status) {
+			t.Fatalf("status %q missing %q", frame.status, status)
+		}
+	}
+	var redraw bytes.Buffer
+	if err := writePlainFrame(&redraw, frame); err != nil {
+		t.Fatal(err)
+	}
+	output := redraw.String()
+	if !strings.Contains(output, frame.status) || !strings.Contains(output, "cached-discovery") || !strings.Contains(output, "1  cached") ||
+		strings.Contains(output, "staged-discovery") || strings.Contains(output, "1  staged") {
+		t.Fatalf("terminal state did not persist on redraw:\n%s", output)
 	}
 }

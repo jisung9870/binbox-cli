@@ -228,8 +228,13 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 }
 
 func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *plainFrame, intent Intent, inputs *plainInputSource, exactContext bool) error {
+	refreshing := exactContext || intent.Kind == IntentRefresh
 	if p.Dispatcher == nil {
-		fmt.Fprintln(out, safeIntentText(frame.label)+": not loaded")
+		if refreshing {
+			fmt.Fprintln(out, finishPlainRefresh(frame, "failed · "+frame.target+": no dispatcher"))
+		} else {
+			fmt.Fprintln(out, safeIntentText(frame.label)+": not loaded")
+		}
 		return nil
 	}
 	dispatchCtx, cancel := context.WithCancel(ctx)
@@ -252,6 +257,9 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 	acquired := false
 	select {
 	case <-ctx.Done():
+		if refreshing {
+			finishPlainRefresh(frame, "cancelled")
+		}
 		return ctx.Err()
 	case result := <-started:
 		stream, err, acquired = result.stream, result.err, true
@@ -260,6 +268,9 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 	for !acquired {
 		select {
 		case <-ctx.Done():
+			if refreshing {
+				finishPlainRefresh(frame, "cancelled")
+			}
 			return ctx.Err()
 		case result := <-started:
 			stream, err = result.stream, result.err
@@ -267,14 +278,26 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 		case input, open := <-inputs.ch:
 			if !open || (input.err != nil && strings.TrimSpace(input.line) == "") {
 				if !open || errors.Is(input.err, io.EOF) {
+					if refreshing {
+						finishPlainRefresh(frame, "incomplete · input ended")
+					}
 					return ErrNoInput
+				}
+				if refreshing {
+					finishPlainRefresh(frame, "failed · "+input.err.Error())
 				}
 				return input.err
 			}
 			switch strings.ToLower(strings.TrimSpace(input.line)) {
 			case "back", "b", "esc", "cancel":
+				if refreshing {
+					finishPlainRefresh(frame, "cancelled")
+				}
 				return errPlainBack
 			case "quit", "q", "exit":
+				if refreshing {
+					finishPlainRefresh(frame, "cancelled")
+				}
 				return errPlainQuit
 			default:
 				inputs.pending = append(inputs.pending, input)
@@ -282,11 +305,19 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 		}
 	}
 	if err != nil {
-		fmt.Fprintln(out, "! "+safeIntentText(frame.target+": "+err.Error()))
+		if refreshing {
+			fmt.Fprintln(out, finishPlainRefresh(frame, "failed · "+frame.target+": "+err.Error()))
+		} else {
+			fmt.Fprintln(out, "! "+safeIntentText(frame.target+": "+err.Error()))
+		}
 		return nil
 	}
 	if stream == nil || stream.Updates() == nil {
-		fmt.Fprintln(out, "! "+safeIntentText(frame.target)+": no update stream")
+		if refreshing {
+			fmt.Fprintln(out, finishPlainRefresh(frame, "failed · "+frame.target+": no update stream"))
+		} else {
+			fmt.Fprintln(out, "! "+safeIntentText(frame.target)+": no update stream")
+		}
 		return nil
 	}
 	defer stream.Cancel()
@@ -296,7 +327,11 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 		case update, ok := <-stream.Updates():
 			if !ok {
 				if !terminal {
-					fmt.Fprintln(out, queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources))+" · incomplete stream")
+					status := queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources)) + " · incomplete stream"
+					if refreshing {
+						status = finishPlainRefresh(frame, strings.TrimPrefix(status, "! "))
+					}
+					fmt.Fprintln(out, status)
 				}
 				return nil
 			}
@@ -309,7 +344,11 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 			}
 			if update.Done {
 				if !terminal {
-					fmt.Fprintln(out, queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources))+" · incomplete stream")
+					status := queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources)) + " · incomplete stream"
+					if refreshing {
+						status = finishPlainRefresh(frame, strings.TrimPrefix(status, "! "))
+					}
+					fmt.Fprintln(out, status)
 				}
 				return nil
 			}
@@ -318,22 +357,40 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 		}
 		select {
 		case <-ctx.Done():
+			if refreshing {
+				finishPlainRefresh(frame, "cancelled")
+			}
 			return ctx.Err()
 		case input, open := <-inputs.ch:
 			if !open {
+				if refreshing {
+					finishPlainRefresh(frame, "incomplete · input ended")
+				}
 				return ErrNoInput
 			}
 			command := strings.ToLower(strings.TrimSpace(input.line))
 			if input.err != nil && command == "" {
 				if errors.Is(input.err, io.EOF) {
+					if refreshing {
+						finishPlainRefresh(frame, "incomplete · input ended")
+					}
 					return ErrNoInput
+				}
+				if refreshing {
+					finishPlainRefresh(frame, "failed · "+input.err.Error())
 				}
 				return input.err
 			}
 			switch command {
 			case "back", "b", "esc", "cancel":
+				if refreshing {
+					finishPlainRefresh(frame, "cancelled")
+				}
 				return errPlainBack
 			case "quit", "q", "exit":
+				if refreshing {
+					finishPlainRefresh(frame, "cancelled")
+				}
 				return errPlainQuit
 			default:
 				inputs.pending = append(inputs.pending, input)
@@ -341,7 +398,11 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 		case update, ok := <-stream.Updates():
 			if !ok {
 				if !terminal {
-					fmt.Fprintln(out, queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources))+" · incomplete stream")
+					status := queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources)) + " · incomplete stream"
+					if refreshing {
+						status = finishPlainRefresh(frame, strings.TrimPrefix(status, "! "))
+					}
+					fmt.Fprintln(out, status)
 				}
 				return nil
 			}
@@ -354,7 +415,11 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 			}
 			if update.Done {
 				if !terminal {
-					fmt.Fprintln(out, queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources))+" · incomplete stream")
+					status := queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources)) + " · incomplete stream"
+					if refreshing {
+						status = finishPlainRefresh(frame, strings.TrimPrefix(status, "! "))
+					}
+					fmt.Fprintln(out, status)
 				}
 				return nil
 			}
@@ -383,7 +448,8 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 			frame.coverage = cloneSearchCoverage(update.Coverage)
 		}
 	}
-	preserve := refreshing && !terminalLoadState(state) && len(frame.projection.Resources) != 0
+	successfulRefresh := state == LoadReady || state == LoadEmpty
+	preserve := refreshing && !successfulRefresh
 	replace := !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty)
 	if replace {
 		frame.projection = projection
@@ -392,7 +458,13 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 		}
 	}
 	status := queryStatus(update.Query, len(frame.projection.Resources))
-	if preserve && searchRefresh {
+	if refreshing && terminalLoadState(state) && !successfulRefresh {
+		if state == LoadStale {
+			status = queryStatus(update.Query, len(frame.projection.Resources))
+		} else {
+			status = finishPlainRefresh(frame, strings.TrimPrefix(queryStatus(update.Query, len(frame.projection.Resources)), "! "))
+		}
+	} else if preserve && searchRefresh {
 		status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
 	} else {
 		if frame.coverage != nil {
@@ -409,6 +481,12 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 	writePlainCoverage(out, frame.coverage)
 	writePlainResources(out, frame.projection.Resources)
 	return nil
+}
+
+func finishPlainRefresh(frame *plainFrame, outcome string) string {
+	frame.stagedCoverage = nil
+	frame.status = fmt.Sprintf("Showing cached %d · refresh %s", len(frame.projection.Resources), safeIntentText(outcome))
+	return frame.status
 }
 
 func plainInputs(reader *bufio.Reader, done <-chan struct{}) <-chan plainInput {

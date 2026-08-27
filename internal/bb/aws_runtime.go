@@ -21,6 +21,7 @@ type awsIntentCore interface {
 
 type awsIntentSearch interface {
 	Submit(context.Context, awsintegration.SearchRequest) (awsintegration.SearchResult, error)
+	Stream(context.Context, awsintegration.SearchRequest) (<-chan awsintegration.SearchUpdate, error)
 }
 
 type awsRuntime struct {
@@ -275,7 +276,8 @@ func (dispatcher *awsIntentDispatcher) dispatchSearch(ctx context.Context, reque
 	stream := &awsbrowser.ChannelIntentStream{C: updates, CancelFunc: cancel}
 	go func() {
 		defer close(updates)
-		result, err := dispatcher.search.Submit(searchCtx, request)
+		defer cancel()
+		searchUpdates, err := dispatcher.search.Stream(searchCtx, request)
 		if err != nil {
 			update := unsupportedIntentUpdate()
 			select {
@@ -284,10 +286,17 @@ func (dispatcher *awsIntentDispatcher) dispatchSearch(ctx context.Context, reque
 			}
 			return
 		}
-		update := intentUpdateFromSearch(result)
-		select {
-		case updates <- update:
-		case <-searchCtx.Done():
+		for searchUpdate := range searchUpdates {
+			update := intentUpdateFromSearch(searchUpdate.Result)
+			update.Done = searchUpdate.Done
+			select {
+			case updates <- update:
+			case <-searchCtx.Done():
+				return
+			}
+			if update.Done {
+				return
+			}
 		}
 	}()
 	return stream
@@ -302,7 +311,7 @@ func intentUpdateFromSearch(result awsintegration.SearchResult) awsbrowser.Inten
 	state, failure := searchLoadState(result)
 	return awsbrowser.IntentUpdate{
 		Query:      awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: state}, Failure: failure},
-		Projection: projectSearchResources(result), Coverage: searchCoverageProjection(result), Done: true,
+		Projection: projectSearchResources(result), Coverage: searchCoverageProjection(result),
 	}
 }
 

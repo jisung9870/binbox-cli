@@ -92,6 +92,13 @@ type SearchResult struct {
 	DiscoveryStatus ProfileStatus
 }
 
+// SearchUpdate is a cumulative, credential-free search snapshot. Done marks
+// the final projection and coverage for the request.
+type SearchUpdate struct {
+	Result SearchResult
+	Done   bool
+}
+
 // SearchCore is the narrow, credential-free seam used by SearchService.
 // *Core satisfies it without exposing runtime or credential objects.
 type SearchCore interface {
@@ -138,54 +145,106 @@ type searchProfile struct {
 	items   []awsbrowser.ObservedResource
 }
 
-// Submit discovers profiles only for an all-scope request, then resolves at
-// most four credentials concurrently and performs bounded SDK work. Context
-// cancellation is represented in coverage, rather than returned as an error.
+// Submit consumes the progressive stream for callers that need only the final
+// result. Context cancellation is represented in coverage, rather than
+// returned as an error.
 func (service *SearchService) Submit(ctx context.Context, request SearchRequest) (SearchResult, error) {
-	if service == nil || nilSearchInterface(service.core) || nilSearchInterface(service.profiles) || ctx == nil || !validSearchRequest(request) {
-		return SearchResult{}, ErrInvalidSearchRequest
+	updates, err := service.Stream(ctx, request)
+	if err != nil {
+		return SearchResult{}, err
 	}
-
-	profiles, discoveryStatus := service.scope(ctx, request)
-	// Resolve and query current before waiting on any other credential. This
-	// preserves current-first latency while final aggregation remains ordered
-	// by the deterministic scope slice below.
-	service.resolveProfiles(ctx, profiles[:1])
-	resolved := make(chan struct{})
-	go func() {
-		defer close(resolved)
-		service.resolveProfiles(ctx, profiles[1:])
-	}()
-	if profiles[0].context != nil {
-		service.searchProfile(ctx, request, profiles[0])
+	var result SearchResult
+	for update := range updates {
+		result = update.Result
 	}
-	<-resolved
-	var wait sync.WaitGroup
-	for _, profile := range profiles[1:] {
-		if profile.context == nil {
-			continue
-		}
-		wait.Add(1)
-		go func(profile *searchProfile) {
-			defer wait.Done()
-			service.searchProfile(ctx, request, profile)
-		}(profile)
-	}
-	wait.Wait()
-
-	for _, profile := range profiles {
-		if profile.context != nil && !profile.started && profile.status == "" {
-			profile.status = ProfileStatusNotSearched
-		}
-	}
-	return buildSearchResult(profiles, discoveryStatus), nil
+	return result, nil
 }
 
-func (service *SearchService) scope(ctx context.Context, request SearchRequest) ([]*searchProfile, ProfileStatus) {
-	result := []*searchProfile{{profile: request.Profile, region: request.Region, current: true}}
-	if request.Scope != SearchAll {
-		return result, ""
+// Stream emits the current profile before profile discovery or any secondary
+// profile can delay delivery. Later cumulative updates are emitted as bounded
+// per-profile work completes, with exactly one terminal update.
+func (service *SearchService) Stream(ctx context.Context, request SearchRequest) (<-chan SearchUpdate, error) {
+	if service == nil || nilSearchInterface(service.core) || nilSearchInterface(service.profiles) || ctx == nil || !validSearchRequest(request) {
+		return nil, ErrInvalidSearchRequest
 	}
+	updates := make(chan SearchUpdate, 1)
+	go func() {
+		defer close(updates)
+		current := &searchProfile{profile: request.Profile, region: request.Region, current: true}
+		type discoveryResult struct {
+			profiles []*searchProfile
+			status   ProfileStatus
+		}
+		discovered := make(chan discoveryResult, 1)
+		if request.Scope == SearchAll {
+			go func() {
+				profiles, status := service.secondaryScope(ctx, request)
+				discovered <- discoveryResult{profiles: profiles, status: status}
+			}()
+		}
+
+		service.processProfile(ctx, request, current)
+		profiles := []*searchProfile{current}
+		if request.Scope == SearchCurrent {
+			updates <- SearchUpdate{Result: buildSearchResult(profiles, ""), Done: true}
+			return
+		}
+		select {
+		case updates <- SearchUpdate{Result: buildSearchResult(profiles, "")}:
+		case <-ctx.Done():
+			// Submit still receives the buffered terminal snapshot below.
+		}
+
+		discovery := <-discovered
+		profiles = append(profiles, discovery.profiles...)
+		if len(discovery.profiles) == 0 {
+			terminal := SearchUpdate{Result: buildSearchResult(profiles, discovery.status), Done: true}
+			if ctx.Err() == nil {
+				updates <- terminal
+			} else {
+				select {
+				case updates <- terminal:
+				default:
+				}
+			}
+			return
+		}
+
+		completed := make(chan *searchProfile, len(discovery.profiles))
+		for _, profile := range discovery.profiles {
+			go func(profile *searchProfile) {
+				service.processProfile(ctx, request, profile)
+				completed <- profile
+			}(profile)
+		}
+		done := map[*searchProfile]bool{current: true}
+		for count := 0; count < len(discovery.profiles); count++ {
+			done[<-completed] = true
+			result := buildCompletedSearchResult(profiles, done, discovery.status)
+			terminal := count == len(discovery.profiles)-1
+			update := SearchUpdate{Result: result, Done: terminal}
+			if terminal {
+				if ctx.Err() == nil {
+					updates <- update
+				} else {
+					select {
+					case updates <- update:
+					default:
+					}
+				}
+				continue
+			}
+			select {
+			case updates <- update:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	return updates, nil
+}
+
+func (service *SearchService) secondaryScope(ctx context.Context, request SearchRequest) ([]*searchProfile, ProfileStatus) {
+	var result []*searchProfile
 	names, err := service.profiles.ListProfiles(ctx, append([]string(nil), service.env...))
 	if err != nil {
 		return result, statusFromError(err, nil)
@@ -207,34 +266,20 @@ func (service *SearchService) scope(ctx context.Context, request SearchRequest) 
 	return result, ""
 }
 
-func (service *SearchService) resolveProfiles(ctx context.Context, profiles []*searchProfile) {
-	var wait sync.WaitGroup
-	for index, profile := range profiles {
-		release, ok := acquireSearch(ctx, service.credentials)
-		if !ok {
-			for _, queued := range profiles[index:] {
-				if queued.status == "" {
-					queued.status = ProfileStatusNotSearched
-				}
-			}
-			break
-		}
-		begun := make(chan struct{})
-		wait.Add(1)
-		go func(profile *searchProfile) {
-			defer wait.Done()
-			defer release()
-			if ctx.Err() != nil {
-				profile.status = ProfileStatusNotSearched
-				close(begun)
-				return
-			}
-			close(begun)
-			service.resolveOne(ctx, profile)
-		}(profile)
-		<-begun
+func (service *SearchService) processProfile(ctx context.Context, request SearchRequest, profile *searchProfile) {
+	release, ok := acquireSearch(ctx, service.credentials)
+	if !ok {
+		profile.status = ProfileStatusNotSearched
+		return
 	}
-	wait.Wait()
+	service.resolveOne(ctx, profile)
+	release()
+	if profile.context != nil {
+		service.searchProfile(ctx, request, profile)
+	}
+	if profile.context != nil && !profile.started && profile.status == "" {
+		profile.status = ProfileStatusNotSearched
+	}
 }
 
 func (service *SearchService) resolveOne(ctx context.Context, profile *searchProfile) {
@@ -407,6 +452,16 @@ func buildSearchResult(profiles []*searchProfile, discovery ProfileStatus) Searc
 		return searchResourceSortKey(result.Resources[left].Key) < searchResourceSortKey(result.Resources[right].Key)
 	})
 	return result
+}
+
+func buildCompletedSearchResult(profiles []*searchProfile, completed map[*searchProfile]bool, discovery ProfileStatus) SearchResult {
+	ready := make([]*searchProfile, 0, len(completed))
+	for _, profile := range profiles {
+		if completed[profile] {
+			ready = append(ready, profile)
+		}
+	}
+	return buildSearchResult(ready, discovery)
 }
 
 func resourcesFromResult(result Result) []awsbrowser.ObservedResource {

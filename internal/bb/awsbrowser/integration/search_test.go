@@ -141,6 +141,65 @@ func TestSearchServiceQueriesCurrentWithoutWaitingForSlowProfiles(t *testing.T) 
 	}
 }
 
+func TestSearchStreamEmitsCurrentThenIncrementalAndTerminalCoverage(t *testing.T) {
+	lister := &searchProfileListerFake{profiles: []string{"p1", "p2"}}
+	contexts := map[string]awsbrowser.AWSContext{}
+	for index, profile := range []string{"current", "p1", "p2"} {
+		contexts[profile] = searchTestContext(t, profile, fmt.Sprintf("%012d", index+1), 1)
+	}
+	started := make(chan string, 2)
+	releases := map[string]chan struct{}{"p1": make(chan struct{}), "p2": make(chan struct{})}
+	core := &searchCoreFake{
+		resolve: func(_ context.Context, request ContextRequest) (ContextResult, error) {
+			value := contexts[request.Profile]
+			return ContextResult{Context: &value}, nil
+		},
+		query: func(_ context.Context, request Request) (Result, error) {
+			if release := releases[request.Profile]; release != nil {
+				started <- request.Profile
+				<-release
+			}
+			value := contexts[request.Profile]
+			resource := searchTestResource(t, value, request.Operation, true, "iam-role", "worker", map[string]any{"name": "worker"})
+			return searchTestResult(t, value, request.Provider, request.Operation, request.Params, resource), nil
+		},
+	}
+	service, _ := NewSearchService(core, lister, nil)
+	updates, err := service.Stream(context.Background(), SearchRequest{Kind: SearchRole, Scope: SearchAll, Query: "worker", Profile: "current", Region: "us-east-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := <-updates
+	if current.Done || len(current.Result.Coverage) != 1 || current.Result.Coverage[0].Profile != "current" || !current.Result.Coverage[0].Current {
+		t.Fatalf("current update=%+v", current)
+	}
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("secondary profile did not start")
+		}
+	}
+	close(releases["p2"])
+	incremental := <-updates
+	if incremental.Done || len(incremental.Result.Coverage) != 2 || incremental.Result.Coverage[0].Profile != "current" || incremental.Result.Coverage[1].Profile != "p2" {
+		t.Fatalf("incremental update=%+v", incremental)
+	}
+	close(releases["p1"])
+	terminal := <-updates
+	if !terminal.Done || len(terminal.Result.Coverage) != 3 || len(terminal.Result.Resources) != 3 {
+		t.Fatalf("terminal update=%+v", terminal)
+	}
+	for index, profile := range []string{"current", "p1", "p2"} {
+		if terminal.Result.Coverage[index].Profile != profile {
+			t.Fatalf("terminal coverage=%+v", terminal.Result.Coverage)
+		}
+	}
+	if _, open := <-updates; open {
+		t.Fatal("stream remained open after terminal update")
+	}
+}
+
 func TestSearchServiceDomainUsesEverySuffixZoneAndKeepsVariants(t *testing.T) {
 	lister := &searchProfileListerFake{profiles: []string{"other"}}
 	contexts := map[string]awsbrowser.AWSContext{}

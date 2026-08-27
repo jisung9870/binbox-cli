@@ -19,6 +19,30 @@ func (function awsIntentSearchFunc) Submit(ctx context.Context, request awsinteg
 	return function(ctx, request)
 }
 
+type awsIntentSearchStreamFake struct {
+	updates <-chan awsintegration.SearchUpdate
+}
+
+func (fake awsIntentSearchStreamFake) Submit(context.Context, awsintegration.SearchRequest) (awsintegration.SearchResult, error) {
+	return awsintegration.SearchResult{}, nil
+}
+
+func (fake awsIntentSearchStreamFake) Stream(context.Context, awsintegration.SearchRequest) (<-chan awsintegration.SearchUpdate, error) {
+	return fake.updates, nil
+}
+
+func (function awsIntentSearchFunc) Stream(ctx context.Context, request awsintegration.SearchRequest) (<-chan awsintegration.SearchUpdate, error) {
+	updates := make(chan awsintegration.SearchUpdate, 1)
+	go func() {
+		defer close(updates)
+		result, err := function(ctx, request)
+		if err == nil {
+			updates <- awsintegration.SearchUpdate{Result: result, Done: true}
+		}
+	}()
+	return updates, nil
+}
+
 func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 	tests := []struct {
 		target    string
@@ -158,6 +182,29 @@ func TestAWSIntentDispatcherRepeatedSearchRetainsBoundedRequest(t *testing.T) {
 	}
 	if len(requests) != 2 || requests[0] != want || requests[1] != want {
 		t.Fatalf("repeated requests=%+v want=%+v", requests, want)
+	}
+}
+
+func TestAWSIntentDispatcherForwardsProgressAndTerminalOwnership(t *testing.T) {
+	searchUpdates := make(chan awsintegration.SearchUpdate, 2)
+	dispatcher := &awsIntentDispatcher{search: awsIntentSearchStreamFake{updates: searchUpdates}}
+	stream, err := dispatcher.Dispatch(context.Background(), awsbrowser.Intent{Kind: awsbrowser.IntentSearch, SearchKind: "role", Scope: "all", Query: "reader"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	searchUpdates <- awsintegration.SearchUpdate{Result: awsintegration.SearchResult{Coverage: []awsintegration.ProfileCoverage{{Profile: "current", Current: true, Status: awsintegration.ProfileStatusNotFound}}}}
+	searchUpdates <- awsintegration.SearchUpdate{Result: awsintegration.SearchResult{Coverage: []awsintegration.ProfileCoverage{{Profile: "current", Current: true, Status: awsintegration.ProfileStatusNotFound}, {Profile: "audit", Status: awsintegration.ProfileStatusNotFound}}}, Done: true}
+	close(searchUpdates)
+	progress := <-stream.Updates()
+	if progress.Done || progress.Coverage == nil || len(progress.Coverage.Profiles) != 1 {
+		t.Fatalf("progress=%+v", progress)
+	}
+	terminal := <-stream.Updates()
+	if !terminal.Done || terminal.Coverage == nil || len(terminal.Coverage.Profiles) != 2 {
+		t.Fatalf("terminal=%+v", terminal)
+	}
+	if _, open := <-stream.Updates(); open {
+		t.Fatal("intent stream remained open after terminal update")
 	}
 }
 

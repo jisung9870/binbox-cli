@@ -186,7 +186,7 @@ func (service *SearchService) Stream(ctx context.Context, request SearchRequest)
 		service.processProfile(ctx, request, current)
 		profiles := []*searchProfile{current}
 		if request.Scope == SearchCurrent {
-			updates <- SearchUpdate{Result: buildSearchResult(profiles, ""), Done: true}
+			sendTerminalSearchUpdate(ctx, updates, SearchUpdate{Result: buildSearchResult(profiles, ""), Done: true})
 			return
 		}
 		select {
@@ -199,14 +199,7 @@ func (service *SearchService) Stream(ctx context.Context, request SearchRequest)
 		profiles = append(profiles, discovery.profiles...)
 		if len(discovery.profiles) == 0 {
 			terminal := SearchUpdate{Result: buildSearchResult(profiles, discovery.status), Done: true}
-			if ctx.Err() == nil {
-				updates <- terminal
-			} else {
-				select {
-				case updates <- terminal:
-				default:
-				}
-			}
+			sendTerminalSearchUpdate(ctx, updates, terminal)
 			return
 		}
 
@@ -224,14 +217,7 @@ func (service *SearchService) Stream(ctx context.Context, request SearchRequest)
 			terminal := count == len(discovery.profiles)-1
 			update := SearchUpdate{Result: result, Done: terminal}
 			if terminal {
-				if ctx.Err() == nil {
-					updates <- update
-				} else {
-					select {
-					case updates <- update:
-					default:
-					}
-				}
+				sendTerminalSearchUpdate(ctx, updates, update)
 				continue
 			}
 			select {
@@ -241,6 +227,23 @@ func (service *SearchService) Stream(ctx context.Context, request SearchRequest)
 		}
 	}()
 	return updates, nil
+}
+
+func sendTerminalSearchUpdate(ctx context.Context, updates chan SearchUpdate, terminal SearchUpdate) {
+	select {
+	case updates <- terminal:
+		return
+	case <-ctx.Done():
+	}
+
+	// Cancellation makes an unread progressive snapshot obsolete. This goroutine
+	// is the channel's only sender, so freeing its single slot and filling it with
+	// the terminal cumulative snapshot cannot race another producer or block.
+	select {
+	case <-updates:
+	default:
+	}
+	updates <- terminal
 }
 
 func (service *SearchService) secondaryScope(ctx context.Context, request SearchRequest) ([]*searchProfile, ProfileStatus) {

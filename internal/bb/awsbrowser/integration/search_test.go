@@ -19,6 +19,12 @@ type searchProfileListerFake struct {
 	calls    int
 }
 
+type searchProfileListerFunc func(context.Context, []string) ([]string, error)
+
+func (list searchProfileListerFunc) ListProfiles(ctx context.Context, env []string) ([]string, error) {
+	return list(ctx, env)
+}
+
 func (fake *searchProfileListerFake) ListProfiles(context.Context, []string) ([]string, error) {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
@@ -197,6 +203,103 @@ func TestSearchStreamEmitsCurrentThenIncrementalAndTerminalCoverage(t *testing.T
 	}
 	if _, open := <-updates; open {
 		t.Fatal("stream remained open after terminal update")
+	}
+}
+
+func TestSearchStreamCancellationReplacesBufferedCurrentWithTerminalWhenNoSecondaryProfiles(t *testing.T) {
+	for attempt := 0; attempt < 50; attempt++ {
+		discoveryStarted := make(chan struct{})
+		lister := searchProfileListerFunc(func(ctx context.Context, _ []string) ([]string, error) {
+			close(discoveryStarted)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+		current := searchTestContext(t, "current", "111111111111", 1)
+		core := &searchCoreFake{
+			resolve: func(context.Context, ContextRequest) (ContextResult, error) {
+				return ContextResult{Context: &current}, nil
+			},
+			query: func(context.Context, Request) (Result, error) { return Result{}, nil },
+		}
+		service, _ := NewSearchService(core, lister, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		updates, err := service.Stream(ctx, SearchRequest{Kind: SearchRole, Scope: SearchAll, Query: "worker", Profile: "current", Region: "us-east-1"})
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		<-discoveryStarted
+		waitForSearchUpdate(t, updates)
+
+		cancel()
+		terminal, terminalCount := drainSearchUpdates(t, updates)
+		if !terminal.Done || len(terminal.Result.Coverage) != 1 || terminal.Result.Coverage[0].Profile != "current" {
+			t.Fatalf("attempt %d terminal=%+v", attempt, terminal)
+		}
+		if terminalCount != 1 {
+			t.Fatalf("attempt %d terminal count=%d", attempt, terminalCount)
+		}
+	}
+}
+
+func TestSearchStreamCancellationReplacesBufferedIncrementalWithSecondaryTerminal(t *testing.T) {
+	for attempt := 0; attempt < 50; attempt++ {
+		lister := &searchProfileListerFake{profiles: []string{"p1", "p2"}}
+		contexts := map[string]awsbrowser.AWSContext{}
+		for index, profile := range []string{"current", "p1", "p2"} {
+			contexts[profile] = searchTestContext(t, profile, fmt.Sprintf("%012d", index+1), 1)
+		}
+		started := make(chan string, 2)
+		releaseP1 := make(chan struct{})
+		core := &searchCoreFake{
+			resolve: func(_ context.Context, request ContextRequest) (ContextResult, error) {
+				value := contexts[request.Profile]
+				return ContextResult{Context: &value}, nil
+			},
+			query: func(ctx context.Context, request Request) (Result, error) {
+				if request.Profile == "current" {
+					return Result{}, nil
+				}
+				started <- request.Profile
+				if request.Profile == "p1" {
+					select {
+					case <-releaseP1:
+					case <-ctx.Done():
+						return Result{}, ctx.Err()
+					}
+				} else {
+					<-ctx.Done()
+					return Result{}, ctx.Err()
+				}
+				return Result{}, nil
+			},
+		}
+		service, _ := NewSearchService(core, lister, nil)
+		ctx, cancel := context.WithCancel(context.Background())
+		updates, err := service.Stream(ctx, SearchRequest{Kind: SearchRole, Scope: SearchAll, Query: "worker", Profile: "current", Region: "us-east-1"})
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		current := receiveSearchUpdate(t, updates)
+		if current.Done || len(current.Result.Coverage) != 1 {
+			cancel()
+			t.Fatalf("attempt %d current=%+v", attempt, current)
+		}
+		for range 2 {
+			<-started
+		}
+		close(releaseP1)
+		waitForSearchUpdate(t, updates)
+
+		cancel()
+		terminal, terminalCount := drainSearchUpdates(t, updates)
+		if !terminal.Done || len(terminal.Result.Coverage) != 3 {
+			t.Fatalf("attempt %d terminal=%+v", attempt, terminal)
+		}
+		if terminalCount != 1 {
+			t.Fatalf("attempt %d terminal count=%d", attempt, terminalCount)
+		}
 	}
 }
 
@@ -702,6 +805,55 @@ func waitConcurrentSearches(t *testing.T, done <-chan error, count int) {
 	for index := 0; index < count; index++ {
 		if err := <-done; err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func waitForSearchUpdate(t *testing.T, updates <-chan SearchUpdate) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for len(updates) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("search update buffer was not filled")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+func receiveSearchUpdate(t *testing.T, updates <-chan SearchUpdate) SearchUpdate {
+	t.Helper()
+	select {
+	case update, open := <-updates:
+		if !open {
+			t.Fatal("search stream closed without an update")
+		}
+		return update
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for search update")
+		return SearchUpdate{}
+	}
+}
+
+func drainSearchUpdates(t *testing.T, updates <-chan SearchUpdate) (SearchUpdate, int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	var terminal SearchUpdate
+	terminalCount := 0
+	for {
+		select {
+		case update, open := <-updates:
+			if !open {
+				return terminal, terminalCount
+			}
+			if update.Done {
+				terminal = update
+				terminalCount++
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for search stream to close")
+			return SearchUpdate{}, 0
 		}
 	}
 }

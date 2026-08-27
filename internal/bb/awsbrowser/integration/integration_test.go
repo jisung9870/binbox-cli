@@ -1,0 +1,449 @@
+package integration
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/iam"
+	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/jisung9870/binbox-cli/internal/bb/awsbrowser"
+)
+
+var fixedNow = time.Date(2026, 8, 28, 3, 0, 0, 0, time.UTC)
+
+type fakeFactory struct {
+	mu      sync.Mutex
+	calls   int
+	runtime awsbrowser.RuntimeContext
+	err     error
+}
+
+func (factory *fakeFactory) Resolve(ctx context.Context, _ awsbrowser.ContextSpec) (awsbrowser.RuntimeContext, error) {
+	factory.mu.Lock()
+	factory.calls++
+	factory.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return factory.runtime, factory.err
+}
+
+func (factory *fakeFactory) count() int {
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+	return factory.calls
+}
+
+type fakeRuntime struct {
+	identity awsbrowser.VerifiedIdentity
+	sts      awsbrowser.STSAPI
+	ec2      awsbrowser.EC2API
+	iam      awsbrowser.IAMAPI
+	route53  awsbrowser.Route53API
+}
+
+func (runtime *fakeRuntime) Identity() awsbrowser.VerifiedIdentity { return runtime.identity }
+func (runtime *fakeRuntime) STS() awsbrowser.STSAPI                { return runtime.sts }
+func (runtime *fakeRuntime) EC2() awsbrowser.EC2API                { return runtime.ec2 }
+func (runtime *fakeRuntime) IAM() awsbrowser.IAMAPI                { return runtime.iam }
+func (runtime *fakeRuntime) Route53() awsbrowser.Route53API        { return runtime.route53 }
+
+type fakeSTS struct{ awsbrowser.STSAPI }
+
+func (fakeSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput) (*sts.GetCallerIdentityOutput, error) {
+	panic("unexpected STS call")
+}
+
+type fakeEC2 struct {
+	awsbrowser.EC2API
+	describeInstances func(context.Context, *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error)
+}
+
+func (client *fakeEC2) DescribeInstances(ctx context.Context, input *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+	if client.describeInstances == nil {
+		panic("unexpected EC2 call")
+	}
+	return client.describeInstances(ctx, input)
+}
+
+type fakeIAM struct {
+	awsbrowser.IAMAPI
+	listRoles func(context.Context, *iam.ListRolesInput) (*iam.ListRolesOutput, error)
+}
+
+func (client *fakeIAM) ListRoles(ctx context.Context, input *iam.ListRolesInput) (*iam.ListRolesOutput, error) {
+	if client.listRoles == nil {
+		panic("unexpected IAM call")
+	}
+	return client.listRoles(ctx, input)
+}
+
+type fakeRoute53 struct {
+	awsbrowser.Route53API
+	listHostedZones func(context.Context, *route53.ListHostedZonesInput) (*route53.ListHostedZonesOutput, error)
+}
+
+func (client *fakeRoute53) ListHostedZones(ctx context.Context, input *route53.ListHostedZonesInput) (*route53.ListHostedZonesOutput, error) {
+	if client.listHostedZones == nil {
+		panic("unexpected Route 53 call")
+	}
+	return client.listHostedZones(ctx, input)
+}
+
+func testIdentity(generation uint64) awsbrowser.VerifiedIdentity {
+	return awsbrowser.VerifiedIdentity{
+		Partition: "aws", AccountID: "123456789012",
+		PrincipalARN:         "arn:aws:sts::123456789012:assumed-role/ReadOnly/session",
+		CredentialGeneration: generation,
+	}
+}
+
+func completeRuntime(identity awsbrowser.VerifiedIdentity, ec2Client awsbrowser.EC2API, iamClient awsbrowser.IAMAPI, route53Client awsbrowser.Route53API) *fakeRuntime {
+	if ec2Client == nil {
+		ec2Client = &fakeEC2{}
+	}
+	if iamClient == nil {
+		iamClient = &fakeIAM{}
+	}
+	if route53Client == nil {
+		route53Client = &fakeRoute53{}
+	}
+	return &fakeRuntime{identity: identity, sts: fakeSTS{}, ec2: ec2Client, iam: iamClient, route53: route53Client}
+}
+
+func TestProductionConstructionIsZeroCall(t *testing.T) {
+	core, err := NewProduction(ProductionOptions{
+		AWSCLIPath: "/path/that/must/not/be-resolved/or/executed/aws",
+		Env:        []string{"AWS_REGION=us-east-1"}, Clock: func() time.Time { return fixedNow }, Concurrency: 2,
+	})
+	if err != nil || core == nil {
+		t.Fatalf("core=%v error=%v", core, err)
+	}
+
+	factory := &fakeFactory{runtime: completeRuntime(testIdentity(1), nil, nil, nil)}
+	core, err = NewWithRuntimeFactory(factory, []string{"AWS_REGION=us-east-1"}, func() time.Time { return fixedNow }, 2)
+	if err != nil || core == nil {
+		t.Fatalf("core=%v error=%v", core, err)
+	}
+	if factory.count() != 0 {
+		t.Fatalf("construction resolved runtime %d times", factory.count())
+	}
+}
+
+func TestNewWithRuntimeFactoryRejectsTypedNilFactory(t *testing.T) {
+	var factory *fakeFactory
+	core, err := NewWithRuntimeFactory(factory, nil, func() time.Time { return fixedNow }, 1)
+	if !errors.Is(err, ErrInvalidOptions) || core != nil {
+		t.Fatalf("core=%v error=%v", core, err)
+	}
+}
+
+func TestTypedNilRuntimeBecomesSanitizedFailure(t *testing.T) {
+	var runtime *fakeRuntime
+	factory := &fakeFactory{runtime: runtime}
+	core, err := NewWithRuntimeFactory(factory, nil, func() time.Time { return fixedNow }, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, resolveErr := core.Resolve(context.Background(), ContextRequest{Region: "us-east-1"})
+	if resolveErr == nil || result.Failure == nil || result.Failure.Kind != awsbrowser.ProviderUnknown {
+		t.Fatalf("result=%+v error=%v", result, resolveErr)
+	}
+	if factory.count() != 1 {
+		t.Fatalf("factory calls=%d", factory.count())
+	}
+}
+
+func TestTypedNilNarrowedClientsBecomeSanitizedFailures(t *testing.T) {
+	tests := []struct {
+		name      string
+		provider  string
+		operation string
+		runtime   func() awsbrowser.RuntimeContext
+	}{
+		{
+			name: "EC2", provider: awsbrowser.ProviderEC2, operation: awsbrowser.OperationDescribeInstances,
+			runtime: func() awsbrowser.RuntimeContext {
+				var client *fakeEC2
+				return &fakeRuntime{identity: testIdentity(1), sts: fakeSTS{}, ec2: client, iam: &fakeIAM{}, route53: &fakeRoute53{}}
+			},
+		},
+		{
+			name: "IAM", provider: awsbrowser.ProviderIAM, operation: awsbrowser.OperationListRoles,
+			runtime: func() awsbrowser.RuntimeContext {
+				var client *fakeIAM
+				return &fakeRuntime{identity: testIdentity(1), sts: fakeSTS{}, ec2: &fakeEC2{}, iam: client, route53: &fakeRoute53{}}
+			},
+		},
+		{
+			name: "Route 53", provider: awsbrowser.ProviderRoute53, operation: awsbrowser.OperationListHostedZones,
+			runtime: func() awsbrowser.RuntimeContext {
+				var client *fakeRoute53
+				return &fakeRuntime{identity: testIdentity(1), sts: fakeSTS{}, ec2: &fakeEC2{}, iam: &fakeIAM{}, route53: client}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			core, err := NewWithRuntimeFactory(&fakeFactory{runtime: test.runtime()}, nil, func() time.Time { return fixedNow }, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, queryErr := core.Query(context.Background(), Request{
+				Region: "us-east-1", Provider: test.provider, Operation: test.operation,
+			})
+			if queryErr == nil || result.Update.Failure == nil || result.Update.Failure.Kind != awsbrowser.ProviderUnsupported {
+				t.Fatalf("result=%+v error=%v", result, queryErr)
+			}
+		})
+	}
+}
+
+func TestInvalidExplicitContextInputMakesNoRuntimeCalls(t *testing.T) {
+	for _, request := range []ContextRequest{
+		{Profile: "bad/profile", Region: "us-east-1"},
+		{Profile: "dev", Region: "--region"},
+	} {
+		t.Run(request.Profile+request.Region, func(t *testing.T) {
+			factory := &fakeFactory{runtime: completeRuntime(testIdentity(1), nil, nil, nil)}
+			core, err := NewWithRuntimeFactory(factory, nil, func() time.Time { return fixedNow }, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := core.Resolve(context.Background(), request); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("Resolve error=%v", err)
+			}
+			if _, err := core.Subscribe(context.Background(), Request{
+				Profile: request.Profile, Region: request.Region,
+				Provider: awsbrowser.ProviderIAM, Operation: awsbrowser.OperationListRoles,
+			}); !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("Subscribe error=%v", err)
+			}
+			if factory.count() != 0 {
+				t.Fatalf("factory calls=%d", factory.count())
+			}
+		})
+	}
+}
+
+func TestQuerySelectsOnlyRequestedProvider(t *testing.T) {
+	var iamCalls int
+	iamClient := &fakeIAM{listRoles: func(_ context.Context, input *iam.ListRolesInput) (*iam.ListRolesOutput, error) {
+		iamCalls++
+		if aws.ToInt32(input.MaxItems) != 1000 {
+			t.Fatalf("MaxItems=%d", aws.ToInt32(input.MaxItems))
+		}
+		return &iam.ListRolesOutput{Roles: []iamtypes.Role{{
+			RoleName: aws.String("ReadOnly"), RoleId: aws.String("AROAEXAMPLE"),
+			Arn: aws.String("arn:aws:iam::123456789012:role/ReadOnly"), Path: aws.String("/"),
+			CreateDate: aws.Time(fixedNow),
+		}}}, nil
+	}}
+	factory := &fakeFactory{runtime: completeRuntime(testIdentity(1), &fakeEC2{}, iamClient, &fakeRoute53{})}
+	core, err := NewWithRuntimeFactory(factory, nil, func() time.Time { return fixedNow }, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := core.Query(context.Background(), Request{
+		Region: "us-east-1", Provider: awsbrowser.ProviderIAM, Operation: awsbrowser.OperationListRoles,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iamCalls != 1 || result.Update.Snapshot.ResourceCount() != 1 || !result.Update.Coverage.Completed {
+		t.Fatalf("iam calls=%d resources=%d coverage=%+v", iamCalls, result.Update.Snapshot.ResourceCount(), result.Update.Coverage)
+	}
+	if factory.count() != 1 {
+		t.Fatalf("registry did not memoize runtime: resolves=%d", factory.count())
+	}
+}
+
+type sinkStub struct{}
+
+func (sinkStub) Page(awsbrowser.QueryPage) error { return nil }
+func (sinkStub) Complete(time.Time) error        { return nil }
+
+func TestMultiplexerRejectsStaleVerifiedIdentity(t *testing.T) {
+	var calls int
+	iamClient := &fakeIAM{listRoles: func(context.Context, *iam.ListRolesInput) (*iam.ListRolesOutput, error) {
+		calls++
+		return &iam.ListRolesOutput{}, nil
+	}}
+	runtime := completeRuntime(testIdentity(2), nil, iamClient, nil)
+	registry := awsbrowser.NewContextRegistry(&fakeFactory{runtime: runtime})
+	multiplexer := &runtimeMultiplexer{registry: registry, clock: func() time.Time { return fixedNow }}
+	spec := awsbrowser.ContextSpec{Mode: awsbrowser.ContextModeAmbient, Region: "us-east-1"}
+	awsContext, err := awsbrowser.NewAWSContext(spec, testIdentity(1), "ReadOnly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := awsbrowser.NewQueryKey(awsContext, awsbrowser.ProviderIAM, awsbrowser.OperationListRoles, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = multiplexer.Execute(context.Background(), key, sinkStub{})
+	if !errors.Is(err, awsbrowser.ErrContextChanged) || calls != 0 {
+		t.Fatalf("error=%v provider calls=%d", err, calls)
+	}
+}
+
+func TestCallerCancellationUnsubscribesAndReachesProvider(t *testing.T) {
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	ec2Client := &fakeEC2{describeInstances: func(ctx context.Context, _ *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+		close(started)
+		<-ctx.Done()
+		close(stopped)
+		return nil, ctx.Err()
+	}}
+	factory := &fakeFactory{runtime: completeRuntime(testIdentity(1), ec2Client, nil, nil)}
+	core, err := NewWithRuntimeFactory(factory, nil, func() time.Time { return fixedNow }, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	subscription, err := core.Subscribe(ctx, Request{
+		Region: "us-east-1", Provider: awsbrowser.ProviderEC2, Operation: awsbrowser.OperationDescribeInstances,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not start")
+	}
+	cancel()
+	terminal := 0
+	for update := range subscription.Updates() {
+		if update.Failure != nil || update.Coverage.Completed {
+			terminal++
+		}
+	}
+	if terminal != 1 {
+		t.Fatalf("terminal updates=%d want=1", terminal)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not observe cancellation")
+	}
+	// The public method remains idempotent after automatic one-shot cleanup.
+	subscription.Unsubscribe()
+}
+
+func TestCompletedTerminalIsStickyAgainstLaterCancellation(t *testing.T) {
+	ec2Client := &fakeEC2{describeInstances: func(context.Context, *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+		return &ec2.DescribeInstancesOutput{}, nil
+	}}
+	core, err := NewWithRuntimeFactory(
+		&fakeFactory{runtime: completeRuntime(testIdentity(1), ec2Client, nil, nil)},
+		nil, func() time.Time { return fixedNow }, 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for iteration := 0; iteration < 100; iteration++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		subscription, err := core.Subscribe(ctx, Request{
+			Region: "us-east-1", Provider: awsbrowser.ProviderEC2,
+			Operation: awsbrowser.OperationDescribeInstances, Refresh: true,
+		})
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		terminal := 0
+		var last Update
+		for update := range subscription.Updates() {
+			last = update
+			if update.Failure != nil || update.Coverage.Completed {
+				terminal++
+				cancel()
+			}
+		}
+		cancel()
+		if terminal != 1 || last.Failure != nil || !last.Coverage.Completed {
+			t.Fatalf("iteration=%d terminal=%d last=%+v", iteration, terminal, last)
+		}
+	}
+}
+
+func TestRuntimeFailureRetainsNoRawErrorOrSecret(t *testing.T) {
+	const secret = "AKIA-SECRET raw stderr from helper"
+	factory := &fakeFactory{err: errors.New(secret)}
+	core, err := NewWithRuntimeFactory(factory, nil, func() time.Time { return fixedNow }, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, queryErr := core.Query(context.Background(), Request{
+		Region: "us-east-1", Provider: awsbrowser.ProviderIAM, Operation: awsbrowser.OperationListRoles,
+	})
+	if queryErr == nil || result.Update.Failure == nil {
+		t.Fatalf("result=%+v error=%v", result, queryErr)
+	}
+	retained := fmt.Sprintf("%+v %v", result, queryErr)
+	if strings.Contains(retained, secret) || strings.Contains(retained, "stderr") || queryErr.Error() != "AWS browser query failed" {
+		t.Fatalf("unsafe retained failure: %s", retained)
+	}
+	if result.Update.Failure.Kind != awsbrowser.ProviderUnknown || result.Update.Coverage.ContextResolved {
+		t.Fatalf("failure=%+v coverage=%+v", result.Update.Failure, result.Update.Coverage)
+	}
+}
+
+func TestContextResolutionPrecedenceRemainsLazy(t *testing.T) {
+	factory := &fakeFactory{runtime: completeRuntime(testIdentity(1), nil, nil, nil)}
+	core, err := NewWithRuntimeFactory(factory, []string{"AWS_REGION=us-west-2", "AWS_DEFAULT_REGION=eu-west-1"}, func() time.Time { return fixedNow }, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if factory.count() != 0 {
+		t.Fatal("constructor resolved context")
+	}
+	result, err := core.Resolve(context.Background(), ContextRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Context == nil || result.Context.Region != "us-west-2" || !result.Coverage.ContextResolved {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestSharedConfigRegionUsesAcceptedINIGrammar(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "colon separator", body: "[profile dev]\nregion: us-west-2\n", want: "us-west-2"},
+		{name: "double quoted", body: "[profile dev]\nregion = \"ap-northeast-2\"\n", want: "ap-northeast-2"},
+		{name: "single quoted and comment", body: "[profile dev] # selected\nregion = 'eu-west-1' ; preferred\n", want: "eu-west-1"},
+		{name: "last value wins", body: "[profile dev]\nregion = us-east-1\nregion: us-west-1\n", want: "us-west-1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config")
+			if err := os.WriteFile(path, []byte(test.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			resolver := newContextResolver([]string{"AWS_CONFIG_FILE=" + path})
+			spec, err := resolver.Resolve(context.Background(), "dev", "")
+			if err != nil || spec.Region != test.want || spec.Mode != awsbrowser.ContextModeNamedProfile {
+				t.Fatalf("spec=%+v error=%v want region=%s", spec, err, test.want)
+			}
+		})
+	}
+}

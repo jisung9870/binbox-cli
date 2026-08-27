@@ -19,16 +19,13 @@ type configLoader func(context.Context, ...func(*config.LoadOptions) error) (aws
 // sdkRuntime is intentionally private: callers receive only RuntimeContext,
 // never the SDK config, credential cache, provider, or concrete clients.
 type sdkRuntime struct {
-	identity         VerifiedIdentity
 	credentials      *aws.CredentialsCache
 	credentialSource *CredentialProvider
-	sts              STSAPI
-	ec2              EC2API
-	iam              IAMAPI
-	route53          Route53API
+	sts              rawSTSAPI
+	ec2              rawEC2API
+	iam              rawIAMAPI
+	route53          rawRoute53API
 }
-
-var _ RuntimeContext = (*sdkRuntime)(nil)
 
 func newSDKRuntime(ctx context.Context, region string, provider *CredentialProvider, load configLoader) (*sdkRuntime, error) {
 	if provider == nil {
@@ -88,12 +85,6 @@ func newSDKRuntime(ctx context.Context, region string, provider *CredentialProvi
 		}),
 	}, nil
 }
-
-func (r *sdkRuntime) Identity() VerifiedIdentity { return r.identity }
-func (r *sdkRuntime) STS() STSAPI                { return r.sts }
-func (r *sdkRuntime) EC2() EC2API                { return r.ec2 }
-func (r *sdkRuntime) IAM() IAMAPI                { return r.iam }
-func (r *sdkRuntime) Route53() Route53API        { return r.route53 }
 
 func newStandardRetryer() aws.Retryer {
 	return retry.NewStandard(func(options *retry.StandardOptions) {

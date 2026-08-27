@@ -3,6 +3,7 @@ package awsbrowser_test
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jisung9870/binbox-cli/internal/bb/awsbrowser"
@@ -10,6 +11,35 @@ import (
 
 type contractRuntime struct {
 	identity awsbrowser.VerifiedIdentity
+}
+
+func TestProviderInterfacesAcceptNoSDKOperationOptions(t *testing.T) {
+	interfaces := []struct {
+		name   string
+		typeOf reflect.Type
+	}{
+		{name: "STS", typeOf: reflect.TypeOf((*awsbrowser.STSAPI)(nil)).Elem()},
+		{name: "EC2", typeOf: reflect.TypeOf((*awsbrowser.EC2API)(nil)).Elem()},
+		{name: "IAM", typeOf: reflect.TypeOf((*awsbrowser.IAMAPI)(nil)).Elem()},
+		{name: "Route53", typeOf: reflect.TypeOf((*awsbrowser.Route53API)(nil)).Elem()},
+	}
+
+	for _, service := range interfaces {
+		t.Run(service.name, func(t *testing.T) {
+			for i := 0; i < service.typeOf.NumMethod(); i++ {
+				method := service.typeOf.Method(i)
+				if method.Type.IsVariadic() {
+					t.Errorf("%s is variadic: %v", method.Name, method.Type)
+				}
+				if method.Type.NumIn() != 2 {
+					t.Errorf("%s parameters=%d want context and input only", method.Name, method.Type.NumIn())
+				}
+				if strings.Contains(method.Type.String(), ".Options") {
+					t.Errorf("%s exposes SDK options: %v", method.Name, method.Type)
+				}
+			}
+		})
+	}
 }
 
 func (r contractRuntime) Identity() awsbrowser.VerifiedIdentity { return r.identity }

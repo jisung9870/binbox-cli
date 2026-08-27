@@ -13,7 +13,7 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-func testVerifiedRuntime(t *testing.T, exporter CredentialExporter, identity func(int) *sts.GetCallerIdentityOutput, ec2Client EC2API) (RuntimeContext, *CredentialProvider, *credentialSTS) {
+func testVerifiedRuntime(t *testing.T, exporter CredentialExporter, identity func(int) *sts.GetCallerIdentityOutput, ec2Client rawEC2API) (RuntimeContext, *CredentialProvider, *credentialSTS) {
 	t.Helper()
 	provider, err := NewCredentialProvider(exporter, "dev", []string{})
 	if err != nil {

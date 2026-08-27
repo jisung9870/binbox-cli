@@ -162,135 +162,135 @@ func isExpiredToken(err error) bool {
 
 type guardedSTS struct {
 	guard  *readGuard
-	client STSAPI
+	client rawSTSAPI
 }
 
-func (c guardedSTS) GetCallerIdentity(ctx context.Context, input *sts.GetCallerIdentityInput, options ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+func (c guardedSTS) GetCallerIdentity(ctx context.Context, input *sts.GetCallerIdentityInput) (*sts.GetCallerIdentityOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*sts.GetCallerIdentityOutput, error) {
-		return c.client.GetCallerIdentity(ctx, input, options...)
+		return c.client.GetCallerIdentity(ctx, input)
 	})
 }
 
 type guardedEC2 struct {
 	guard  *readGuard
-	client EC2API
+	client rawEC2API
 }
 
-func (c guardedEC2) DescribeInstances(ctx context.Context, input *ec2.DescribeInstancesInput, options ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+func (c guardedEC2) DescribeInstances(ctx context.Context, input *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeInstancesOutput, error) {
-		return c.client.DescribeInstances(ctx, input, options...)
+		return c.client.DescribeInstances(ctx, input)
 	})
 }
 
-func (c guardedEC2) DescribeVolumes(ctx context.Context, input *ec2.DescribeVolumesInput, options ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error) {
+func (c guardedEC2) DescribeVolumes(ctx context.Context, input *ec2.DescribeVolumesInput) (*ec2.DescribeVolumesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeVolumesOutput, error) {
-		return c.client.DescribeVolumes(ctx, input, options...)
+		return c.client.DescribeVolumes(ctx, input)
 	})
 }
 
-func (c guardedEC2) DescribeSecurityGroups(ctx context.Context, input *ec2.DescribeSecurityGroupsInput, options ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupsOutput, error) {
+func (c guardedEC2) DescribeSecurityGroups(ctx context.Context, input *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeSecurityGroupsOutput, error) {
-		return c.client.DescribeSecurityGroups(ctx, input, options...)
+		return c.client.DescribeSecurityGroups(ctx, input)
 	})
 }
 
-func (c guardedEC2) DescribeSecurityGroupRules(ctx context.Context, input *ec2.DescribeSecurityGroupRulesInput, options ...func(*ec2.Options)) (*ec2.DescribeSecurityGroupRulesOutput, error) {
+func (c guardedEC2) DescribeSecurityGroupRules(ctx context.Context, input *ec2.DescribeSecurityGroupRulesInput) (*ec2.DescribeSecurityGroupRulesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeSecurityGroupRulesOutput, error) {
-		return c.client.DescribeSecurityGroupRules(ctx, input, options...)
+		return c.client.DescribeSecurityGroupRules(ctx, input)
 	})
 }
 
-func (c guardedEC2) DescribeVpcs(ctx context.Context, input *ec2.DescribeVpcsInput, options ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
+func (c guardedEC2) DescribeVpcs(ctx context.Context, input *ec2.DescribeVpcsInput) (*ec2.DescribeVpcsOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeVpcsOutput, error) {
-		return c.client.DescribeVpcs(ctx, input, options...)
+		return c.client.DescribeVpcs(ctx, input)
 	})
 }
 
-func (c guardedEC2) DescribeSubnets(ctx context.Context, input *ec2.DescribeSubnetsInput, options ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
+func (c guardedEC2) DescribeSubnets(ctx context.Context, input *ec2.DescribeSubnetsInput) (*ec2.DescribeSubnetsOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeSubnetsOutput, error) {
-		return c.client.DescribeSubnets(ctx, input, options...)
+		return c.client.DescribeSubnets(ctx, input)
 	})
 }
 
-func (c guardedEC2) DescribeRouteTables(ctx context.Context, input *ec2.DescribeRouteTablesInput, options ...func(*ec2.Options)) (*ec2.DescribeRouteTablesOutput, error) {
+func (c guardedEC2) DescribeRouteTables(ctx context.Context, input *ec2.DescribeRouteTablesInput) (*ec2.DescribeRouteTablesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeRouteTablesOutput, error) {
-		return c.client.DescribeRouteTables(ctx, input, options...)
+		return c.client.DescribeRouteTables(ctx, input)
 	})
 }
 
 type guardedIAM struct {
 	guard  *readGuard
-	client IAMAPI
+	client rawIAMAPI
 }
 
-func (c guardedIAM) ListRoles(ctx context.Context, input *iam.ListRolesInput, options ...func(*iam.Options)) (*iam.ListRolesOutput, error) {
+func (c guardedIAM) ListRoles(ctx context.Context, input *iam.ListRolesInput) (*iam.ListRolesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*iam.ListRolesOutput, error) {
-		return c.client.ListRoles(ctx, input, options...)
+		return c.client.ListRoles(ctx, input)
 	})
 }
 
-func (c guardedIAM) GetInstanceProfile(ctx context.Context, input *iam.GetInstanceProfileInput, options ...func(*iam.Options)) (*iam.GetInstanceProfileOutput, error) {
+func (c guardedIAM) GetInstanceProfile(ctx context.Context, input *iam.GetInstanceProfileInput) (*iam.GetInstanceProfileOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*iam.GetInstanceProfileOutput, error) {
-		return c.client.GetInstanceProfile(ctx, input, options...)
+		return c.client.GetInstanceProfile(ctx, input)
 	})
 }
 
-func (c guardedIAM) GetRole(ctx context.Context, input *iam.GetRoleInput, options ...func(*iam.Options)) (*iam.GetRoleOutput, error) {
+func (c guardedIAM) GetRole(ctx context.Context, input *iam.GetRoleInput) (*iam.GetRoleOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*iam.GetRoleOutput, error) {
-		return c.client.GetRole(ctx, input, options...)
+		return c.client.GetRole(ctx, input)
 	})
 }
 
-func (c guardedIAM) ListAttachedRolePolicies(ctx context.Context, input *iam.ListAttachedRolePoliciesInput, options ...func(*iam.Options)) (*iam.ListAttachedRolePoliciesOutput, error) {
+func (c guardedIAM) ListAttachedRolePolicies(ctx context.Context, input *iam.ListAttachedRolePoliciesInput) (*iam.ListAttachedRolePoliciesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*iam.ListAttachedRolePoliciesOutput, error) {
-		return c.client.ListAttachedRolePolicies(ctx, input, options...)
+		return c.client.ListAttachedRolePolicies(ctx, input)
 	})
 }
 
-func (c guardedIAM) ListRolePolicies(ctx context.Context, input *iam.ListRolePoliciesInput, options ...func(*iam.Options)) (*iam.ListRolePoliciesOutput, error) {
+func (c guardedIAM) ListRolePolicies(ctx context.Context, input *iam.ListRolePoliciesInput) (*iam.ListRolePoliciesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*iam.ListRolePoliciesOutput, error) {
-		return c.client.ListRolePolicies(ctx, input, options...)
+		return c.client.ListRolePolicies(ctx, input)
 	})
 }
 
-func (c guardedIAM) GetPolicy(ctx context.Context, input *iam.GetPolicyInput, options ...func(*iam.Options)) (*iam.GetPolicyOutput, error) {
+func (c guardedIAM) GetPolicy(ctx context.Context, input *iam.GetPolicyInput) (*iam.GetPolicyOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*iam.GetPolicyOutput, error) {
-		return c.client.GetPolicy(ctx, input, options...)
+		return c.client.GetPolicy(ctx, input)
 	})
 }
 
-func (c guardedIAM) GetPolicyVersion(ctx context.Context, input *iam.GetPolicyVersionInput, options ...func(*iam.Options)) (*iam.GetPolicyVersionOutput, error) {
+func (c guardedIAM) GetPolicyVersion(ctx context.Context, input *iam.GetPolicyVersionInput) (*iam.GetPolicyVersionOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*iam.GetPolicyVersionOutput, error) {
-		return c.client.GetPolicyVersion(ctx, input, options...)
+		return c.client.GetPolicyVersion(ctx, input)
 	})
 }
 
-func (c guardedIAM) GetRolePolicy(ctx context.Context, input *iam.GetRolePolicyInput, options ...func(*iam.Options)) (*iam.GetRolePolicyOutput, error) {
+func (c guardedIAM) GetRolePolicy(ctx context.Context, input *iam.GetRolePolicyInput) (*iam.GetRolePolicyOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*iam.GetRolePolicyOutput, error) {
-		return c.client.GetRolePolicy(ctx, input, options...)
+		return c.client.GetRolePolicy(ctx, input)
 	})
 }
 
 type guardedRoute53 struct {
 	guard  *readGuard
-	client Route53API
+	client rawRoute53API
 }
 
-func (c guardedRoute53) ListHostedZones(ctx context.Context, input *route53.ListHostedZonesInput, options ...func(*route53.Options)) (*route53.ListHostedZonesOutput, error) {
+func (c guardedRoute53) ListHostedZones(ctx context.Context, input *route53.ListHostedZonesInput) (*route53.ListHostedZonesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*route53.ListHostedZonesOutput, error) {
-		return c.client.ListHostedZones(ctx, input, options...)
+		return c.client.ListHostedZones(ctx, input)
 	})
 }
 
-func (c guardedRoute53) ListHostedZonesByName(ctx context.Context, input *route53.ListHostedZonesByNameInput, options ...func(*route53.Options)) (*route53.ListHostedZonesByNameOutput, error) {
+func (c guardedRoute53) ListHostedZonesByName(ctx context.Context, input *route53.ListHostedZonesByNameInput) (*route53.ListHostedZonesByNameOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*route53.ListHostedZonesByNameOutput, error) {
-		return c.client.ListHostedZonesByName(ctx, input, options...)
+		return c.client.ListHostedZonesByName(ctx, input)
 	})
 }
 
-func (c guardedRoute53) ListResourceRecordSets(ctx context.Context, input *route53.ListResourceRecordSetsInput, options ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error) {
+func (c guardedRoute53) ListResourceRecordSets(ctx context.Context, input *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*route53.ListResourceRecordSetsOutput, error) {
-		return c.client.ListResourceRecordSets(ctx, input, options...)
+		return c.client.ListResourceRecordSets(ctx, input)
 	})
 }
 

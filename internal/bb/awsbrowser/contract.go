@@ -35,9 +35,10 @@ type RuntimeFactory interface {
 	Resolve(context.Context, ContextSpec) (RuntimeContext, error)
 }
 
-// RuntimeContext exposes identity provenance and only the narrowed read
-// clients required by AWS browser providers. Implementations retain ownership
-// of SDK configuration, credential providers, and credential caches.
+// RuntimeContext exposes identity provenance and only narrowed, option-free
+// read clients required by AWS browser providers. Implementations return
+// private adapters rather than concrete SDK clients and retain ownership of
+// endpoints, transports, SDK configuration, credential providers, and caches.
 type RuntimeContext interface {
 	Identity() VerifiedIdentity
 	STS() STSAPI

@@ -158,7 +158,7 @@ func (route53Stub) ListResourceRecordSets(context.Context, *route53.ListResource
 	return &route53.ListResourceRecordSetsOutput{}, nil
 }
 
-func fakeSDKRuntime(provider *CredentialProvider, identity func(int) *sts.GetCallerIdentityOutput, ec2Client EC2API) (*sdkRuntime, *credentialSTS) {
+func fakeSDKRuntime(provider *CredentialProvider, identity func(int) *sts.GetCallerIdentityOutput, ec2Client rawEC2API) (*sdkRuntime, *credentialSTS) {
 	cache := aws.NewCredentialsCache(provider)
 	stsClient := &credentialSTS{cache: cache, identity: identity}
 	if ec2Client == nil {

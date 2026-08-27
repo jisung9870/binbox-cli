@@ -128,7 +128,9 @@ func TestSDKRuntimeIgnoresConfiguredEndpoints(t *testing.T) {
 			if got := poisonRequests.Load(); got != 0 {
 				t.Fatalf("poison listener received %d requests; URLs=%v", got, guard.URLs())
 			}
-			for _, rawURL := range guard.URLs() {
+			urls := guard.URLs()
+			assertExpectedAWSServiceHosts(t, urls)
+			for _, rawURL := range urls {
 				seenURL, err := url.Parse(rawURL)
 				if err != nil {
 					t.Fatal(err)
@@ -194,9 +196,16 @@ func assertPoisonFixtureActive(t *testing.T, provider *CredentialProvider, load 
 		iam:     iam.NewFromConfig(cfg),
 		route53: route53.NewFromConfig(cfg),
 	}
-	invokeEveryService(t, raw)
-	if got := count(); got != 4 {
-		t.Fatalf("poison fixture reached listener %d times, want 4", got)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, invocation := range serviceInvocations(ctx, raw) {
+		before := count()
+		if err := invocation.call(); errors.Is(err, context.DeadlineExceeded) {
+			t.Fatal(err)
+		}
+		if after := count(); after <= before {
+			t.Fatalf("poison fixture did not receive %s call", invocation.name)
+		}
 	}
 }
 
@@ -205,27 +214,59 @@ func invokeEveryService(t *testing.T, runtime *sdkRuntime) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	calls := []func() error{
-		func() error {
+	for _, invocation := range serviceInvocations(ctx, runtime) {
+		if err := invocation.call(); errors.Is(err, context.DeadlineExceeded) {
+			t.Fatal(err)
+		}
+	}
+}
+
+type serviceInvocation struct {
+	name string
+	call func() error
+}
+
+func serviceInvocations(ctx context.Context, runtime *sdkRuntime) []serviceInvocation {
+	return []serviceInvocation{
+		{name: "STS", call: func() error {
 			_, err := runtime.sts.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 			return err
-		},
-		func() error {
+		}},
+		{name: "EC2", call: func() error {
 			_, err := runtime.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{})
 			return err
-		},
-		func() error {
+		}},
+		{name: "IAM", call: func() error {
 			_, err := runtime.iam.ListRoles(ctx, &iam.ListRolesInput{})
 			return err
-		},
-		func() error {
+		}},
+		{name: "Route53", call: func() error {
 			_, err := runtime.route53.ListHostedZones(ctx, &route53.ListHostedZonesInput{})
 			return err
-		},
+		}},
 	}
-	for _, call := range calls {
-		if err := call(); errors.Is(err, context.DeadlineExceeded) {
+}
+
+func assertExpectedAWSServiceHosts(t *testing.T, urls []string) {
+	t.Helper()
+	want := map[string]bool{
+		"sts.us-east-1.amazonaws.com": false,
+		"ec2.us-east-1.amazonaws.com": false,
+		"iam.amazonaws.com":           false,
+		"route53.amazonaws.com":       false,
+	}
+	for _, rawURL := range urls {
+		seenURL, err := url.Parse(rawURL)
+		if err != nil {
 			t.Fatal(err)
+		}
+		if _, expected := want[seenURL.Host]; expected {
+			want[seenURL.Host] = true
+		}
+	}
+	for host, seen := range want {
+		if !seen {
+			t.Errorf("secured transport did not receive call for %s; URLs=%v", host, urls)
 		}
 	}
 }

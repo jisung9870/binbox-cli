@@ -1,0 +1,16 @@
+┌────────────────────────────────────────────────┐
+│ AWS Browser · READ ONLY                        │
+│ Profile dev  Account unresolved  Principal un… │
+│ Services / tasks · LIST                        │
+│ > EC2 Instances           Not loaded           │
+│   Route 53 Hosted Zones   Not loaded · AWS gl… │
+│   IAM Roles               Not loaded · AWS gl… │
+│   VPC & Networking        Not loaded           │
+│   Cross-profile search    Domain, role · scop… │
+│ ↑↓ move · enter open · ? help                  │
+│ ctrl+g search · ctrl+c quit                    │
+│                                                │
+│                                                │
+│                                                │
+│                                                │
+└────────────────────────────────────────────────┘

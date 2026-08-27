@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/jisung9870/binbox-cli/internal/bb/awsbrowser"
 )
 
 var (
@@ -23,18 +24,19 @@ var (
 )
 
 type App struct {
-	in           io.Reader
-	out, err     io.Writer
-	env          []string
-	now          func() time.Time
-	lookPath     func(string) (string, error)
-	command      func(string, ...string) *exec.Cmd
-	isTerminal   func(uintptr) bool
-	readPassword func(uintptr) ([]byte, error)
+	in                 io.Reader
+	out, err           io.Writer
+	env                []string
+	now                func() time.Time
+	lookPath           func(string) (string, error)
+	command            func(string, ...string) *exec.Cmd
+	isTerminal         func(uintptr) bool
+	readPassword       func(uintptr) ([]byte, error)
+	awsBrowserTerminal func() awsbrowser.Terminal
 }
 
 func New(out, err io.Writer, env []string) *App {
-	return &App{
+	a := &App{
 		in:           os.Stdin,
 		out:          out,
 		err:          err,
@@ -45,10 +47,26 @@ func New(out, err io.Writer, env []string) *App {
 		isTerminal:   term.IsTerminal,
 		readPassword: term.ReadPassword,
 	}
+	a.awsBrowserTerminal = func() awsbrowser.Terminal {
+		terminal := awsbrowser.Terminal{In: a.in, Err: a.err}
+		input, inputOK := a.in.(*os.File)
+		output, outputOK := a.err.(*os.File)
+		if inputOK {
+			terminal.StdinTTY = a.isTerminal(input.Fd())
+		}
+		if outputOK {
+			terminal.StderrTTY = a.isTerminal(output.Fd())
+			if terminal.StderrTTY {
+				terminal.Width, terminal.Height, _ = term.GetSize(output.Fd())
+			}
+		}
+		return terminal
+	}
+	return a
 }
 
 func (a *App) Run(args []string) error {
-	jsonMode := jsonRequested(args)
+	jsonMode := jsonRequested(args) && !isAWSBrowseInvocation(args)
 	err := a.dispatch(args)
 	if err == nil {
 		return nil
@@ -60,6 +78,10 @@ func (a *App) Run(args []string) error {
 		}
 	}
 	return commandErr
+}
+
+func isAWSBrowseInvocation(args []string) bool {
+	return len(args) >= 2 && args[0] == "aws" && args[1] == "browse"
 }
 
 func (a *App) dispatch(args []string) error {

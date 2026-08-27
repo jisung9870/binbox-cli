@@ -296,7 +296,9 @@ func TestPlainPrematureStreamClosureIsFailure(t *testing.T) {
 }
 
 func TestPlainRefreshEarlyTerminalStatesPreserveCachedFrame(t *testing.T) {
+	stagedContext := testStoreContext(t, "staged", "999999999999", "us-west-2", 2)
 	stagedUpdate := IntentUpdate{
+		Context:    &stagedContext,
 		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
 		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("staged", "pending")}},
 		Coverage:   &SearchCoverage{DiscoveryStatus: "staged-discovery", Profiles: []SearchProfileCoverage{{Profile: "staged", Status: "matched", Matches: 1}}},
@@ -332,6 +334,32 @@ func TestPlainRefreshEarlyTerminalStatesPreserveCachedFrame(t *testing.T) {
 			want: []string{"refresh cancelled"},
 		},
 		{
+			name: "terminal error",
+			dispatcher: func() IntentDispatcher {
+				stream := newTestIntentStream()
+				stream.updates <- stagedUpdate
+				update := stagedUpdate
+				update.Query = QueryUpdate{Snapshot: QuerySnapshot{State: LoadThrottled}, Failure: &ProviderFailure{State: LoadThrottled, Service: "ec2\x1b[31m", Operation: "DescribeInstances"}}
+				update.Done = true
+				stream.updates <- update
+				return plainDispatchStub{stream: stream}
+			}(),
+			want: []string{"refresh throttled"},
+		},
+		{
+			name: "terminal stale",
+			dispatcher: func() IntentDispatcher {
+				stream := newTestIntentStream()
+				stream.updates <- stagedUpdate
+				update := stagedUpdate
+				update.Query.Snapshot.State = LoadStale
+				update.Done = true
+				stream.updates <- update
+				return plainDispatchStub{stream: stream}
+			}(),
+			want: []string{"Stale · showing cached 1"},
+		},
+		{
 			name: "premature stream close",
 			dispatcher: func() IntentDispatcher {
 				stream := newTestIntentStream()
@@ -356,7 +384,7 @@ func TestPlainRefreshEarlyTerminalStatesPreserveCachedFrame(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			frame := cachedPlainRefreshFrame()
+			frame := cachedPlainRefreshFrame(t)
 			inputs := &plainInputSource{ch: make(chan plainInput)}
 			var out bytes.Buffer
 			err := (Plain{Dispatcher: test.dispatcher}).load(context.Background(), &out, Config{}, &frame, frame.intent, inputs, true)
@@ -369,8 +397,8 @@ func TestPlainRefreshEarlyTerminalStatesPreserveCachedFrame(t *testing.T) {
 }
 
 func TestPlainRefreshInputCancellationClearsStagedStateAndPersists(t *testing.T) {
-	frame := cachedPlainRefreshFrame()
-	stagedCoverage := frame.stagedCoverage
+	frame := cachedPlainRefreshFrame(t)
+	stagedCoverage := frame.staged.coverage
 	stream := &testIntentStream{updates: make(chan IntentUpdate)}
 	inputs := make(chan plainInput, 1)
 	go func() {
@@ -381,7 +409,7 @@ func TestPlainRefreshInputCancellationClearsStagedStateAndPersists(t *testing.T)
 		}
 		inputs <- plainInput{line: "cancel\n"}
 	}()
-	frame.stagedCoverage = nil
+	frame.staged.clear()
 	var out bytes.Buffer
 	err := (Plain{Dispatcher: plainDispatchStub{stream: stream}}).load(
 		context.Background(), &out, Config{}, &frame, frame.intent, &plainInputSource{ch: inputs}, true,
@@ -392,16 +420,25 @@ func TestPlainRefreshInputCancellationClearsStagedStateAndPersists(t *testing.T)
 	assertCachedPlainRefreshTerminal(t, frame, "refresh cancelled")
 }
 
-func cachedPlainRefreshFrame() plainFrame {
+func cachedPlainRefreshFrame(t *testing.T) plainFrame {
+	t.Helper()
+	cachedContext := testStoreContext(t, "cached", "123456789012", "us-east-1", 1)
+	stagedContext := testStoreContext(t, "staged", "999999999999", "us-west-2", 2)
+	stagedProjection := IntentProjection{Resources: []ResourceProjection{resourceProjection("staged", "pending")}}
 	return plainFrame{
 		target:     "cross-profile-search",
 		label:      "Search results · reader",
 		intent:     Intent{Kind: IntentSearch, Target: "cross-profile-search", SearchKind: "role", Query: "reader", Scope: "all"},
 		projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("cached", "running")}},
+		context:    &cachedContext,
 		coverage:   &SearchCoverage{DiscoveryStatus: "cached-discovery", Profiles: []SearchProfileCoverage{{Profile: "cached", Status: "matched", Matches: 1}}},
-		stagedCoverage: &SearchCoverage{
-			DiscoveryStatus: "staged-discovery",
-			Profiles:        []SearchProfileCoverage{{Profile: "staged", Status: "matched", Matches: 1}},
+		staged: refreshStage{
+			context:    &stagedContext,
+			projection: &stagedProjection,
+			coverage: &SearchCoverage{
+				DiscoveryStatus: "staged-discovery",
+				Profiles:        []SearchProfileCoverage{{Profile: "staged", Status: "matched", Matches: 1}},
+			},
 		},
 		status: "Showing cached 1 · refreshing… · Esc cancel",
 	}
@@ -415,13 +452,19 @@ func assertCachedPlainRefreshTerminal(t *testing.T, frame plainFrame, statuses .
 	if frame.coverage == nil || frame.coverage.DiscoveryStatus != "cached-discovery" {
 		t.Fatalf("cached coverage replaced: %+v", frame.coverage)
 	}
-	if frame.stagedCoverage != nil {
-		t.Fatalf("staged coverage retained: %+v", frame.stagedCoverage)
+	if frame.context == nil || frame.context.Profile != "cached" {
+		t.Fatalf("cached context replaced: %+v", frame.context)
+	}
+	if frame.staged != (refreshStage{}) {
+		t.Fatalf("staged refresh state retained: %+v", frame.staged)
 	}
 	if strings.Contains(frame.status, "refreshing") || strings.Contains(frame.status, "\x1b") {
 		t.Fatalf("unsafe or nonterminal status persisted: %q", frame.status)
 	}
-	for _, status := range append([]string{"Showing cached 1"}, statuses...) {
+	if !strings.Contains(strings.ToLower(frame.status), "showing cached 1") {
+		t.Fatalf("status %q does not describe cached data", frame.status)
+	}
+	for _, status := range statuses {
 		if !strings.Contains(frame.status, status) {
 			t.Fatalf("status %q missing %q", frame.status, status)
 		}
@@ -434,5 +477,30 @@ func assertCachedPlainRefreshTerminal(t *testing.T, frame plainFrame, statuses .
 	if !strings.Contains(output, frame.status) || !strings.Contains(output, "cached-discovery") || !strings.Contains(output, "1  cached") ||
 		strings.Contains(output, "staged-discovery") || strings.Contains(output, "1  staged") {
 		t.Fatalf("terminal state did not persist on redraw:\n%s", output)
+	}
+}
+
+func TestPlainRefreshPromotesContextCoverageAndProjectionAtomically(t *testing.T) {
+	frame := cachedPlainRefreshFrame(t)
+	frame.staged.clear()
+	replacementContext := testStoreContext(t, "replacement", "999999999999", "us-west-2", 2)
+	replacementCoverage := &SearchCoverage{DiscoveryStatus: "replacement-discovery", Profiles: []SearchProfileCoverage{{Profile: "replacement", Status: "matched", Matches: 1}}}
+	replacementProjection := IntentProjection{Resources: []ResourceProjection{resourceProjection("replacement", "running")}}
+	var out bytes.Buffer
+	plain := Plain{}
+	if err := plain.applyPlainUpdate(&out, &frame, true, IntentUpdate{
+		Context: &replacementContext, Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
+		Coverage: replacementCoverage, Projection: replacementProjection,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if frame.context.Profile != "cached" || frame.coverage.DiscoveryStatus != "cached-discovery" || frame.projection.Resources[0].Title != "cached" {
+		t.Fatalf("staged refresh leaked before success: %+v", frame)
+	}
+	if err := plain.applyPlainUpdate(&out, &frame, true, IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}}, Done: true}); err != nil {
+		t.Fatal(err)
+	}
+	if frame.context.Profile != "replacement" || frame.coverage.DiscoveryStatus != "replacement-discovery" || frame.projection.Resources[0].Title != "replacement" || frame.staged != (refreshStage{}) {
+		t.Fatalf("successful refresh was not atomically promoted: %+v", frame)
 	}
 }

@@ -271,6 +271,232 @@ func TestModelRefreshPreservesOldProjectionAndRejectsLateStream(t *testing.T) {
 	}
 }
 
+func TestModelRefreshEarlyFinalizationPreservesCachedFrame(t *testing.T) {
+	stagedContext := testStoreContext(t, "staged", "999999999999", "us-west-2", 2)
+	staged := IntentUpdate{
+		Context:    &stagedContext,
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
+		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("staged", "pending")}},
+		Coverage:   &SearchCoverage{DiscoveryStatus: "staged-discovery", Profiles: []SearchProfileCoverage{{Profile: "staged", Status: "matched", Matches: 1}}},
+	}
+	tests := []struct {
+		name string
+		step func(Model) tea.Model
+		want string
+	}{
+		{
+			name: "dispatch error",
+			step: func(model Model) tea.Model {
+				updated, _ := model.Update(intentStartedMsg{generation: 1, result: IntentResultMsg{Intent: model.current().intent, Err: errors.New("boom\x1b[31m")}})
+				return updated
+			},
+			want: "refresh failed",
+		},
+		{
+			name: "nil stream",
+			step: func(model Model) tea.Model {
+				updated, _ := model.Update(intentStartedMsg{generation: 1, result: IntentResultMsg{Intent: model.current().intent}})
+				return updated
+			},
+			want: "no update stream",
+		},
+		{
+			name: "premature stream close",
+			step: func(model Model) tea.Model {
+				model.applyIntentUpdate(model.current(), staged)
+				updated, _ := model.Update(intentStreamMsg{generation: 1, open: false})
+				return updated
+			},
+			want: "refresh query failed · incomplete stream",
+		},
+		{
+			name: "nonterminal done",
+			step: func(model Model) tea.Model {
+				update := staged
+				update.Done = true
+				updated, _ := model.Update(intentStreamMsg{generation: 1, open: true, update: update})
+				return updated
+			},
+			want: "refresh query failed · incomplete stream",
+		},
+		{
+			name: "terminal cancellation",
+			step: func(model Model) tea.Model {
+				model.applyIntentUpdate(model.current(), staged)
+				update := staged
+				update.Query.Snapshot.State = LoadCancelled
+				update.Done = true
+				updated, _ := model.Update(intentStreamMsg{generation: 1, open: true, update: update})
+				return updated
+			},
+			want: "refresh cancelled",
+		},
+		{
+			name: "terminal error",
+			step: func(model Model) tea.Model {
+				model.applyIntentUpdate(model.current(), staged)
+				update := staged
+				update.Query = QueryUpdate{Snapshot: QuerySnapshot{State: LoadThrottled}, Failure: &ProviderFailure{State: LoadThrottled, Service: "ec2\x1b[31m", Operation: "DescribeInstances"}}
+				update.Done = true
+				updated, _ := model.Update(intentStreamMsg{generation: 1, open: true, update: update})
+				return updated
+			},
+			want: "refresh throttled",
+		},
+		{
+			name: "terminal stale",
+			step: func(model Model) tea.Model {
+				model.applyIntentUpdate(model.current(), staged)
+				update := staged
+				update.Query.Snapshot.State = LoadStale
+				update.Done = true
+				updated, _ := model.Update(intentStreamMsg{generation: 1, open: true, update: update})
+				return updated
+			},
+			want: "Stale · showing cached 1",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model, stream := cachedRefreshingModel(t)
+			updated := test.step(model).(Model)
+			assertCachedModelRefreshTerminal(t, updated, stream, test.want)
+		})
+	}
+}
+
+func TestModelEscapeCancelsRefreshBeforeStreamAcquisition(t *testing.T) {
+	dispatcher := &blockingDispatcher{started: make(chan struct{}), done: make(chan struct{})}
+	model, _ := cachedRefreshingModel(t)
+	model.finishFrame(model.current())
+	model.dispatcher = dispatcher
+	updated, dispatch := model.Update(ctrl('r'))
+	result := make(chan tea.Msg, 1)
+	go func() { result <- dispatch() }()
+	<-dispatcher.started
+	updated, _ = updated.Update(key(tea.KeyEscape))
+	select {
+	case <-dispatcher.done:
+	case <-time.After(time.Second):
+		t.Fatal("Esc did not cancel refresh Dispatch context")
+	}
+	frame := updated.(Model)
+	if frame.current().refreshing || !strings.Contains(frame.current().status, "refresh cancelled") {
+		t.Fatalf("Esc did not persist cancelled refresh: %+v", frame.current())
+	}
+	late, _ := updated.Update(<-result)
+	lateModel := late.(Model)
+	if !strings.Contains(lateModel.current().status, "refresh cancelled") {
+		t.Fatalf("late cancelled Dispatch result escaped generation fence: %+v", lateModel.current())
+	}
+}
+
+func TestModelRefreshCancellationFinalizesBeforeEscapeAndNavigation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{name: "escape", key: key(tea.KeyEscape)},
+		{name: "enter", key: key(tea.KeyEnter)},
+		{name: "search navigation", key: ctrl('g')},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model, stream := cachedRefreshingModel(t)
+			stagedContext := testStoreContext(t, "staged", "999999999999", "us-west-2", 2)
+			model.applyIntentUpdate(model.current(), IntentUpdate{
+				Context: &stagedContext, Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
+				Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("staged", "pending")}},
+				Coverage:   &SearchCoverage{DiscoveryStatus: "staged-discovery"},
+			})
+			updated, _ := model.Update(test.key)
+			result := updated.(Model)
+			cached := &result.history[0]
+			if cached.refreshing || cached.stream != nil || cached.staged != (refreshStage{}) || cached.context.Profile != "cached" || cached.projection.Resources[0].Title != "cached" || cached.coverage.DiscoveryStatus != "cached-discovery" || !strings.Contains(cached.status, "refresh cancelled") {
+				t.Fatalf("navigation left incoherent refresh state: %+v", cached)
+			}
+			if stream.cancels != 1 {
+				t.Fatalf("stream cancellations=%d", stream.cancels)
+			}
+			if test.name == "escape" && len(result.history) != 1 {
+				t.Fatalf("escape during refresh navigated away: history=%d", len(result.history))
+			}
+		})
+	}
+}
+
+func TestModelRefreshPromotesContextCoverageAndProjectionAtomically(t *testing.T) {
+	model, stream := cachedRefreshingModel(t)
+	replacementContext := testStoreContext(t, "replacement", "999999999999", "us-west-2", 2)
+	replacementCoverage := &SearchCoverage{DiscoveryStatus: "replacement-discovery", Profiles: []SearchProfileCoverage{{Profile: "replacement", Status: "matched", Matches: 1}}}
+	replacementProjection := IntentProjection{Resources: []ResourceProjection{resourceProjection("replacement", "running")}}
+	staged := IntentUpdate{
+		Context: &replacementContext, Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}},
+		Coverage: replacementCoverage, Projection: replacementProjection,
+	}
+	updated, _ := model.Update(intentStreamMsg{generation: 1, open: true, update: staged})
+	model = updated.(Model)
+	if model.current().context.Profile != "cached" || model.current().coverage.DiscoveryStatus != "cached-discovery" || model.current().projection.Resources[0].Title != "cached" {
+		t.Fatalf("staged refresh leaked before success: %+v", model.current())
+	}
+	updated, _ = model.Update(intentStreamMsg{generation: 1, open: true, update: IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}}, Done: true}})
+	model = updated.(Model)
+	frame := model.current()
+	if frame.context.Profile != "replacement" || frame.coverage.DiscoveryStatus != "replacement-discovery" || frame.projection.Resources[0].Title != "replacement" || frame.staged != (refreshStage{}) || frame.refreshing || stream.cancels != 1 {
+		t.Fatalf("successful refresh was not atomically promoted: %+v cancels=%d", frame, stream.cancels)
+	}
+}
+
+func TestModelRefreshWithoutDispatcherFinalizes(t *testing.T) {
+	model, _ := cachedRefreshingModel(t)
+	model.finishFrame(model.current())
+	model.current().status = "Ready · 1 resources"
+	model.dispatcher = nil
+	updated, command := model.Update(ctrl('r'))
+	if command == nil {
+		t.Fatal("nil dispatcher refresh did not produce a finalizing result")
+	}
+	updated, _ = updated.Update(command())
+	result := updated.(Model)
+	frame := result.current()
+	if frame.refreshing || frame.staged != (refreshStage{}) || !strings.Contains(frame.status, "refresh failed") || !strings.Contains(frame.status, "no dispatcher") {
+		t.Fatalf("nil dispatcher refresh did not finalize: %+v", frame)
+	}
+}
+
+func cachedRefreshingModel(t *testing.T) (Model, *testIntentStream) {
+	t.Helper()
+	cachedContext := testStoreContext(t, "cached", "123456789012", "us-east-1", 1)
+	stream := newTestIntentStream()
+	model := NewModel(context.Background(), Config{}, nil)
+	model.nextGeneration = 1
+	model.history = []routeFrame{{
+		mode: routeList, target: "cross-profile-search", label: "Search results · reader",
+		intent:     Intent{Kind: IntentSearch, Target: "cross-profile-search", SearchKind: "role", Query: "reader", Scope: "all"},
+		projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("cached", "running")}},
+		context:    &cachedContext, coverage: &SearchCoverage{DiscoveryStatus: "cached-discovery", Profiles: []SearchProfileCoverage{{Profile: "cached", Status: "matched", Matches: 1}}},
+		stream: stream, generation: 1, refreshing: true, status: "Showing cached 1 · refreshing… · Esc cancel",
+	}}
+	return model, stream
+}
+
+func assertCachedModelRefreshTerminal(t *testing.T, model Model, stream *testIntentStream, want string) {
+	t.Helper()
+	frame := model.current()
+	if frame == nil || frame.refreshing || frame.stream != nil || frame.staged != (refreshStage{}) {
+		t.Fatalf("refresh did not finalize: %+v", frame)
+	}
+	if frame.context == nil || frame.context.Profile != "cached" || frame.coverage == nil || frame.coverage.DiscoveryStatus != "cached-discovery" || len(frame.projection.Resources) != 1 || frame.projection.Resources[0].Title != "cached" {
+		t.Fatalf("cached tuple changed: %+v", frame)
+	}
+	if strings.Contains(frame.status, "\x1b") || strings.Contains(frame.status, "refreshing") || !strings.Contains(frame.status, want) {
+		t.Fatalf("status=%q want %q", frame.status, want)
+	}
+	if stream.cancels != 1 {
+		t.Fatalf("stream cancellations=%d", stream.cancels)
+	}
+}
+
 func TestModelNonSearchRefreshPinsResolvedContext(t *testing.T) {
 	initial, refresh := newTestIntentStream(), newTestIntentStream()
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}

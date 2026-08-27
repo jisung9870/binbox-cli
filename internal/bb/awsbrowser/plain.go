@@ -18,15 +18,15 @@ type Plain struct{ Dispatcher IntentDispatcher }
 var plainCatalog = []catalogItem{homeCatalog[0], homeCatalog[1], homeCatalog[2], homeCatalog[4]}
 
 type plainFrame struct {
-	target, label  string
-	intent         Intent
-	projection     IntentProjection
-	context        *AWSContext
-	detail         *ResourceProjection
-	coverage       *SearchCoverage
-	stagedCoverage *SearchCoverage
-	status         string
-	search         bool
+	target, label string
+	intent        Intent
+	projection    IntentProjection
+	context       *AWSContext
+	detail        *ResourceProjection
+	coverage      *SearchCoverage
+	staged        refreshStage
+	status        string
+	search        bool
 }
 
 type plainInput struct {
@@ -111,7 +111,7 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 					intent.Profile, intent.Region = frame.intent.Profile, frame.intent.Region
 				}
 			}
-			frame.stagedCoverage = nil
+			frame.staged.clear()
 			frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
 			fmt.Fprintln(terminal.Err, frame.status)
 			if err := p.load(ctx, terminal.Err, config, frame, intent, inputs, true); err != nil {
@@ -428,6 +428,36 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 }
 
 func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing bool, update IntentUpdate) error {
+	if refreshing {
+		frame.staged.apply(update)
+		state := update.Query.Snapshot.State
+		successfulRefresh := state == LoadReady || state == LoadEmpty
+		if successfulRefresh {
+			frame.staged.promote(&frame.context, &frame.coverage, &frame.projection)
+		}
+		status := queryStatus(update.Query, len(frame.projection.Resources))
+		if terminalLoadState(state) && !successfulRefresh {
+			if state == LoadStale {
+				status = queryStatus(update.Query, len(frame.projection.Resources))
+			} else {
+				status = finishPlainRefresh(frame, strings.TrimPrefix(status, "! "))
+			}
+		} else if !successfulRefresh {
+			status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
+		} else if frame.coverage != nil {
+			status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+		}
+		if terminalLoadState(state) {
+			frame.staged.clear()
+		}
+		frame.status = status
+		if _, err := fmt.Fprintln(out, status); err != nil {
+			return err
+		}
+		writePlainCoverage(out, frame.coverage)
+		writePlainResources(out, frame.projection.Resources)
+		return nil
+	}
 	if update.Context != nil && update.Context.Validate() == nil {
 		copy := *update.Context
 		frame.context = &copy
@@ -440,39 +470,16 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 		projection = ProjectQueryUpdate(update.Query)
 	}
 	state := update.Query.Snapshot.State
-	searchRefresh := refreshing && frame.intent.Kind == IntentSearch && frame.intent.Target == "cross-profile-search"
 	if update.Coverage != nil {
-		if searchRefresh {
-			frame.stagedCoverage = cloneSearchCoverage(update.Coverage)
-		} else {
-			frame.coverage = cloneSearchCoverage(update.Coverage)
-		}
+		frame.coverage = cloneSearchCoverage(update.Coverage)
 	}
-	successfulRefresh := state == LoadReady || state == LoadEmpty
-	preserve := refreshing && !successfulRefresh
-	replace := !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty)
+	replace := len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty
 	if replace {
 		frame.projection = projection
-		if searchRefresh && frame.stagedCoverage != nil {
-			frame.coverage = frame.stagedCoverage
-		}
 	}
 	status := queryStatus(update.Query, len(frame.projection.Resources))
-	if refreshing && terminalLoadState(state) && !successfulRefresh {
-		if state == LoadStale {
-			status = queryStatus(update.Query, len(frame.projection.Resources))
-		} else {
-			status = finishPlainRefresh(frame, strings.TrimPrefix(queryStatus(update.Query, len(frame.projection.Resources)), "! "))
-		}
-	} else if preserve && searchRefresh {
-		status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
-	} else {
-		if frame.coverage != nil {
-			status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
-		}
-	}
-	if terminalLoadState(state) {
-		frame.stagedCoverage = nil
+	if frame.coverage != nil {
+		status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
 	}
 	frame.status = status
 	if _, err := fmt.Fprintln(out, status); err != nil {
@@ -484,8 +491,8 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 }
 
 func finishPlainRefresh(frame *plainFrame, outcome string) string {
-	frame.stagedCoverage = nil
-	frame.status = fmt.Sprintf("Showing cached %d · refresh %s", len(frame.projection.Resources), safeIntentText(outcome))
+	frame.staged.clear()
+	frame.status = cachedRefreshStatus(len(frame.projection.Resources), outcome)
 	return frame.status
 }
 

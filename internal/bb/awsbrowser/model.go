@@ -54,7 +54,7 @@ type routeFrame struct {
 	terminalUpdate   bool
 	dispatchCancel   context.CancelFunc
 	coverage         *SearchCoverage
-	stagedCoverage   *SearchCoverage
+	staged           refreshStage
 	searchKind       int
 	searchScope      int
 	searchValue      string
@@ -105,15 +105,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.result.Err != nil {
-			m.finishFrame(frame)
-			frame.status = "! " + msg.result.Error()
-			frame.refreshing = false
+			if frame.refreshing {
+				m.finalizeRefresh(frame, "failed · "+msg.result.Error())
+			} else {
+				m.finishFrame(frame)
+				frame.status = "! " + msg.result.Error()
+			}
 			return m, nil
 		}
 		if msg.result.Stream == nil || msg.result.Stream.Updates() == nil {
-			m.finishFrame(frame)
-			frame.status = "! " + safeIntentText(msg.result.Intent.Target+": no update stream")
-			frame.refreshing = false
+			if frame.refreshing {
+				m.finalizeRefresh(frame, "failed · "+msg.result.Intent.Target+": no update stream")
+			} else {
+				m.finishFrame(frame)
+				frame.status = "! " + safeIntentText(msg.result.Intent.Target+": no update stream")
+			}
 			return m, nil
 		}
 		frame.stream = msg.result.Stream
@@ -124,10 +130,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if !msg.open {
-			m.finishFrame(frame)
-			frame.refreshing = false
 			if !frame.terminalUpdate {
-				frame.status = queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources)) + " · incomplete stream"
+				if frame.refreshing {
+					m.finalizeRefresh(frame, "query failed · incomplete stream")
+				} else {
+					m.finishFrame(frame)
+					frame.status = queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources)) + " · incomplete stream"
+				}
+			} else {
+				m.finishFrame(frame)
 			}
 			return m, nil
 		}
@@ -137,14 +148,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyIntentUpdate(frame, msg.update)
 		frame.terminalUpdate = frame.terminalUpdate || terminalLoadState(msg.update.Query.Snapshot.State)
 		if frame.terminalUpdate {
-			m.finishFrame(frame)
-			frame.refreshing = false
+			if frame.refreshing {
+				m.finalizeRefresh(frame, "")
+			} else {
+				m.finishFrame(frame)
+			}
 			return m, nil
 		}
 		if msg.update.Done && !frame.terminalUpdate {
-			frame.status = queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources)) + " · incomplete stream"
-			m.finishFrame(frame)
-			frame.refreshing = false
+			if frame.refreshing {
+				m.finalizeRefresh(frame, "query failed · incomplete stream")
+			} else {
+				frame.status = queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: LoadUnknown}}, len(frame.projection.Resources)) + " · incomplete stream"
+				m.finishFrame(frame)
+			}
 			return m, nil
 		}
 		return m, waitIntent(msg.generation, frame.stream)
@@ -191,6 +208,10 @@ func (m Model) updateKey(key string) (tea.Model, tea.Cmd) {
 	case "esc", "backspace":
 		if frame == nil {
 			return m, tea.Quit
+		}
+		if frame.refreshing {
+			m.finalizeRefresh(frame, "cancelled")
+			return m, nil
 		}
 		m.pop()
 	case "ctrl+g":
@@ -310,10 +331,7 @@ func (m Model) enterCurrent() (tea.Model, tea.Cmd) {
 		if len(frame.projection.Resources) == 0 {
 			return m, nil
 		}
-		if frame.stream != nil {
-			frame.stream.Cancel()
-			frame.stream = nil
-		}
+		m.finishFrame(frame)
 		resource := frame.projection.Resources[frame.selected]
 		resourceContext := frame.context
 		if resource.Context != nil && resource.Context.Validate() == nil {
@@ -362,7 +380,7 @@ func (m Model) refreshCurrent() (tea.Model, tea.Cmd) {
 	frame.dispatchCancel = cancel
 	frame.refreshing = true
 	frame.terminalUpdate = false
-	frame.stagedCoverage = nil
+	frame.staged.clear()
 	frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
 	intent := frame.intent
 	if intent.Kind != IntentSearch || intent.Target != "cross-profile-search" {
@@ -378,7 +396,9 @@ func (m Model) refreshCurrent() (tea.Model, tea.Cmd) {
 
 func (m Model) dispatch(ctx context.Context, intent Intent, generation uint64) tea.Cmd {
 	if m.dispatcher == nil {
-		return nil
+		return func() tea.Msg {
+			return intentStartedMsg{generation: generation, result: IntentResultMsg{Intent: intent, Err: fmt.Errorf("no dispatcher")}}
+		}
 	}
 	intent = m.resolveIntentContext(intent)
 	return func() tea.Msg {
@@ -404,6 +424,29 @@ func waitIntent(generation uint64, stream IntentStream) tea.Cmd {
 }
 
 func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
+	if frame.refreshing {
+		frame.staged.apply(update)
+		state := update.Query.Snapshot.State
+		if state == LoadReady || state == LoadEmpty {
+			frame.staged.promote(&frame.context, &frame.coverage, &frame.projection)
+			if frame.selected >= len(frame.projection.Resources) {
+				frame.selected = max(0, len(frame.projection.Resources)-1)
+			}
+			frame.status = queryStatus(update.Query, len(frame.projection.Resources))
+			if frame.coverage != nil {
+				frame.status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+			}
+		} else if terminalLoadState(state) {
+			if state == LoadStale {
+				frame.status = queryStatus(update.Query, len(frame.projection.Resources))
+			} else {
+				frame.status = cachedRefreshStatus(len(frame.projection.Resources), strings.TrimPrefix(queryStatus(update.Query, len(frame.projection.Resources)), "! "))
+			}
+		} else {
+			frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
+		}
+		return
+	}
 	if update.Context != nil && update.Context.Validate() == nil {
 		copy := *update.Context
 		frame.context = &copy
@@ -416,37 +459,67 @@ func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
 		projection = ProjectQueryUpdate(update.Query)
 	}
 	state := update.Query.Snapshot.State
-	searchRefresh := frame.refreshing && frame.intent.Kind == IntentSearch && frame.intent.Target == "cross-profile-search"
 	if update.Coverage != nil {
-		if searchRefresh {
-			frame.stagedCoverage = cloneSearchCoverage(update.Coverage)
-		} else {
-			frame.coverage = cloneSearchCoverage(update.Coverage)
-		}
+		frame.coverage = cloneSearchCoverage(update.Coverage)
 	}
-	preserve := frame.refreshing && !terminalLoadState(state) && len(frame.projection.Resources) != 0
-	replace := !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty)
+	replace := len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty
 	if replace {
 		frame.projection = projection
-		if searchRefresh && frame.stagedCoverage != nil {
-			frame.coverage = frame.stagedCoverage
-		}
 		if frame.selected >= len(frame.projection.Resources) {
 			frame.selected = max(0, len(frame.projection.Resources)-1)
 		}
 	}
-	if preserve && searchRefresh {
-		frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
-	} else {
-		frame.status = queryStatus(update.Query, len(frame.projection.Resources))
-		if frame.coverage != nil {
-			frame.status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
-		}
+	frame.status = queryStatus(update.Query, len(frame.projection.Resources))
+	if frame.coverage != nil {
+		frame.status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
 	}
-	if state != LoadRefreshing && state != LoadLoading && state != LoadQueued {
-		frame.refreshing = false
-		frame.stagedCoverage = nil
+}
+
+type refreshStage struct {
+	context    *AWSContext
+	coverage   *SearchCoverage
+	projection *IntentProjection
+}
+
+func (stage *refreshStage) apply(update IntentUpdate) {
+	if update.Context != nil && update.Context.Validate() == nil {
+		copy := *update.Context
+		stage.context = &copy
+	} else if update.Query.Key.Context.Validate() == nil {
+		copy := update.Query.Key.Context
+		stage.context = &copy
 	}
+	if update.Coverage != nil {
+		stage.coverage = cloneSearchCoverage(update.Coverage)
+	}
+	projection := update.Projection
+	if len(projection.Resources) == 0 && update.Query.Snapshot.ResourceCount() != 0 {
+		projection = ProjectQueryUpdate(update.Query)
+	}
+	state := update.Query.Snapshot.State
+	if projection.Resources != nil || state == LoadEmpty {
+		copy := projection
+		stage.projection = &copy
+	}
+}
+
+func (stage *refreshStage) promote(awsContext **AWSContext, coverage **SearchCoverage, projection *IntentProjection) {
+	if stage.context != nil {
+		copy := *stage.context
+		*awsContext = &copy
+	}
+	if stage.coverage != nil {
+		*coverage = cloneSearchCoverage(stage.coverage)
+	}
+	if stage.projection != nil {
+		*projection = *stage.projection
+	}
+}
+
+func (stage *refreshStage) clear() { *stage = refreshStage{} }
+
+func cachedRefreshStatus(count int, outcome string) string {
+	return fmt.Sprintf("Showing cached %d · refresh %s", count, safeIntentText(outcome))
 }
 
 func cloneSearchCoverage(coverage *SearchCoverage) *SearchCoverage {
@@ -616,6 +689,25 @@ func (m *Model) cancelAll() {
 }
 
 func (m *Model) finishFrame(frame *routeFrame) {
+	if frame.refreshing {
+		m.finalizeRefresh(frame, "cancelled")
+		return
+	}
+	m.releaseFrame(frame)
+}
+
+func (m *Model) finalizeRefresh(frame *routeFrame, outcome string) {
+	m.releaseFrame(frame)
+	m.nextGeneration++
+	frame.generation = m.nextGeneration
+	frame.staged.clear()
+	frame.refreshing = false
+	if outcome != "" {
+		frame.status = cachedRefreshStatus(len(frame.projection.Resources), outcome)
+	}
+}
+
+func (m *Model) releaseFrame(frame *routeFrame) {
 	if frame.dispatchCancel != nil {
 		frame.dispatchCancel()
 		frame.dispatchCancel = nil

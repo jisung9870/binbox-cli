@@ -14,6 +14,8 @@ migration evidence, and version-specific verification records for `bb`.
 | Change or debug the Go implementation | [Internal implementation guide](internals.md) |
 | Build, release, install, recover, or troubleshoot | [Operations](operations.md) |
 | Review the current UX contract | [Design](../DESIGN.md) |
+| Review the AWS resource browser scope | [AWS browser product pitch](product-aws-resource-browser-202608.md) |
+| Review the AWS graph/API design | [AWS browser mini design](design-aws-resource-browser-202608.md) |
 
 ## Migration and compatibility
 

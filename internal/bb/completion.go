@@ -128,9 +128,12 @@ _bb() {
       ;;
     aws)
       if (( CURRENT == 3 )); then
-        _bb_static 'AWS command' 'sso:log in to an SSO session' 'assume:apply profile credentials'
+        _bb_static 'AWS command' 'browse:browse read-only AWS resources' 'sso:log in to an SSO session' 'assume:apply profile credentials'
       elif (( CURRENT == 4 )); then
         case "${words[3]}" in
+          browse)
+            _bb_static 'browse option' '--profile:AWS profile' '--region:AWS region' '--json:stable JSON envelope'
+            ;;
           sso)
             _bb_static 'SSO command' 'list:list SSO sessions'
             _bb_dynamic 'AWS SSO session' sso-session

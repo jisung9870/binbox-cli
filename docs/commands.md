@@ -13,6 +13,7 @@ provider state; `bb doctor` reports whether they are available.
 | Git | `gx root/branch/log` | Direct Git reads plus explicit branch mutations |
 | Kubernetes | `kx context/namespace/log/exec/port-forward` | Direct kubectl argv with explicit context, namespace, pod, and ports |
 | AWS SSM | `assm shell/port-forward` | Direct AWS CLI Session Manager invocation with explicit instance and ports |
+| AWS resources | `aws browse [--profile NAME] [--region REGION] [--json]` | Read-only EC2/EBS/SG/VPC/Route 53/IAM graph; single-region regional resources, global IAM/Route 53, partial failures as warnings |
 | AWS SSO | `aws sso [session]`, `aws sso list` | Search-first SSO-session login; AWS CLI owns browser authentication and the token cache |
 | AWS credentials | `aws assume [profile]/list/current/unset/exec` | Search-first account/role profile selection; AWS CLI resolves credentials; bb stores none and emits them only to the shell pipe or a scoped child process |
 | AWS compatibility | `profile ...`, `assume ...` | Existing profile configuration and assume commands remain available as compatibility surfaces |
@@ -79,6 +80,7 @@ a missing service or field cannot produce a partially applied environment.
 
 ## Deliberate exclusions
 
-`bb` does not implement an agent scheduler, worktree manager, dashboard, MCP
-proxy/server lifecycle, automatic MCP installer, generic shell dispatcher, or self-mutating
-checkout updater. It also does not store AWS credentials or SSO cache data.
+`bb` does not implement an agent scheduler, worktree manager, persistent
+dashboard/inventory database, AWS resource mutation, MCP proxy/server lifecycle,
+automatic MCP installer, generic shell dispatcher, or self-mutating checkout
+updater. It also does not store AWS credentials or SSO cache data.

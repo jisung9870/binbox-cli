@@ -43,6 +43,7 @@ modifying the host system. Command routing is centralized in `App.dispatch`.
 | `internal/bb/shell.go` | Checkout-independent current-shell wrappers |
 | `internal/bb/tm.go`, `sessionizer.go` | Project/session selection, tmux commands, and legacy project import |
 | `internal/bb/profile.go`, `assume.go`, `wenv.go`, `sec.go` | AWS config, scoped credentials, declarative environments, and encrypted secrets |
+| `internal/bb/aws_browse.go` | Read-only AWS CLI JSON collection, normalized resource graph, and staged relationship browser |
 | `internal/bb/external.go`, `legacy_read.go` | Direct-argv Git, Kubernetes, SSM, and local inspection adapters |
 | `internal/bb/tfx.go`, `tvx.go` | Guarded Terraform and fixed-policy Trivy workflows |
 | `internal/bb/nvim*.go` | LazyVim config validation, planning, linking, and doctor checks |

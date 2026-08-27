@@ -3,9 +3,9 @@
 ## Source of truth
 
 - Status: Active
-- Last refreshed: 2026-08-11
-- Primary product surfaces: interactive selectors used by `tm`, `wenv`, `assume`, and secret management, zsh completion, human-readable command output, non-Git yes/no mutation confirmations, and scoped child-process execution
-- Evidence reviewed: `internal/bb/select.go`, `internal/bb/confirm.go`, `internal/bb/sec.go`, `internal/bb/completion.go`, `internal/bb/human.go`, `internal/bb/identity_test.go`, `internal/bb/completion_test.go`, `docs/zsh-output-smoke-v0.10.0.md`, `docs/sec-manager-smoke-v0.9.0.md`, `docs/sec-manager-smoke-v0.8.1.md`, `docs/sec-manager-smoke-v0.8.0.md`, `docs/sec-audit-v0.7.1.md`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
+- Last refreshed: 2026-08-27
+- Primary product surfaces: interactive selectors used by `tm`, `wenv`, `assume`, secret management, and the read-only AWS resource browser; zsh completion; human-readable command output; non-Git yes/no mutation confirmations; and scoped child-process execution
+- Evidence reviewed: `internal/bb/select.go`, `internal/bb/confirm.go`, `internal/bb/sec.go`, `internal/bb/aws_browse.go`, `internal/bb/completion.go`, `internal/bb/human.go`, `internal/bb/identity_test.go`, `internal/bb/aws_browse_test.go`, `internal/bb/completion_test.go`, `docs/product-aws-resource-browser-202608.md`, `docs/design-aws-resource-browser-202608.md`, `docs/zsh-output-smoke-v0.10.0.md`, `docs/sec-manager-smoke-v0.9.0.md`, `docs/sec-manager-smoke-v0.8.1.md`, `docs/sec-manager-smoke-v0.8.0.md`, `docs/sec-audit-v0.7.1.md`, `docs/selector-smoke-2026-08-11.md`, `docs/tui-smoke-v0.7.0.md`, light/dark palette render, `docs/architecture.md`, `docs/decision-log.md`, and `README.md`
 
 ## Brand
 
@@ -15,8 +15,8 @@
 
 ## Product goals
 
-- Goals: make search and completion immediately discoverable, make common selection possible without mode knowledge, preserve fast keyboard operation, present polished human-readable output by default, retain explicit stable JSON for automation, and make frequent secret use possible without printing plaintext into the parent shell.
-- Non-goals: pixel compatibility with fzf, mouse-first operation, a general TUI framework, Git workflow expansion, or previews that can expose secrets. A Terraform plan is read through the plan's own sensitivity markers, so plan review is a reading surface rather than an exception to that last rule.
+- Goals: make search and completion immediately discoverable, make common selection possible without mode knowledge, preserve fast keyboard operation, present polished human-readable output by default, retain explicit stable JSON for automation, make frequent secret use possible without printing plaintext into the parent shell, and let an operator follow read-only AWS resource relationships without changing console pages.
+- Non-goals: pixel compatibility with fzf, mouse-first operation, a general TUI framework, Git workflow expansion, AWS resource mutation, a persistent cloud dashboard, or previews that can expose secrets. A Terraform plan is read through the plan's own sensitivity markers, so plan review is a reading surface rather than an exception to that last rule.
 - Success signals: Tab completes supported commands/options and safe local metadata; default structured reads render labels/tables rather than JSON; `--json` preserves schema-v1 envelopes; typing any printable character immediately filters; the first arrow press moves selection; Enter selects; Escape clears the query before navigating back or cancelling; secret management exposes only service/field metadata; service selection scopes the field list; rename, destructive, or overwrite actions default to Cancel; scoped execution passes values only to the child process; stderr-only rendering and stable-value output remain unchanged.
 
 ## Personas and jobs
@@ -28,8 +28,8 @@
 ## Information architecture
 
 - Primary navigation: one search field, one ranked result list, and one persistent compact key-hint footer.
-- Core routes/screens: one reusable selector surface, a secret Service selector followed by a Field selector and safe Action selector, one reusable default-cancel confirmation card, zsh completion states, and one generic human output hierarchy for bb-owned structured results.
-- Content hierarchy: service list with field counts -> selected service's flat field list -> safe action -> confirmation when required -> key hints. Field names are not repeated beneath every service in the first screen.
+- Core routes/screens: one reusable selector surface, a secret Service selector followed by a Field selector and safe Action selector, an AWS Service→Resource→Details/Relation→Linked Resource browser, one reusable default-cancel confirmation card, zsh completion states, and one generic human output hierarchy for bb-owned structured results.
+- Content hierarchy: command-specific staged navigation keeps broad lists first and details last. Secret management uses Service→Field→Action; AWS browsing uses Service→Resource→Details/Relation→Linked Resource, with exact and heuristic relation confidence visible before a jump.
 
 ## Design principles
 
@@ -54,9 +54,9 @@
 ## Components
 
 - Existing components to reuse: Bubble Tea program lifecycle, Bubbles fuzzy filter/ranking, Bubbles text input/list behavior where it matches the interaction contract, and Lip Gloss styles already supplied transitively.
-- New/changed components: a bb-owned selector view, always-visible search row, result counter, explicit empty state, compact help footer, command-specific optional detail/keywords, a default-cancel confirmation card, a staged selector that holds a stack of levels inside one program, a three-stage Service/Field/Action secret manager built on it, native zsh completion, and a generic control-safe human renderer.
+- New/changed components: a bb-owned selector view, always-visible search row, result counter, explicit empty state, compact help footer, command-specific optional detail/keywords, a default-cancel confirmation card, a staged selector that holds a stack of levels inside one program, a three-stage Service/Field/Action secret manager built on it, a preloaded read-only AWS resource graph, native zsh completion, and a generic control-safe human renderer.
 - Staged selection: a multi-level walk is one program, not one program per level. Entering a value pushes the next level and Escape pops back to the previous one with its query and cursor intact, so the alternate screen is entered once and returning to a level does not discard the search that got you there. Each level is an ordinary selector; the level graph is supplied by the command as a function from the values chosen so far to the next level. Levels with no choices complete the walk rather than rendering an empty list.
-- Variants and states: service browsing, field browsing, searching, filtered, completion with/without dynamic candidates, human detail/table/empty output, JSON envelope, no results, empty source, action selection, rename input/confirmation, overwrite confirmation, removal confirmation, plan resource list, plan attribute reading, redacted and not-yet-known values, narrow terminal, no-color, and numbered fallback.
+- Variants and states: service browsing, field browsing, AWS resource/relationship browsing, exact/heuristic links, partial AWS permission failure, searching, filtered, completion with/without dynamic candidates, human detail/table/empty output, JSON envelope, no results, empty source, action selection, rename input/confirmation, overwrite confirmation, removal confirmation, plan resource list, plan attribute reading, redacted and not-yet-known values, narrow terminal, no-color, and numbered fallback.
 - Reading versus choosing: a level can be marked read-only, which drops Enter and the select hint from its footer. A viewer must not be closable by the same key that opened it, and a walk never completes on such a level.
 - Token/component ownership: selector styles and keymap live beside `internal/bb/select.go`; do not introduce a repository-wide design-system package.
 
@@ -76,12 +76,12 @@
 
 ## Interaction states
 
-- Loading: not currently needed because choices are prepared before launch; reserve a text-only state if asynchronous sources are introduced.
+- Loading: AWS P0 prepares a bounded single-region snapshot before selector launch and performs no network work per keystroke. A cancellable text loading state is required when lazy or multi-region loading is introduced.
 - Empty: explain that the source has no selectable items and exit without entering an unusable selector.
 - Error: return to the caller with the existing typed error; do not leave alternate-screen artifacts.
 - Success: immediately close and return exactly one stable value per level. A staged walk closes once, after the last level, and returns the chosen values in order; mutations still run after the selector has closed.
 - Disabled: unavailable actions are omitted from the footer rather than shown as inactive decoration.
-- Offline/slow network, if applicable: provider fetching remains outside the selector; the selector itself performs no network work.
+- Offline/slow network, if applicable: provider fetching remains outside the selector; the selector itself performs no network work. Partial AWS service failures remain visible as warnings, while total failure points to SSO/profile and read-only permissions.
 
 ## Content voice
 
@@ -93,10 +93,11 @@
 
 - Framework/styling system: Go with Bubble Tea, Bubbles, and Lip Gloss; no external `fzf` process and no new dependency for this redesign.
 - Design-token constraints: adaptive ANSI colors, `NO_COLOR`, and terminal width-aware truncation; preserve labels and stable values separately.
-- Performance constraints: filtering and rendering 250 items must remain perceptually immediate and must not start provider or filesystem work per keystroke.
-- Compatibility constraints: `bb setup shell` idempotently registers `eval "$(bb shell init zsh)"`, which remains the only required `.zshrc` line and provides completion without checkout paths; dynamic candidates use local names/IDs only and never values or credentials; all TUI writes go to stderr; `--json` preserves the schema-v1 envelope; non-TTY, dumb terminal, and `BB_SELECTOR=plain` behavior remain deterministic; `sec exec` replaces only the selected service's normalized environment keys in the child and never mutates the parent environment.
-- Test/screenshot expectations: generated zsh syntax/registration smoke, candidate non-disclosure tests, human-vs-JSON output regressions, model-level key sequence tests, width/height snapshots or golden text with color disabled, PTY smoke in direct zsh and tmux, and regressions for stdout cleanliness and alternate-screen cleanup. Staged selection additionally requires model-level tests that no level transition returns a quit command, that Escape clears then pops then cancels, that a level keeps its query and cursor when returned to, that a resize reaches levels that are not currently visible, and that the plain walk pops on an empty answer.
+- Performance constraints: filtering and rendering 250 items must remain perceptually immediate and must not start provider or filesystem work per keystroke. Repeated AWS snapshot collection above 10 seconds is the trigger for lazy loading and cache design.
+- Compatibility constraints: `bb setup shell` idempotently registers `eval "$(bb shell init zsh)"`, which remains the only required `.zshrc` line and provides completion without checkout paths; dynamic candidates use local names/IDs only and never values or credentials; all TUI writes go to stderr; `--json` preserves the schema-v1 envelope; non-TTY, dumb terminal, and `BB_SELECTOR=plain` behavior remain deterministic; `sec exec` replaces only the selected service's normalized environment keys in the child and never mutates the parent environment; AWS CLI remains the credential/profile/page owner and `bb aws browse` calls read operations only.
+- Test/screenshot expectations: generated zsh syntax/registration smoke, candidate non-disclosure tests, human-vs-JSON output regressions, AWS fixture tests for exact argv/relations/partial failure, model-level key sequence tests, width/height snapshots or golden text with color disabled, PTY smoke in direct zsh and tmux, and regressions for stdout cleanliness and alternate-screen cleanup. Staged selection additionally requires model-level tests that no level transition returns a quit command, that Escape clears then pops then cancels, that a level keeps its query and cursor when returned to, that a resize reaches levels that are not currently visible, and that the plain walk pops on an empty answer.
 
 ## Open questions
 
-- None. Light, dark, and `NO_COLOR` variants are validated; reopen this section if the palette or terminal rendering library changes.
+- [ ] Choose whether P1 prioritizes ENI/EIP relationship accuracy or ELBv2 Route 53 alias resolution after real-account usage evidence is available.
+- [ ] Choose region-first or service-first navigation before multi-region collection is implemented.

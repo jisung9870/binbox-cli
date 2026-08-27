@@ -8,6 +8,9 @@ release tags and the corresponding release records.
 
 ### Added
 
+- Added `bb aws browse` for a read-only, single-region EC2/EBS/security-group/VPC
+  graph plus global Route 53/IAM discovery, linked-resource navigation, partial
+  permission warnings, human summaries, and schema-v1 JSON.
 - Added `bb setup shell` to register the checkout-independent zsh integration
   and native completion in `.zshrc` without duplicating an existing setup.
 

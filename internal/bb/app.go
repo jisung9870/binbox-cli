@@ -143,7 +143,7 @@ Commands:
   gx ...                 Explicit Git workflow compatibility adapter
   kx ...                 Explicit kubectl workflow compatibility adapter
   assm ...               Explicit AWS SSM session adapter
-  aws sso|assume ...     Authenticate SSO sessions or apply profile credentials
+  aws browse|sso|assume ...  Browse resources or authenticate/apply credentials
   assume ...             Compatibility alias for "bb aws assume"
   profile ...            Compatibility profile configuration surface
   wenv ...               Manage and apply declarative environment presets

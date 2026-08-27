@@ -292,6 +292,25 @@ role APIs directly, or keep a credential cache. Credential-bearing stdout is
 refused when attached directly to a terminal and is captured only by the
 generated shell wrapper; `assume exec` keeps credentials in one child process.
 
+## 2026-08-27 — Read-only AWS relationship browsing keeps AWS CLI ownership
+
+Decision: `bb aws browse` reads a single regional EC2/VPC inventory plus global
+Route 53/IAM inventory through direct AWS CLI JSON commands, normalizes it into
+an in-memory resource graph, and reuses the staged selector for navigation. bb
+does not add an AWS SDK, credential cache, local inventory database, or mutation
+action. A service-level read failure becomes a warning while other service
+results remain usable.
+
+ID/ARN relationships are marked exact. Route 53 record-to-EC2 IP/DNS matches
+and AliasTarget service classification are marked heuristic because Route 53
+does not store a target resource ARN. Unsupported alias services stop at a DNS
+metadata node rather than pretending to resolve a resource.
+
+Why binbox owns it: it is a command-scoped, portable inspection workflow that
+extends the existing AWS profile and selector contracts. Why AWS CLI still owns
+authentication and pagination: reusing its configured SSO/profile chain avoids
+creating a second credential or SDK lifecycle inside bb.
+
 `bb wenv show` is inspection-only. `bb wenv apply` renders the current-to-target
 environment diff on stderr and emits eval-safe stdout only after confirmation.
 Legacy implicit `kubectl config` mutation remains retired: `KUBE_CONTEXT` and

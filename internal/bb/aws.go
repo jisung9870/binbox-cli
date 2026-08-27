@@ -7,8 +7,10 @@ import (
 )
 
 func (a *App) aws(args []string) error {
-	if helpRequested(args) || len(args) == 0 {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprint(a.out, `Usage:
+  bb aws browse [--profile NAME] [--region REGION] [--json]
+                                  Browse read-only AWS resources and links
   bb aws sso [session]             Select or log in to an AWS SSO session
   bb aws sso list                  List configured AWS SSO sessions
   bb aws assume [profile]          Select or apply AWS CLI-resolved credentials
@@ -21,6 +23,8 @@ an AWS account, role, and region. The AWS CLI owns tokens and credentials.
 		return err
 	}
 	switch args[0] {
+	case "browse":
+		return a.awsBrowse(args[1:])
 	case "sso":
 		return a.awsSSO(args[1:])
 	case "assume":

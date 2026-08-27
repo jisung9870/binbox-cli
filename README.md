@@ -44,6 +44,8 @@ bb aws sso corp
 bb aws assume dev
 bb aws assume current
 bb aws assume exec dev -- aws sts get-caller-identity
+# Browse a read-only single-region resource graph; IAM and Route 53 are global.
+bb aws browse --profile dev --region ap-northeast-2
 bb wenv import --check
 bb wenv import --apply
 bb wenv show dev
@@ -160,6 +162,8 @@ bb setup shell
 See [operations](docs/operations.md) for the release and trust contract.
 
 See the [documentation index](docs/README.md), [changelog](CHANGELOG.md),
+[AWS resource browser product pitch](docs/product-aws-resource-browser-202608.md),
+[AWS resource browser mini design](docs/design-aws-resource-browser-202608.md),
 [v0.15.1 terminal response fix release record](docs/release-v0.15.1.md),
 [v0.15.0 MCP manager release record](docs/release-v0.15.0.md),
 [internal implementation guide](docs/internals.md),

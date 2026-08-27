@@ -40,6 +40,7 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb tm [--project <id>]` | Selects through bb's search-first responsive TUI (numbered fallback), then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
 | `bb aws sso ...` | Selects a configured SSO session and delegates login | Reads `[sso-session NAME]`; credentials/cache remain AWS CLI-owned |
 | `bb aws assume ...` | Restores current-shell and scoped-command credential UX through AWS CLI resolution | Selects account/role profiles; no bb credential cache; stdout credentials are evaluated only through generated shell integration |
+| `bb aws browse ...` | Builds a single-region read-only EC2/VPC plus global Route 53/IAM resource graph and follows links in the staged TUI | AWS CLI owns credentials and pagination; bb keeps only an in-memory snapshot, uses List/Describe/Get calls, and preserves partial results as warnings |
 | `bb profile ...`, `bb assume ...` | Preserves the existing profile configuration and assume surfaces | Compatibility commands retain their prior contracts while new AWS workflows use the grouped entry point |
 | `bb wenv ...` | Creates, inspects, updates, renames, removes, imports, and applies declarative environments | Staged preset/action/variable selector; XDG JSON; secret-like key rejection; mutations emit no stdout; default-cancel destructive confirmation |
 | `bb completion zsh` | Registers native command, option, and safe local-metadata completion | Git commands are omitted; candidates contain names/IDs only and call the installed binary without checkout coupling |
@@ -123,6 +124,8 @@ the binary never embeds or silently clones the configuration.
 
 ## Explicit non-goals
 
-No dashboard; no MCP proxy/server lifecycle/automatic install; no credential
-store; no shell evaluation; no generic legacy script forwarding; and no Orca
-agent/worktree/scheduler/DAG implementation.
+No persistent dashboard or inventory database; no AWS resource mutation; no MCP
+proxy/server lifecycle/automatic install; no credential store; no shell
+evaluation; no generic legacy script forwarding; and no Orca
+agent/worktree/scheduler/DAG implementation. A command-scoped read-only resource
+inspector is allowed when it retains no provider state.

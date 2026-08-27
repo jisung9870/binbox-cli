@@ -170,7 +170,7 @@ func TestSearchEditorIsLocalUntilExplicitSubmit(t *testing.T) {
 	if command != nil || len(dispatcher.intents) != 0 || !strings.Contains(model.View().Content, "no AWS request until submit") {
 		t.Fatalf("opening search dispatched work: intents=%+v", dispatcher.intents)
 	}
-	for _, character := range "api.example.com" {
+	for _, character := range "api.qexample.com" {
 		model, command = model.Update(key(character))
 		if command != nil || len(dispatcher.intents) != 0 {
 			t.Fatal("editing search dispatched work")
@@ -182,9 +182,71 @@ func TestSearchEditorIsLocalUntilExplicitSubmit(t *testing.T) {
 	}
 	model, _ = model.Update(command())
 	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Kind != IntentSearch || dispatcher.intents[0].SearchKind != "domain" ||
-		dispatcher.intents[0].Query != "api.example.com" || dispatcher.intents[0].Scope != "all" {
+		dispatcher.intents[0].Query != "api.qexample.com" || dispatcher.intents[0].Scope != "all" {
 		t.Fatalf("search intent=%+v", dispatcher.intents)
 	}
+}
+
+func TestModelQQuitsRootHelpListDetailAndSearchControls(t *testing.T) {
+	tests := []struct {
+		name  string
+		model Model
+	}{
+		{name: "root", model: NewModel(context.Background(), Config{}, nil)},
+		{name: "help", model: func() Model {
+			model := NewModel(context.Background(), Config{}, nil)
+			model.help = true
+			return model
+		}()},
+		{name: "list", model: Model{history: []routeFrame{{mode: routeList, stream: newTestIntentStream()}}}},
+		{name: "detail", model: Model{history: []routeFrame{{mode: routeDetail, stream: newTestIntentStream()}}}},
+		{name: "search kind", model: Model{history: []routeFrame{{mode: routeSearch, searchFocus: 0, stream: newTestIntentStream()}}}},
+		{name: "search scope", model: Model{history: []routeFrame{{mode: routeSearch, searchFocus: 2, stream: newTestIntentStream()}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var active []*testIntentStream
+			for index := range test.model.history {
+				if stream, ok := test.model.history[index].stream.(*testIntentStream); ok {
+					active = append(active, stream)
+				}
+			}
+			updated, command := test.model.Update(key('q'))
+			if command == nil || command() != tea.Quit() {
+				t.Fatalf("q command=%v", command)
+			}
+			model := updated.(Model)
+			for index := range model.history {
+				if model.history[index].stream != nil {
+					t.Fatalf("route %d retained an active stream", index)
+				}
+			}
+			for index, stream := range active {
+				if stream.cancels != 1 {
+					t.Fatalf("stream %d cancellations=%d", index, stream.cancels)
+				}
+			}
+		})
+	}
+}
+
+func TestModelQQuitsAndCancelsDispatchBeforeStreamAcquisition(t *testing.T) {
+	dispatcher := &blockingDispatcher{started: make(chan struct{}), done: make(chan struct{})}
+	model, dispatch := NewModel(context.Background(), Config{}, dispatcher).Update(key(tea.KeyEnter))
+	result := make(chan tea.Msg, 1)
+	go func() { result <- dispatch() }()
+	<-dispatcher.started
+
+	model, quit := model.Update(key('q'))
+	if quit == nil || quit() != tea.Quit() {
+		t.Fatalf("q did not request tea.Quit: %v", quit)
+	}
+	select {
+	case <-dispatcher.done:
+	case <-time.After(time.Second):
+		t.Fatal("q did not cancel the in-flight Dispatch context")
+	}
+	<-result
 }
 
 func TestModelRefreshPreservesOldProjectionAndRejectsLateStream(t *testing.T) {

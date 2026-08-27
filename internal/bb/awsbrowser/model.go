@@ -160,6 +160,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateKey(key string) (tea.Model, tea.Cmd) {
+	frame := m.current()
+	searchValueFocused := frame != nil && frame.mode == routeSearch && frame.searchFocus == 1
+	if key == "q" && !searchValueFocused {
+		m.cancelAll()
+		return m, tea.Quit
+	}
 	if m.help {
 		if key == "?" || key == "esc" {
 			m.help = false
@@ -170,7 +176,6 @@ func (m Model) updateKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	frame := m.current()
 	if frame != nil && frame.mode == routeSearch {
 		return m.updateSearchKey(key)
 	}

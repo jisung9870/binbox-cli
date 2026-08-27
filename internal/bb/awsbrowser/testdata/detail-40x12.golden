@@ -1,0 +1,12 @@
+┌──────────────────────────────────────┐
+│ AWS Browser · READ ONLY              │
+│ Profile dev  Account unresolved  Pr… │
+│ AWS > web-api                        │
+│ running                              │
+│                                      │
+│ Relations (1)                        │
+│ > sg-web · enter open                │
+│     instance security group id       │
+│     evidence: id-exact               │
+│ ↑↓ relation · enter · pg↑↓ scroll ·… │
+└──────────────────────────────────────┘

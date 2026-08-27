@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPlainStartupAndQuitAreZeroCall(t *testing.T) {
@@ -33,14 +34,115 @@ func TestPlainEOFReturnsBeforeOutput(t *testing.T) {
 	}
 }
 
-func TestPlainOpenUsesIntentSeam(t *testing.T) {
-	dispatcher := new(recordingDispatcher)
+func TestPlainConsumesProjectionAndNavigatesDetail(t *testing.T) {
+	stream := newTestIntentStream()
+	stream.updates <- IntentUpdate{
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("web-api", "running")}},
+		Done:       true,
+	}
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nquit\n"), Err: &out}, Config{Profile: "dev"})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 1\nopen 1\nback\nback\nquit\n"), Err: &out}, Config{Profile: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Kind != IntentSearch || dispatcher.intents[0].Target != "cross-profile-search" {
-		t.Fatalf("intents=%+v", dispatcher.intents)
+	for _, want := range []string{"Ready · 1 resources", "1  web-api · running", "Private IP: 10.0.1.24", "relations:", "sg-web", "instance security group id"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("plain projection missing %q:\n%s", want, out.String())
+		}
+	}
+	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Target != "ec2-instances" || stream.cancels != 1 {
+		t.Fatalf("intents=%+v cancels=%d", dispatcher.intents, stream.cancels)
+	}
+}
+
+func TestPlainRefreshKeepsCachedProjectionUntilReady(t *testing.T) {
+	initial, refresh := newTestIntentStream(), newTestIntentStream()
+	initial.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}}, Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("old", "running")}}, Done: true}
+	refresh.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadRefreshing}}, Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("staged", "pending")}}}
+	refresh.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}}, Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("new", "running")}}, Done: true}
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 1\nrefresh\nquit\n"), Err: &out}, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := out.String()
+	refreshing := strings.Index(output, "Showing cached 1 · refreshing")
+	if refreshing < 0 {
+		t.Fatalf("plain refresh status missing:\n%s", output)
+	}
+	refreshOutput := output[refreshing:]
+	ready := strings.Index(refreshOutput, "Ready · 1 resources")
+	if ready < 0 || !strings.Contains(refreshOutput[:ready], "1  old") || strings.Contains(refreshOutput[:ready], "staged") || !strings.Contains(refreshOutput[ready:], "1  new") {
+		t.Fatalf("plain refresh was not atomic:\n%s", output)
+	}
+}
+
+func TestPlainSearchUsesIntentStreamAndSanitizesFailure(t *testing.T) {
+	stream := newTestIntentStream()
+	stream.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadForbidden}, Failure: &ProviderFailure{State: LoadForbidden, Service: "iam\x1b[31m", Operation: "GetRole"}}, Done: true}
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nsearch domain all api.example.com\nquit\n"), Err: &out}, Config{Profile: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Kind != IntentSearch || dispatcher.intents[0].Query != "api.example.com" || strings.Contains(out.String(), "\x1b") || !strings.Contains(out.String(), "access denied") {
+		t.Fatalf("intents=%+v output=%q", dispatcher.intents, out.String())
+	}
+}
+
+func TestPlainSearchOpenAndEditingAreZeroCallUntilSubmit(t *testing.T) {
+	dispatcher := new(recordingDispatcher)
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nback\nquit\n"), Err: &out}, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.intents) != 0 || !strings.Contains(out.String(), "no AWS request until submit") {
+		t.Fatalf("local plain search dispatched: intents=%+v output=%s", dispatcher.intents, out.String())
+	}
+}
+
+func TestPlainLoadingCanBeCancelledByInput(t *testing.T) {
+	stream := newTestIntentStream()
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 1\nback\nquit\n"), Err: &out}, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stream.cancels != 1 || len(dispatcher.intents) != 1 {
+		t.Fatalf("plain cancellation: cancels=%d intents=%+v", stream.cancels, dispatcher.intents)
+	}
+}
+
+func TestPlainCanCancelBlockingDispatchBeforeStreamAcquisition(t *testing.T) {
+	dispatcher := &blockingDispatcher{started: make(chan struct{}), done: make(chan struct{})}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 1\nback\nquit\n"), Err: &out}, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-dispatcher.done:
+	case <-time.After(time.Second):
+		t.Fatal("plain Back did not cancel blocking Dispatch")
+	}
+}
+
+func TestPlainPrematureStreamClosureIsFailure(t *testing.T) {
+	stream := newTestIntentStream()
+	close(stream.updates)
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 1\nquit\n"), Err: &out}, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "query failed") || !strings.Contains(out.String(), "incomplete stream") {
+		t.Fatalf("plain premature closure was silent: %s", out.String())
 	}
 }

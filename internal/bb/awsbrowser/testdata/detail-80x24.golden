@@ -1,0 +1,24 @@
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ AWS Browser · READ ONLY                                                      │
+│ Profile dev  Account unresolved  Principal unresolved  ap-northeast-2        │
+│ AWS > web-api                                                                │
+│ running                                                                      │
+│                                                                              │
+│ Relations (1)                                                                │
+│ > sg-web · enter open                                                        │
+│     instance security group id                                               │
+│     evidence: id-exact                                                       │
+│                                                                              │
+│ Details                                                                      │
+│ Private IP         10.0.1.24                                                 │
+│ Long value         metadata-metadata-metadata-metadata-metadata-metadata-met │
+│                    adata-metadata-metadata-metadata-metadata-metadata-       │
+│ ↑↓ relation · enter · pg↑↓ scroll · esc                                      │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘

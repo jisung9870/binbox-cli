@@ -4,8 +4,8 @@
 목적        AWS Console 반복 탐색을 대체하는 category-first, on-demand, multi-account read-only TUI의 제품 범위를 고정한다
 대상 환경   AWS SDK for Go v2, AWS CLI v2, 여러 AWS CLI profile, regional EC2/VPC와 global IAM/Route 53
 최종 검토   2026-08-28
-다음 검토   PTY/tmux·release·실계정 gate 완료 시
-상태        자동화 구현과 production wiring 완료, 최종 gate 진행 중, 실계정 smoke 대기
+다음 검토   선택적 tmux/interactive resize 관찰 및 실계정 gate 승인 시
+상태        구현·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 등급        L2, 구현·회귀 검증의 기준으로 6개월 이상 사용
 
 관련 문서   [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [아키텍처](ARCHITECTURE.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [검토 기록](REVIEW.md) · [인덱스](README.md)

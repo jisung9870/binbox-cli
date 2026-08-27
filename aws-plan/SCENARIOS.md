@@ -4,8 +4,8 @@
 목적        주요 조사 흐름에서 사용자가 누르는 키, 화면 전이, AWS 호출 시점을 구현 가능한 예시로 고정한다
 대상 환경   AWS SDK for Go v2, credential export capability를 통과한 AWS CLI v2, 여러 AWS CLI profile, 120x30 기준 TTY
 최종 검토   2026-08-28
-다음 검토   PTY/tmux 및 real AWS smoke 결과 시
-상태        model/golden 자동화 구현 반영, 실제 terminal/AWS acceptance 대기
+다음 검토   선택적 tmux/interactive resize 관찰 및 real AWS smoke 결과 시
+상태        model/golden·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 
 관련 문서   [PRD](PRD.md) · [설계](DESIGN.md) · [아키텍처](ARCHITECTURE.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [검토 기록](REVIEW.md) · [인덱스](README.md)
 
@@ -386,4 +386,4 @@ usage와 query 안내는 stderr에 쓰고 stdout은 비운다. 이 경로는 AWS
 | 5 Refresh | old Ready 유지 후 atomic replace | loading 중 빈 화면, 실패 cache 덮어쓰기 |
 | 6 Terminal modes | responsive golden과 non-TTY CLI/SDK 0-call | pipe prompt 대기, metadata 숨김 |
 
-이 문서의 화면은 golden test의 초기 기준으로 사용한다. 실제 터미널 smoke에서 열 수, resource name 길이, NO_COLOR 가독성이 실패하면 화면 폭과 문구를 조정하되 lazy 호출, coverage, 무손실 상세, credential 격리 계약은 유지한다.
+이 문서의 화면은 golden test의 초기 기준으로 사용한다. Linux PTY process test는 alt-screen lifecycle, cancel, narrow-startup fallback, stdout/stderr, non-TTY 경계를 자동 검증한다. 선택적 direct tmux/interactive resize 관찰에서 열 수, resource name 길이, NO_COLOR 가독성이 실패하면 화면 폭과 문구를 조정하되 lazy 호출, coverage, 무손실 상세, credential 격리 계약은 유지한다. 12-profile latency·identity·CloudTrail은 owner-approved real AWS 외부 acceptance다.

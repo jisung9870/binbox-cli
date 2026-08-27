@@ -3,10 +3,13 @@
 ## Purpose and status
 
 This is the maintainer entry point for the current Go implementation of `bb`.
-The unreleased AWS browser core, typed providers, progressive TUI, scoped query,
-and production wiring are automated; final PTY/tmux/release/real-AWS
-gates remain pending. This guide explains where behavior lives and the
-contracts a code change must preserve. Product ownership and non-goals remain authoritative in
+The unreleased AWS browser implementation and production wiring are complete.
+Automated Linux PTY process checks, the skip-free guard, release CI
+test/vet/AWS-browser-race preflight, and all-four-target release-size checks pass
+and are committed. Optional direct tmux/interactive resize observation and
+owner-approved 12-profile real AWS latency, identity, and CloudTrail evidence
+remain manual/external acceptance. This guide explains where behavior lives and
+the contracts a code change must preserve. Product ownership and non-goals remain authoritative in
 [architecture.md](architecture.md); user-facing syntax remains authoritative in
 [commands.md](commands.md) and `bb <command> --help`.
 
@@ -216,9 +219,11 @@ scripts/test-release-guard.sh
 git diff --check
 ```
 
-Interactive changes also require a real zsh/tmux PTY smoke record covering
-resize, cancellation, stdout/stderr separation, and terminal cleanup. Secret or
-Terraform changes require focused safety tests for plaintext exclusion,
+AWS browser changes retain automated Linux PTY process checks for alternate-screen
+cleanup, cancellation, narrow-startup fallback, stdout/stderr separation, and
+non-TTY behavior. A direct tmux/interactive resize observation is optional
+manual acceptance and must not be inferred from those automated checks. Secret
+or Terraform changes require focused safety tests for plaintext exclusion,
 re-observation, snapshots, cleanup, and failure paths.
 
 Releases are created from a clean commit with an annotated `v<version>` tag.

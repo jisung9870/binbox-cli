@@ -4,8 +4,8 @@
 목적        AWS 콘솔 없이 필요한 리소스와 관계를 따라가는 read-only TUI의 범위를 고정한다
 대상 환경   AWS CLI v2, AWS SDK for Go v2, 여러 AWS profile·계정, 선택 리전
 최종 검토   2026-08-28
-다음 검토   PTY/tmux·release·실계정 CloudTrail gate 완료 시
-상태        자동화 구현과 production wiring 완료, 최종 gate 진행 중, 실계정 smoke 대기
+다음 검토   선택적 tmux/interactive resize 관찰 및 실계정 CloudTrail 승인 시
+상태        구현·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 
 `bb aws browse`는 네트워크 호출 없이 Home을 먼저 열고 사용자가 선택한 category·resource·relation만 progressive load하는 read-only 터미널 브라우저다. AWS CLI는 profile discovery와 credential export만 담당하고, AWS SDK for Go v2의 좁은 typed provider가 STS identity와 EC2·IAM·Route 53 조회를 담당한다. 실제 AWS credential과 CloudTrail 검증은 repository owner 승인이 필요한 외부 gate로 남아 있다.
 
@@ -56,8 +56,8 @@
 
 ## 완료 gate
 
-- 자동화: fixture/provider/query/model/golden test, race, vet, build, no-skip, 네 release target의 stripped 40 MiB cap.
-- terminal: direct PTY와 tmux에서 alt-screen cleanup, resize, narrow startup plain fallback, stderr/stdout 경계를 확인한다.
+- 자동화(통과·커밋됨): fixture/provider/query/model/golden test, Linux PTY process test, race, vet, build, no-skip, 네 release target의 stripped 40 MiB cap.
+- terminal: 자동 Linux PTY는 alt-screen cleanup, cancel, narrow startup plain fallback, stderr/stdout, non-TTY 경계를 확인한다. direct tmux와 실행 중 interactive resize 관찰은 선택적 수동 acceptance다.
 - 외부: 승인된 read-only credential로 static/SSO/role/credential-process context와 12-profile latency를 확인하고 CloudTrail에서 승인된 credential/auth 및 STS/EC2/IAM/Route 53 read operation 외 호출이 없음을 검토한다.
 
-자동화 구현과 production wiring이 존재한다는 사실만으로 release-ready 또는 실계정 검증 완료를 뜻하지 않는다. PTY/tmux, release gate, 실제 credential/CloudTrail smoke가 모두 닫힐 때 P0 완료로 바꾼다.
+구현과 자동 release gate는 완료됐지만 release 자체나 실계정 검증 완료를 뜻하지 않는다. 선택적 direct tmux/interactive resize 관찰과 owner-approved 12-profile latency·identity·CloudTrail 증거는 수동/외부 acceptance로 남는다.

@@ -4,8 +4,8 @@
 목적        기존안 반증, 역할별 반복 검토, 반영 결정과 구현 영향 범위를 추적한다
 대상 환경   2026-08-28 working tree, AWS SDK for Go v2와 AWS CLI v2 공식 문서
 최종 검토   2026-08-28
-다음 검토   PTY/tmux·release·실계정 gate 완료 시
-상태        hybrid 자동화 구현 반영, finalization 및 real AWS smoke 대기
+다음 검토   선택적 tmux/interactive resize 관찰 및 실계정 gate 승인 시
+상태        hybrid 구현·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 
 관련 문서   [PRD](PRD.md) · [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [아키텍처](ARCHITECTURE.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [인덱스](README.md)
 
@@ -134,7 +134,7 @@
 6. ambient credential과 named-profile worker를 분리하고 `credential_source=Environment`를 별도 분류한다.
 7. `bb aws query`가 non-interactive JSON 범위를 명시하고 non-TTY browse는 prompt나 AWS call을 시작하지 않는다.
 
-이 판정에 따라 zero-call Home, narrowed SDK interface, cancellation, scope-aware store와 production CLI wiring이 구현됐다. PTY/tmux, release/no-skip/size, 실제 AWS/CloudTrail evidence가 남아 있으며 이 항목이 닫히기 전에는 release 완료로 판정하지 않는다.
+이 판정에 따라 zero-call Home, narrowed SDK interface, cancellation, scope-aware store와 production CLI wiring이 구현됐다. 자동 Linux PTY process check, skip-free guard, release CI test/vet/AWS-browser race, 네 release target size check도 통과해 커밋됐다. direct tmux/interactive resize 관찰은 선택적 수동 항목이고, owner-approved 12-profile real AWS latency·identity·CloudTrail 증거는 외부 acceptance다. 후자를 자동화 증거로 대체하거나 현재 상태를 release/실계정 완료로 판정하지 않는다.
 
 ## 검토 루프 3: CLI-only 기준의 1차 blocker audit
 
@@ -165,7 +165,7 @@
 | 현재 개발 환경 2.34.58이 문서의 2.36.18 하한보다 낮음 | patch 하한을 제거하고 credential export capability로 판정 | 2.34.58 credential fixture |
 | stdout pipe를 non-TTY 예시로 사용 | stdin 또는 stderr의 실제 non-TTY와 exit 2로 고정 | stdin `/dev/null`, stdout empty, stderr usage |
 
-당시 repository test 검토는 CLI resource allowlist를 확인했다. Hybrid 전환 뒤에는 SDK resource 동작을 in-process narrowed fake client로, CLI argv·environment·cancel을 browser 전용 helper subprocess로 나눠 검증한다. 자동 PTY harness는 P0 새 dependency로 추가하지 않고 model/golden 자동 검증과 실제 TTY/tmux 수동 smoke를 함께 사용한다.
+당시 repository test 검토는 CLI resource allowlist를 확인했다. Hybrid 전환 뒤에는 SDK resource 동작을 in-process narrowed fake client로, CLI argv·environment·cancel을 browser 전용 helper subprocess로 나눠 검증한다. 이후 util-linux `script` 기반 Linux PTY process check가 추가되어 alt-screen lifecycle, cancel, narrow-startup fallback, stdout/stderr, non-TTY 경계를 자동 검증한다. direct tmux와 실행 중 interactive resize 관찰은 선택적 수동 acceptance로 남는다.
 
 이 루프의 UI 판정은 유지하지만 transport 최종 판정은 아래 검토 루프 5로 대체한다.
 
@@ -194,7 +194,7 @@
 | binary 측정에 합격선 없음 | gate가 결정 불가 | stripped binary 40 MiB hard cap, baseline 5,361,794 bytes |
 | `credential_process` 내부 network | bb endpoint 통제 밖 | profile 소유자의 credential trust boundary로 명시 |
 
-최종 기획 blocker는 0건이다. 다만 endpoint source가 선택 SDK version에서 compile되고 poison listener 요청이 0회인지, credential generation rebinding이 account 변경을 막는지는 구현 전 Phase 0 gate에서 실제 코드로 증명해야 한다. Gate 실패 시 CLI data-plane으로 회귀하지 않고 helper process architecture를 새 ADR로 검토한다.
+당시 최종 기획 blocker는 0건이었고 endpoint source compile, poison listener 0회, credential generation rebinding은 이후 Phase 0 구현과 자동화에서 증명됐다. 승인된 실계정 12-profile latency·identity·CloudTrail 검토는 이 자동 증거와 별개의 외부 acceptance다.
 
 ## 구현 영향 파일과 회귀 범위
 

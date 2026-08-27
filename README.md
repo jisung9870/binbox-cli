@@ -139,9 +139,12 @@ opens use narrowed AWS SDK for Go v2 EC2, IAM, and Route 53 read providers after
 AWS CLI profile discovery/credential export and SDK STS identity verification.
 Cross-profile domain/role search runs only after submit, with bounded concurrency
 and per-profile coverage. `bb aws browse` is interactive and has no `--json`;
-automation uses `bb aws query`. Automated implementation and production wiring
-are complete while PTY/tmux/release gates and owner-approved real AWS/CloudTrail
-smoke remain pending, so this branch is not yet a released AWS browser.
+automation uses `bb aws query`. Automated Linux PTY process checks and the
+release preflight (`test`, `vet`, AWS-browser race, skip-free, and all four
+release-size targets) pass and are committed. Optional direct tmux/interactive
+resize observation and owner-approved 12-profile real AWS latency, identity,
+and CloudTrail evidence remain manual/external acceptance, so this branch is
+not yet a released AWS browser.
 
 bb-owned structured reads are formatted as human-readable labels and tables by
 default. Add `--json` for automation and the stable schema-v1 envelope:

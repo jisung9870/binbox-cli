@@ -4,8 +4,8 @@
 목적        category-first AWS TUI의 data flow, credential 경계, 동시성, cache, 오류·검증 계약을 고정한다
 대상 환경   Go 1.25, Bubble Tea v2, AWS SDK for Go v2, AWS CLI v2, 여러 named profile
 최종 검토   2026-08-28
-다음 검토   PTY/tmux·release·실계정 gate 완료 시
-상태        core/provider/query/TUI 자동화 구현 완료, 최종 gate 진행 중
+다음 검토   선택적 tmux/interactive resize 관찰 및 실계정 gate 승인 시
+상태        구현·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 
 관련 문서   [PRD](PRD.md) · [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [검토 기록](REVIEW.md) · [인덱스](README.md)
 
@@ -44,7 +44,8 @@
 - superseded v1 초안: `collectAWSBrowseGraph`가 TUI 실행 전 AWS CLI로 STS, EC2/VPC, Route 53, IAM을 직렬 호출했다.
 - superseded 중간 기획: 화면별 AWS CLI child를 lazy 실행하려 했다.
 - 구현된 v2 core: profile/auth control-plane만 AWS CLI를 사용하고 모든 resource request는 context-aware SDK client로 실행한다.
-- 남은 차이: PTY/tmux/release gate와 승인된 real AWS/CloudTrail smoke를 닫아야 release-ready다.
+- 자동화 상태: Linux PTY process check, skip-free guard, release CI의 test/vet/AWS-browser race, 네 release target size check가 통과했고 커밋됐다.
+- 남은 acceptance: direct tmux/interactive resize 관찰은 선택적 수동 항목이며, owner-approved 12-profile real AWS latency/identity와 CloudTrail 증거는 외부 항목이다. 이 증거 전에는 release 또는 실계정 검증 완료를 주장하지 않는다.
 
 ## 목표 구조는 credential control-plane과 resource data-plane을 분리한다
 
@@ -467,8 +468,8 @@ Trace에는 credential, tag value, policy document, raw SDK output을 기록하�
 6. SDK version compile test와 poison listener로 global/service env, profile endpoint/services가 SDK와 credential child에 적용되지 않음을 증명한다.
 7. Provider interface compile test와 call recorder로 mutation operation 0회를 증명한다.
 8. Model/golden으로 history, loading, partial, responsive, NO_COLOR, terminal mode를 증명한다.
-9. `go test ./...`, SDK coordinator/provider `go test -race`, `go vet ./...`, `go build ./cmd/bb`, stripped binary 40 MiB gate를 실행한다.
-10. 실계정 CloudTrail에서 SDK resource read와 CLI credential resolution의 승인된 STS/SSO auth operation을 분리해 검토한다.
+9. 자동 Linux PTY process check, skip-free guard, `go test ./...`, SDK coordinator/provider `go test -race`, `go vet ./...`, `go build ./cmd/bb`, 네 release target의 stripped 40 MiB gate를 실행한다. 이 자동 gate는 통과해 커밋됐다.
+10. 선택적으로 direct tmux/interactive resize를 수동 관찰하고, owner-approved 12-profile real AWS에서 latency와 identity를 확인한 뒤 CloudTrail에서 SDK resource read와 CLI credential resolution의 승인된 STS/SSO auth operation을 분리해 검토한다.
 
 ## 단계별 제공
 

@@ -15,8 +15,11 @@ release tags and the corresponding release records.
 - Added `bb aws query ec2 instances|domain|role` for scoped human or schema-v1
   JSON automation; interactive `aws browse` no longer accepts `--json`.
 - Restricted the browser's AWS CLI data path to profile discovery and
-  credential export; PTY/tmux/release gates and
-  owner-approved real AWS/CloudTrail smoke remain pending.
+  credential export; committed Linux PTY process checks, a skip-free guard,
+  release CI test/vet/AWS-browser-race preflight, and all four release-size
+  checks pass. Optional direct tmux/interactive resize observation and
+  owner-approved 12-profile real AWS latency, identity, and CloudTrail evidence
+  remain manual/external acceptance.
 - Added `bb setup shell` to register the checkout-independent zsh integration
   and native completion in `.zshrc` without duplicating an existing setup.
 

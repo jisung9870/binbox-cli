@@ -4,8 +4,8 @@
 목적        AWS Console의 반복적인 서비스·계정 이동을 대체할 전용 read-only TUI의 제품·UX·기술 계약을 확정한다
 대상 환경   AWS SDK for Go v2, AWS CLI v2, zsh/tmux/Orca 터미널, 여러 AWS profile과 계정·리전
 최종 검토   2026-08-28
-다음 검토   PTY/tmux·release·실계정 gate 완료 시
-상태        자동화 구현과 production wiring 완료, 최종 gate 진행 중, 실계정 smoke 대기
+다음 검토   선택적 tmux/interactive resize 관찰 및 실계정 gate 승인 시
+상태        구현·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 
 `bb aws browse`는 시작할 때 전체 AWS inventory를 만들지 않는다. 로컬 정보로 서비스 카탈로그를 즉시 열고, EC2·Route 53·IAM 같은 카테고리에 들어가거나 연결 리소스를 선택할 때 필요한 조회만 실행한다. 도메인·IAM role처럼 소유 계정을 모를 수 있는 검색은 사용자가 검색을 확정한 뒤 여러 AWS profile을 제한된 동시성으로 자동 조회한다.
 
@@ -31,7 +31,7 @@
 
 ## 기존 작업과의 관계
 
-기존 CLI-preload `internal/bb/aws_browse.go`와 문서 설계는 Git history와 decision log에 superseded 근거로 남는다. 현재 branch에는 credential/runtime/provider/query/store, progressive TUI, scoped query, bounded cross-profile search와 production wiring의 자동화 구현이 있으며 최종 acceptance가 진행 중이다. 이미 배포된 `bb aws assume`과 `bb assume`은 호환 surface이므로 강제 rename하지 않지만, 새 TUI와 내부 모델에서는 대상을 `assume`이 아니라 `AWS profile` 또는 `account/role context`라고 부른다.
+기존 CLI-preload `internal/bb/aws_browse.go`와 문서 설계는 Git history와 decision log에 superseded 근거로 남는다. 현재 branch에는 credential/runtime/provider/query/store, progressive TUI, scoped query, bounded cross-profile search와 production wiring 구현이 완료됐다. 자동 Linux PTY process check, skip-free guard, release CI test/vet/AWS-browser race, 네 release target size check도 통과해 커밋됐다. 선택적 direct tmux/interactive resize 관찰과 owner-approved 12-profile real AWS latency·identity·CloudTrail 증거는 수동/외부 acceptance로 남는다. 이미 배포된 `bb aws assume`과 `bb assume`은 호환 surface이므로 강제 rename하지 않지만, 새 TUI와 내부 모델에서는 대상을 `assume`이 아니라 `AWS profile` 또는 `account/role context`라고 부른다.
 
 ## 구현 기본값
 

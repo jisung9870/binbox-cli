@@ -4,7 +4,7 @@
 
 ## Source of truth
 
-- Status: Automated implementation and production wiring complete; final acceptance in progress; real AWS/CloudTrail smoke pending
+- Status: Implementation, automated Linux PTY, and automated release gates complete; optional tmux/interactive resize observation and owner-approved real AWS/CloudTrail acceptance remain
 - Last refreshed: 2026-08-28
 - Primary product surfaces: `bb aws browse` 전용 TUI, plain terminal fallback, scoped human/JSON query
 - Evidence reviewed: `internal/bb/aws_browse.go`, `internal/bb/aws_query.go`, `internal/bb/awsbrowser/*`, `internal/bb/awsbrowser/providers/*`, `internal/bb/awsbrowser/integration/*`, root `DESIGN.md`, `docs/product-aws-resource-browser-202608.md`, `docs/design-aws-resource-browser-202608.md`, AWS SDK for Go v2·AWS CLI·Route 53·EC2·IAM 공식 문서, 독립 UX·아키텍처·dependency·코드 감사

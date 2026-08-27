@@ -330,9 +330,12 @@ profile-scoped observations separate. Exact domain/role search is current-first,
 bounded, and starts only after submit; scoped `bb aws query` owns JSON automation
 because interactive `bb aws browse` no longer accepts `--json`.
 
-Implementation and production wiring are automated but not release-complete:
-PTY/tmux/release gates and repository-owner-approved real AWS/CloudTrail smoke
-remain pending. The full decision and security gate are retained in
+Implementation and production wiring are complete. Automated Linux PTY process
+checks, the skip-free guard, release CI test/vet/AWS-browser-race preflight, and
+all-four-target release-size checks pass and are committed. This does not mark a
+release: optional direct tmux/interactive resize observation and the
+repository-owner-approved 12-profile real AWS latency/identity and CloudTrail
+run remain manual/external acceptance. The full decision and security gate are retained in
 `aws-plan/ADR-001-HYBRID-AWS-ACCESS.md`.
 
 `bb wenv show` is inspection-only. `bb wenv apply` renders the current-to-target

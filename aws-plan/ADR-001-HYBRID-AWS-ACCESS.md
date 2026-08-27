@@ -4,7 +4,7 @@
 목적        AWS Browse v2의 AWS 접근 방식과 검증 gate를 고정한다
 대상 환경   Go 1.25, AWS SDK for Go v2, AWS CLI v2, 여러 AWS profile
 결정일      2026-08-27
-상태        Accepted, 자동화 구현 반영; real AWS/CloudTrail gate 대기
+상태        Accepted, 구현·자동 Linux PTY·자동 release gate 완료; real AWS/CloudTrail 외부 gate 대기
 
 관련 문서   [PRD](PRD.md) · [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [아키텍처](ARCHITECTURE.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [검토 기록](REVIEW.md)
 

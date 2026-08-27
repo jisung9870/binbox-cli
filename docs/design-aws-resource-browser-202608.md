@@ -4,8 +4,8 @@
 목적        lazy read-only AWS TUI의 data flow, 화면, credential·정확성 경계를 고정한다
 대상 환경   AWS CLI v2, AWS SDK for Go v2, 여러 profile, 선택 리전
 최종 검토   2026-08-28
-다음 검토   PTY/tmux·release·실계정 CloudTrail gate 완료 시
-상태        core/provider/TUI/query와 production wiring 완료, 최종 acceptance 진행 중
+다음 검토   선택적 tmux/interactive resize 관찰 및 실계정 CloudTrail 승인 시
+상태        구현·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 
 `bb aws browse`는 전체 inventory snapshot을 먼저 만들지 않는다. 전용 Bubble Tea model이 local-only Home을 먼저 그리고, explicit open/search intent를 query coordinator에 전달해 필요한 SDK page만 progressive load한다. 이 문서는 과거 AWS CLI JSON preload와 공용 staged selector 설계를 supersede한다.
 
@@ -62,4 +62,4 @@ Errors are typed as empty, forbidden, auth-required, throttled, timed-out, cance
 
 ## Verification status
 
-Fixture/provider/query/model/golden coverage and production wiring implement the architecture without real credentials. PTY/tmux/release gates are still being finalized, and the repository must not claim release readiness until they pass. The remaining real AWS gate requires owner-approved credentials and CloudTrail review of credential/auth plus STS/EC2/IAM/Route 53 read operations; it cannot be replaced by fake-client evidence.
+Fixture/provider/query/model/golden coverage and production wiring implement the architecture without real credentials. Automated Linux PTY process checks, the skip-free guard, release CI test/vet/AWS-browser-race preflight, and all-four-target release-size checks pass and are committed. Optional direct tmux/interactive resize observation remains manual, and the owner-approved 12-profile real AWS latency/identity run plus CloudTrail review of credential/auth and STS/EC2/IAM/Route 53 reads remains external acceptance; neither may be inferred from fake-client evidence.

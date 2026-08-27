@@ -103,3 +103,37 @@ func TestSanitizedErrorsRejectControlCharactersAndRawMessages(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizedErrorsRejectHostileStructuredCodes(t *testing.T) {
+	const secret = "credential-super-secret"
+	err := classifyCLIError(
+		context.Background(),
+		cliOperationExportCredentials,
+		[]byte(`{"Code":"credential-super-secret","Message":"ordinary failure"}`),
+		errors.New("exporter credential-super-secret"),
+	)
+	credentialErr := classifyCredentialError(context.Background(), err)
+
+	for _, rendered := range []error{err, credentialErr} {
+		for current := rendered; current != nil; current = errors.Unwrap(current) {
+			if strings.Contains(current.Error(), secret) {
+				t.Fatalf("error chain leaked hostile value: %q", current)
+			}
+		}
+	}
+	var cliError *CLIError
+	if !errors.As(err, &cliError) || cliError.Code != "" {
+		t.Fatalf("hostile code was retained: %#v", cliError)
+	}
+}
+
+func TestCredentialErrorsDoNotUnwrapArbitraryExporterErrors(t *testing.T) {
+	const secret = "exporter-credential-super-secret"
+	err := classifyCredentialError(context.Background(), errors.New(secret))
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("rendered error leaked exporter value: %q", err)
+	}
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		t.Fatalf("arbitrary exporter error remained in chain: %q", unwrapped)
+	}
+}

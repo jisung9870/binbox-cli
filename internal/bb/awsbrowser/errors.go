@@ -47,7 +47,7 @@ func (e *CLIError) Unwrap() error {
 	if e == nil {
 		return nil
 	}
-	return e.err
+	return safeCLIErrorCause(e.err)
 }
 
 type CredentialErrorKind string
@@ -82,7 +82,17 @@ func (e *CredentialError) Unwrap() error {
 	if e == nil {
 		return nil
 	}
-	return e.err
+	if errors.Is(e.err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(e.err, context.Canceled) {
+		return context.Canceled
+	}
+	var cliError *CLIError
+	if errors.As(e.err, &cliError) {
+		return cliError
+	}
+	return nil
 }
 
 type OutputLimitError struct {
@@ -91,7 +101,18 @@ type OutputLimitError struct {
 }
 
 func (e *OutputLimitError) Error() string {
-	return fmt.Sprintf("AWS CLI %s exceeded %d bytes", e.Stream, e.Limit)
+	stream := "output"
+	if e != nil && (e.Stream == "stdout" || e.Stream == "stderr") {
+		stream = e.Stream
+	}
+	limit := 0
+	if e != nil && (e.Limit == stdoutLimit || e.Limit == stderrLimit) {
+		limit = e.Limit
+	}
+	if limit == 0 {
+		return fmt.Sprintf("AWS CLI %s exceeded its size limit", stream)
+	}
+	return fmt.Sprintf("AWS CLI %s exceeded %d bytes", stream, limit)
 }
 
 func classifyCLIError(ctx context.Context, operation string, stderr []byte, err error) error {
@@ -144,7 +165,7 @@ func classifyCredentialError(ctx context.Context, err error) error {
 
 	var cliError *CLIError
 	if !errors.As(err, &cliError) {
-		return &CredentialError{Kind: CredentialUnknown, err: err}
+		return &CredentialError{Kind: CredentialUnknown}
 	}
 
 	kind := CredentialUnknown
@@ -219,19 +240,32 @@ func findErrorMessage(value any) string {
 
 func sanitizeErrorCode(code string) string {
 	code = strings.TrimSpace(code)
-	if code == "" || len(code) > 128 {
-		return ""
+	switch code {
+	case "SSOTokenLoadError", "InvalidGrantException", "UnauthorizedException", "ExpiredToken",
+		"UnknownOptionsError", "UnknownArgumentError", "InvalidChoice", "InvalidChoiceError",
+		"Configuration", "UnsupportedCLIErrorFormat", "UnsupportedCLIAutoPrompt",
+		"UnsupportedCLIPager", "UnsupportedExportCredentials", "UnsupportedListProfiles":
+		return code
 	}
-	for _, char := range code {
-		if (char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			strings.ContainsRune(" ._:#/-", char) {
-			continue
+	return ""
+}
+
+func safeCLIErrorCause(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	var limitError *OutputLimitError
+	if errors.As(err, &limitError) {
+		stream := "output"
+		if limitError.Stream == "stdout" || limitError.Stream == "stderr" {
+			stream = limitError.Stream
 		}
-		return ""
+		return &OutputLimitError{Stream: stream, Limit: limitError.Limit}
 	}
-	return code
+	return nil
 }
 
 func unsupportedCode(code string) bool {

@@ -46,7 +46,7 @@ func NewCredentialProvider(cli CredentialExporter, profile string, env []string)
 	if cli == nil {
 		return nil, errors.New("AWS CLI runner is required")
 	}
-	if profile != "" && !profileNameRE.MatchString(profile) {
+	if profile != "" && !validProfileName(profile) {
 		return nil, errors.New("invalid AWS profile name")
 	}
 	if env == nil {

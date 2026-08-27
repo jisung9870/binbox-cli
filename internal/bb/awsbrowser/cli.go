@@ -3,14 +3,15 @@ package awsbrowser
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const (
-	stdoutLimit = 32 << 10
-	stderrLimit = 64 << 10
+	stdoutLimit      = 32 << 10
+	stderrLimit      = 64 << 10
+	commandWaitDelay = 500 * time.Millisecond
 
 	cliOperationListProfiles      = "list-profiles"
 	cliOperationExportCredentials = "export-credentials"
@@ -57,7 +58,7 @@ func (c *ExecCLI) ListProfiles(ctx context.Context, env []string) ([]string, err
 		if profile == "" {
 			continue
 		}
-		if !profileNameRE.MatchString(profile) {
+		if !validProfileName(profile) {
 			return nil, &CLIError{Kind: CLIInvalidOutput, Operation: cliOperationListProfiles}
 		}
 		profiles = append(profiles, profile)
@@ -66,7 +67,7 @@ func (c *ExecCLI) ListProfiles(ctx context.Context, env []string) ([]string, err
 }
 
 func (c *ExecCLI) ExportCredentials(ctx context.Context, profile string, env []string) ([]byte, error) {
-	if profile != "" && !profileNameRE.MatchString(profile) {
+	if profile != "" && !validProfileName(profile) {
 		return nil, &CLIError{Kind: CLIInvalidOutput, Operation: cliOperationExportCredentials}
 	}
 
@@ -75,7 +76,7 @@ func (c *ExecCLI) ExportCredentials(ctx context.Context, profile string, env []s
 
 func (c *ExecCLI) runApproved(ctx context.Context, operation, profile string, env []string) ([]byte, error) {
 	if c == nil || c.path == "" || c.command == nil {
-		return nil, &CLIError{Kind: CLIUnsupported, Operation: operation, err: errors.New("AWS CLI runner is not configured")}
+		return nil, &CLIError{Kind: CLIUnsupported, Operation: operation}
 	}
 	args, ok := approvedCLIArgs(operation, profile)
 	if !ok {
@@ -92,6 +93,8 @@ func (c *ExecCLI) runApproved(ctx context.Context, operation, profile string, en
 	cmd.Stdin = nil
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	configureProcessCancellation(cmd)
+	cmd.WaitDelay = commandWaitDelay
 	err := cmd.Run()
 	if stdout.overflow {
 		return nil, classifyCLIError(ctx, operation, nil, &OutputLimitError{Stream: "stdout", Limit: stdoutLimit})

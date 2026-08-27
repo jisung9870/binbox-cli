@@ -191,6 +191,21 @@ func TestCredentialCancellationRetainsContextCause(t *testing.T) {
 	}
 }
 
+func TestCredentialProviderDoesNotExposeArbitraryExporterErrors(t *testing.T) {
+	const secret = "exporter-credential-super-secret"
+	exporter := &fakeCredentialExporter{err: errors.New(secret)}
+	provider, err := NewCredentialProvider(exporter, "dev", []string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = provider.Retrieve(context.Background())
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		if strings.Contains(current.Error(), secret) {
+			t.Fatalf("error chain leaked exporter error: %q", current)
+		}
+	}
+}
+
 func TestCredentialEnvironmentIsDeterministic(t *testing.T) {
 	base := []string{"Z=last", "A=first", "INVALID", "=empty-name", "A=replaced"}
 	want := []string{"A=replaced", "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true", "Z=last"}

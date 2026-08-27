@@ -6,12 +6,16 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+const cliHelperSentinel = "awsbrowser-cli-helper-8f5cc184"
 
 func TestCLIExposesOnlyApprovedCapabilities(t *testing.T) {
 	interfaceType := reflect.TypeOf((*CLI)(nil)).Elem()
@@ -50,7 +54,7 @@ func TestExecCLIUsesDirectApprovedArgvAndNilStdin(t *testing.T) {
 	cli := &ExecCLI{
 		path: "aws-safe-path",
 		command: func(ctx context.Context, name string, args ...string) *exec.Cmd {
-			cmd := exec.CommandContext(ctx, "/bin/true")
+			cmd := cliHelperCommand(ctx, "success")
 			invocations = append(invocations, invocation{name: name, args: slices.Clone(args), cmd: cmd})
 			return cmd
 		},
@@ -118,8 +122,8 @@ func TestExecCLIUsesDirectApprovedArgvAndNilStdin(t *testing.T) {
 }
 
 func TestExecCLIParsesProfiles(t *testing.T) {
-	cli := helperExecCLI()
-	profiles, err := cli.ListProfiles(context.Background(), []string{"AWSBROWSER_HELPER=list-profiles"})
+	cli := helperExecCLI("list-profiles")
+	profiles, err := cli.ListProfiles(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,8 +133,8 @@ func TestExecCLIParsesProfiles(t *testing.T) {
 }
 
 func TestExecCLIRejectsMalformedProfileOutput(t *testing.T) {
-	cli := helperExecCLI()
-	_, err := cli.ListProfiles(context.Background(), []string{"AWSBROWSER_HELPER=invalid-profiles"})
+	cli := helperExecCLI("invalid-profiles")
+	_, err := cli.ListProfiles(context.Background(), nil)
 	var cliError *CLIError
 	if !errors.As(err, &cliError) || cliError.Kind != CLIInvalidOutput {
 		t.Fatalf("error=%v want CLIInvalidOutput", err)
@@ -151,8 +155,8 @@ func TestExecCLIBoundsBothOutputStreams(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cli := helperExecCLI()
-			_, err := cli.ExportCredentials(context.Background(), "", []string{"AWSBROWSER_HELPER=" + test.mode})
+			cli := helperExecCLI(test.mode)
+			_, err := cli.ExportCredentials(context.Background(), "", nil)
 			var cliError *CLIError
 			if !errors.As(err, &cliError) || cliError.Kind != CLIOutputTooLarge {
 				t.Fatalf("error=%v want CLIOutputTooLarge", err)
@@ -166,12 +170,12 @@ func TestExecCLIBoundsBothOutputStreams(t *testing.T) {
 }
 
 func TestExecCLICancelsRunningChild(t *testing.T) {
-	cli := helperExecCLI()
+	cli := helperExecCLI("block")
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	started := time.Now()
-	_, err := cli.ExportCredentials(ctx, "", []string{"AWSBROWSER_HELPER=block"})
+	_, err := cli.ExportCredentials(ctx, "", nil)
 	if elapsed := time.Since(started); elapsed > 3*time.Second {
 		t.Fatalf("cancelled child returned after %s", elapsed)
 	}
@@ -185,8 +189,8 @@ func TestExecCLICancelsRunningChild(t *testing.T) {
 }
 
 func TestExecCLIDoesNotExposeRawStderr(t *testing.T) {
-	cli := helperExecCLI()
-	_, err := cli.ExportCredentials(context.Background(), "", []string{"AWSBROWSER_HELPER=secret-error"})
+	cli := helperExecCLI("secret-error")
+	_, err := cli.ExportCredentials(context.Background(), "", nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -198,16 +202,57 @@ func TestExecCLIDoesNotExposeRawStderr(t *testing.T) {
 	}
 }
 
-func TestMain(m *testing.M) {
-	mode := os.Getenv("AWSBROWSER_HELPER")
-	if mode != "" {
-		runCLIHelperProcess(mode)
+func TestExecCLICancellationBoundsEndlessOutput(t *testing.T) {
+	cli := helperExecCLI("endless-output")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	_, err := cli.ExportCredentials(ctx, "", nil)
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("endless-output cancellation returned after %s", elapsed)
 	}
-	os.Exit(m.Run())
+	var cliError *CLIError
+	if !errors.As(err, &cliError) || cliError.Kind != CLICancelled {
+		t.Fatalf("error=%v want CLICancelled", err)
+	}
 }
 
-func runCLIHelperProcess(mode string) {
+func TestExecCLIBoundsInheritedPipeShutdown(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+	cli := helperExecCLI("inherit-pipe", pidFile)
+
+	started := time.Now()
+	_, err := cli.ExportCredentials(context.Background(), "", nil)
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("inherited-pipe shutdown returned after %s", elapsed)
+	}
+	if err == nil {
+		t.Fatal("expected bounded pipe-shutdown error")
+	}
+	data, readErr := os.ReadFile(pidFile)
+	if readErr != nil {
+		t.Fatalf("read grandchild PID: %v", readErr)
+	}
+	if _, parseErr := strconv.Atoi(strings.TrimSpace(string(data))); parseErr != nil {
+		t.Fatalf("grandchild PID=%q: %v", data, parseErr)
+	}
+}
+
+func TestCLIHelperProcess(t *testing.T) {
+	index := slices.Index(os.Args, cliHelperSentinel)
+	if index < 0 {
+		return
+	}
+	if index+1 >= len(os.Args) {
+		os.Exit(97)
+	}
+	runCLIHelperProcess(os.Args[index+1], os.Args[index+2:])
+}
+
+func runCLIHelperProcess(mode string, extra []string) {
 	switch mode {
+	case "success":
 	case "list-profiles":
 		_, _ = os.Stdout.WriteString("default\r\ndev-1\nprod_2\n")
 	case "invalid-profiles":
@@ -221,19 +266,58 @@ func runCLIHelperProcess(mode string) {
 		os.Exit(17)
 	case "block":
 		time.Sleep(30 * time.Second)
+	case "endless-output":
+		chunk := bytes.Repeat([]byte("x"), 4096)
+		for {
+			_, _ = os.Stdout.Write(chunk)
+		}
+	case "inherit-pipe":
+		if len(extra) != 1 {
+			os.Exit(96)
+		}
+		startCLIHelperGrandchild(extra[0], "grandchild-short")
+	case "grandchild-short":
+		time.Sleep(3 * time.Second)
+	case "spawn-tree":
+		if len(extra) != 1 {
+			os.Exit(95)
+		}
+		startCLIHelperGrandchild(extra[0], "grandchild-long")
+		time.Sleep(30 * time.Second)
+	case "grandchild-long":
+		time.Sleep(30 * time.Second)
 	default:
 		os.Exit(19)
 	}
 	os.Exit(0)
 }
 
-func helperExecCLI() *ExecCLI {
+func startCLIHelperGrandchild(pidFile, mode string) {
+	cmd := cliHelperCommand(context.Background(), mode)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		os.Exit(94)
+	}
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+		_ = cmd.Process.Kill()
+		os.Exit(93)
+	}
+}
+
+func helperExecCLI(mode string, extra ...string) *ExecCLI {
 	return &ExecCLI{
 		path: "aws-test-helper",
 		command: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-			return exec.CommandContext(ctx, os.Args[0])
+			return cliHelperCommand(ctx, mode, extra...)
 		},
 	}
+}
+
+func cliHelperCommand(ctx context.Context, mode string, extra ...string) *exec.Cmd {
+	args := []string{"-test.run=^TestCLIHelperProcess$", "--", cliHelperSentinel, mode}
+	args = append(args, extra...)
+	return exec.CommandContext(ctx, os.Args[0], args...)
 }
 
 func environmentMap(env []string) map[string]string {

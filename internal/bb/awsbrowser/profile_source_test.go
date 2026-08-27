@@ -61,12 +61,26 @@ func TestClassifyProfileSource(t *testing.T) {
 }
 
 func TestClassifyProfileSourceRejectsEnvironmentCredentialSource(t *testing.T) {
-	_, err := ClassifyProfileSource("dev", []byte("[profile dev]\nrole_arn = arn:aws:iam::123456789012:role/ReadOnly\ncredential_source = Environment\n"), nil)
-	if err == nil || !strings.Contains(err.Error(), "Environment is not allowed") {
-		t.Fatalf("error=%v", err)
+	for _, source := range []string{"Environment", `"Environment"`, "environment"} {
+		_, err := ClassifyProfileSource("dev", []byte("[profile dev]\nrole_arn = arn:aws:iam::123456789012:role/ReadOnly\ncredential_source = "+source+"\n"), nil)
+		if err == nil || !strings.Contains(err.Error(), "Environment is not allowed") {
+			t.Fatalf("source=%q error=%v", source, err)
+		}
+		if strings.Contains(err.Error(), "arn:aws") {
+			t.Fatalf("error leaked configuration value: %q", err)
+		}
 	}
-	if strings.Contains(err.Error(), "arn:aws") {
-		t.Fatalf("error leaked configuration value: %q", err)
+}
+
+func TestClassifyProfileSourceIgnoresEnvironmentSourceInUnrelatedProfile(t *testing.T) {
+	config := "[profile unrelated]\ncredential_source = Environment\n" +
+		"[profile dev]\ncredential_process = safe-command\n"
+	got, err := ClassifyProfileSource("dev", []byte(config), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != ProfileSourceCredentialProcess {
+		t.Fatalf("source=%+v", got)
 	}
 }
 
@@ -112,26 +126,61 @@ func TestClassifyProfileSourceRejectsInvalidChains(t *testing.T) {
 	}
 }
 
-func TestClassifyProfileSourceRejectsMalformedAndControlCharacterDocuments(t *testing.T) {
+func TestClassifyProfileSourceToleratesAWSCompatibleUnrelatedContent(t *testing.T) {
+	config := "global_property = ignored\n" +
+		"[services custom-endpoints]\n" +
+		"s3 =\n" +
+		"  endpoint_url = http://127.0.0.1\n" +
+		"  malformed nested setting\n" +
+		"[profile unrelated]\n" +
+		"source_profile = contains spaces\n" +
+		"credential_process = command\x00secret\n" +
+		"[broken unrelated header\n" +
+		"this line is also ignored\n" +
+		"[profile dev]\n" +
+		"credential_process = safe-command\n"
+
+	got, err := ClassifyProfileSource("dev", []byte(config), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Kind != ProfileSourceCredentialProcess || !reflect.DeepEqual(got.Chain, []string{"dev"}) {
+		t.Fatalf("source=%+v", got)
+	}
+}
+
+func TestClassifyProfileSourceRejectsRelevantControlCharacterValues(t *testing.T) {
 	tests := []struct {
 		name string
 		data string
 	}{
-		{name: "field outside section", data: "source_profile = base\n"},
-		{name: "broken header", data: "[profile dev\n"},
-		{name: "missing value", data: "[profile dev]\ncredential_process = \n"},
 		{name: "control character", data: "[profile dev]\ncredential_process = command\x00secret\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := ClassifyProfileSource("dev", []byte(test.data), nil)
-			if err == nil || !strings.Contains(err.Error(), "malformed profile document") {
+			if err == nil || !strings.Contains(err.Error(), "invalid field value") {
 				t.Fatalf("error=%v", err)
 			}
 			if strings.Contains(err.Error(), "secret") {
 				t.Fatalf("error leaked input value: %q", err)
 			}
 		})
+	}
+}
+
+func TestProfileNamePolicyIsConsistent(t *testing.T) {
+	valid := []string{"default", "dev-1", "prod_2", "team.example"}
+	invalid := []string{"", ".hidden", "-flag", "_private", "contains space", "line\nbreak"}
+	for _, profile := range valid {
+		if !validProfileName(profile) || !profileNameRE.MatchString(profile) {
+			t.Fatalf("valid profile %q rejected", profile)
+		}
+	}
+	for _, profile := range invalid {
+		if validProfileName(profile) || profileNameRE.MatchString(profile) {
+			t.Fatalf("invalid profile %q accepted", profile)
+		}
 	}
 }
 
@@ -143,5 +192,13 @@ func TestClassifyProfileSourceErrorsAreTypedAndValueFree(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "AKIAEXAMPLE") {
 		t.Fatalf("error leaked credential value: %q", err)
+	}
+}
+
+func TestProfileSourceErrorRejectsHostileRenderableFields(t *testing.T) {
+	const secret = "credential-super-secret"
+	err := (&ProfileSourceError{Profile: "line\nbreak", Field: secret, Reason: secret}).Error()
+	if strings.Contains(err, secret) || strings.Contains(err, "line") {
+		t.Fatalf("error leaked hostile fields: %q", err)
 	}
 }

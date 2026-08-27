@@ -3,13 +3,13 @@
 독자        저장소 소유자와 구현·검토 담당자
 목적        category-first AWS TUI의 data flow, credential 경계, 동시성, cache, 오류·검증 계약을 고정한다
 대상 환경   Go 1.25, Bubble Tea v2, AWS SDK for Go v2, AWS CLI v2, 여러 named profile
-최종 검토   2026-08-27
-다음 검토   credential·security spike 완료 시
-상태        Hybrid access 기준안 확정, 구현 미착수
+최종 검토   2026-08-28
+다음 검토   PTY/tmux·release·실계정 gate 완료 시
+상태        core/provider/query/TUI 자동화 구현 완료, 최종 gate 진행 중
 
 관련 문서   [PRD](PRD.md) · [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [검토 기록](REVIEW.md) · [인덱스](README.md)
 
-전용 AWS TUI는 Home을 로컬 상태로 먼저 그린다. 화면 intent가 생기면 coordinator가 context·priority·동시성·취소를 관리하고, service provider가 AWS SDK for Go v2 read operation을 실행한다. AWS CLI는 profile discovery, SSO login, ambient/named credential export에만 사용한다.
+전용 AWS TUI는 Home을 로컬 상태로 먼저 그린다. 화면 intent가 생기면 coordinator가 context·priority·동시성·취소를 관리하고, service provider가 AWS SDK for Go v2 read operation을 실행한다. Browser runtime에서 AWS CLI는 profile discovery와 ambient/named credential export에만 사용하며 기존 SSO login은 별도 호환 surface다.
 
 ## 요구사항, 제약, 가정
 
@@ -41,10 +41,10 @@
 
 ## 현재 → 목표 → 차이
 
-- 현재 unreleased 초안: `collectAWSBrowseGraph`가 TUI 실행 전 AWS CLI로 STS, EC2/VPC, Route 53, IAM을 직렬 호출한다.
-- 이전 기획: 화면별 AWS CLI child를 lazy 실행한다.
-- 목표: profile/auth control-plane만 AWS CLI를 사용하고 모든 resource request는 context-aware SDK client로 실행한다.
-- 차이: SDK client factory, credential bridge, narrowed read interface, typed error mapper, SDK fake client가 필요하다.
+- superseded v1 초안: `collectAWSBrowseGraph`가 TUI 실행 전 AWS CLI로 STS, EC2/VPC, Route 53, IAM을 직렬 호출했다.
+- superseded 중간 기획: 화면별 AWS CLI child를 lazy 실행하려 했다.
+- 구현된 v2 core: profile/auth control-plane만 AWS CLI를 사용하고 모든 resource request는 context-aware SDK client로 실행한다.
+- 남은 차이: PTY/tmux/release gate와 승인된 real AWS/CloudTrail smoke를 닫아야 release-ready다.
 
 ## 목표 구조는 credential control-plane과 resource data-plane을 분리한다
 

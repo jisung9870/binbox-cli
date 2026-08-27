@@ -7,6 +7,11 @@ dependency-health, and integration-audit workflows. It
 does not reproduce Orca lifecycle management, embed the LazyVim configuration,
 or keep the old shell dispatcher/libexec architecture.
 
+The unreleased AWS browser's automated core and production wiring are implemented
+on this branch; PTY/tmux and release gates, and owner-approved real
+AWS/CloudTrail smoke are still pending. This status must not be read as a
+released or credential-backed acceptance claim.
+
 ## Ownership boundaries
 
 | Owner | Owns | Integration boundary |
@@ -40,7 +45,7 @@ checkout, `BB_ROOT`, libexec, script PATH, daemon, dashboard, or MCP proxy.
 | `bb tm [--project <id>]` | Selects through bb's search-first responsive TUI (numbered fallback), then attaches or creates `bb-<project-id>` through tmux | No fzf, shell evaluation, Orca invocation, lifecycle registry, or ownership claim |
 | `bb aws sso ...` | Selects a configured SSO session and delegates login | Reads `[sso-session NAME]`; credentials/cache remain AWS CLI-owned |
 | `bb aws assume ...` | Restores current-shell and scoped-command credential UX through AWS CLI resolution | Selects account/role profiles; no bb credential cache; stdout credentials are evaluated only through generated shell integration |
-| `bb aws browse ...` | Builds a single-region read-only EC2/VPC plus global Route 53/IAM resource graph and follows links in the staged TUI | AWS CLI owns credentials and pagination; bb keeps only an in-memory snapshot, uses List/Describe/Get calls, and preserves partial results as warnings |
+| `bb aws browse ...` / `bb aws query ...` | Opens a local-first progressive AWS TUI or runs a scoped query over EC2/IAM/Route 53 resources and relations | AWS CLI is limited to profile discovery/credential export; SDK STS verifies identity and narrowed SDK providers perform read calls; session state is memory-only and generation-fenced |
 | `bb profile ...`, `bb assume ...` | Preserves the existing profile configuration and assume surfaces | Compatibility commands retain their prior contracts while new AWS workflows use the grouped entry point |
 | `bb wenv ...` | Creates, inspects, updates, renames, removes, imports, and applies declarative environments | Staged preset/action/variable selector; XDG JSON; secret-like key rejection; mutations emit no stdout; default-cancel destructive confirmation |
 | `bb completion zsh` | Registers native command, option, and safe local-metadata completion | Git commands are omitted; candidates contain names/IDs only and call the installed binary without checkout coupling |
@@ -79,6 +84,13 @@ tool.
 - Git, Kubernetes, AWS SSM, process, and Terraform adapters accept structured
   targets and invoke their owner CLI with a direct argument vector. They never
   evaluate shell strings or persist provider credentials.
+- The AWS browser separates credential control-plane from resource data-plane.
+  It invokes AWS CLI only for profile discovery and credential export, binds
+  each context to SDK STS partition/account/principal plus credential generation,
+  and exposes only typed EC2/IAM/Route 53 read interfaces. The dedicated TUI
+  starts with a zero-call Home, loads selected routes progressively, and runs
+  bounded cross-profile searches only after explicit submit. There is no CLI
+  resource fallback, persistent inventory, custom endpoint, or mutation path.
 - The bb-owned TUI writes UI to stderr and keeps stdout machine/eval-safe.
   Printable input filters immediately; results expose only safe metadata and a
   stable value; destructive non-Git confirmations default to Cancel. Non-TTY

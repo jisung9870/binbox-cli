@@ -3,9 +3,9 @@
 독자        저장소 소유자와 구현·검토 담당자
 목적        AWS Console 반복 탐색을 대체하는 category-first, on-demand, multi-account read-only TUI의 제품 범위를 고정한다
 대상 환경   AWS SDK for Go v2, AWS CLI v2, 여러 AWS CLI profile, regional EC2/VPC와 global IAM/Route 53
-최종 검토   2026-08-27
-다음 검토   Phase 0 credential·security spike 결과 시
-상태        기획 기준안 확정, 구현 미착수
+최종 검토   2026-08-28
+다음 검토   PTY/tmux·release·실계정 gate 완료 시
+상태        자동화 구현과 production wiring 완료, 최종 gate 진행 중, 실계정 smoke 대기
 등급        L2, 구현·회귀 검증의 기준으로 6개월 이상 사용
 
 관련 문서   [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [아키텍처](ARCHITECTURE.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [검토 기록](REVIEW.md) · [인덱스](README.md)
@@ -23,7 +23,7 @@
 5. Route 53 결과가 없으면 계정이 틀렸는지 의심하고 다른 account/role로 Console을 다시 연다.
 6. 같은 검색어를 반복한다.
 
-현재 unreleased `bb aws browse` 초안도 첫 화면을 그리기 전에 STS, EC2/VPC 6종, Route 53 전체 zone/record, IAM user/role을 AWS CLI로 직렬 수집한다. 한 zone fixture만으로도 11번의 process 호출을 선행하므로 서비스가 늘수록 시작 시간이 선형 이상으로 커진다. 화면상 category-first여도 요청 방식은 full preload다. v2는 AWS CLI를 profile·SSO·credential control-plane에 한정하고 resource data-plane은 AWS SDK for Go v2로 통일한다.
+Superseded v1 초안은 첫 화면 전에 STS, EC2/VPC 6종, Route 53 전체 zone/record, IAM user/role을 AWS CLI로 직렬 수집했다. 한 zone fixture만으로도 11번의 process 호출을 선행해 화면상 category-first여도 요청 방식은 full preload였다. 구현된 v2 core는 browser의 AWS CLI capability를 profile discovery·credential export에 한정하고 resource data-plane을 AWS SDK for Go v2로 통일한다.
 
 ## 사용자와 사용 맥락
 
@@ -193,7 +193,7 @@ AWS Browse
 ## 명령과 용어
 
 - 유지: `bb aws browse [--profile NAME] [--region REGION]`는 전용 TUI 진입점이다.
-- 변경: `bb aws browse --json`만으로 전체 inventory를 암묵 수집하지 않는다.
+- 변경: interactive `bb aws browse`에서 `--json`을 제거했다. 자동화는 명시적 scope의 `bb aws query ... --json`을 사용한다.
 - 추가: P0 non-interactive 조회는 `bb aws query ec2 instances`, `bb aws query domain <fqdn>`, `bb aws query role <exact-name>`이며 `--profile`, `--region`, `--scope current|all`, `--json`을 지원한다. `--json`은 schema-v1 envelope 안에 query, coverage, results, errors를 담는다.
 - non-TTY `bb aws browse`는 AWS를 호출하거나 prompt를 열지 않고 `bb aws query` 사용법을 반환한다.
 - 유지: 이미 배포된 `bb aws assume`과 `bb assume`은 호환 command로 남긴다.
@@ -206,7 +206,7 @@ AWS Browse
 - AWS CLI는 정확하지만 ID 관계를 사용자가 직접 조합한다.
 - resource 조회를 모두 AWS CLI subprocess로 구현하면 dependency는 적지만 profile fan-out에서 process 시작·JSON decode·수동 pagination 비용이 반복된다.
 - SDK만 사용하면 resource 조회는 단순하지만 profile discovery, SSO login, released `bb assume` 인증 UX를 다시 구현해야 한다.
-- 선택안은 hybrid다. CLI는 profile·SSO·credential 연결, SDK는 resource read·retry·pagination·typed error를 맡는다. 세부 경계는 [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md)에 고정한다.
+- 선택안은 hybrid다. Browser의 CLI는 profile discovery·credential export, SDK는 STS identity와 resource read·retry·pagination·typed error를 맡는다. 기존 SSO login/assume은 별도 호환 surface며 세부 경계는 [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md)에 고정한다.
 - Steampipe/CloudQuery는 광범위한 inventory와 query에 강하지만 이 도구가 원하는 즉시 탐색·관계 stack에는 저장·SQL 계층이 과하다.
 - 범용 AWS TUI를 채택하지 않는 이유는 기존 bb profile/SSO 흐름, 엄격한 read-only 계약, 필요한 EC2↔IAM↔DNS 연결을 좁게 최적화하기 위해서다.
 

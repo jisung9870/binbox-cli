@@ -2,17 +2,17 @@
 
 독자        구현 에이전트, 통합 담당자, 검증 담당자
 목적        멀티에이전트가 충돌 없이 AWS Browse v2를 단계별 구현하고 검증하는 방식을 고정한다
-대상 환경   2026-08-27 working tree, Go 1.25, Codex native subagents
-최종 검토   2026-08-27
-다음 검토   Phase 0 완료 또는 native collaboration surface 변경 시
-상태        작업 방식 기준안, 구현 미착수
+대상 환경   2026-08-28 working tree, Go 1.25, Codex native subagents
+최종 검토   2026-08-28
+다음 검토   PTY/tmux·release·실계정 gate 완료 시
+상태        구현 wave 완료, finalization gate 진행 중
 등급        L2, 구현 종료까지 사용
 
 관련 문서   [PRD](PRD.md) · [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [아키텍처](ARCHITECTURE.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [검토 기록](REVIEW.md)
 
-구현은 vertical slice와 검증 gate를 사용한다. Phase 0에서 credential·endpoint 계약을 실제 코드로 증명한 뒤 Home → EC2 → IAM → Route 53 → cross-profile 순서로 기능을 완성한다. 각 단계의 작성자와 검증자는 분리하고, gate가 실패한 상태에서 다음 단계 코드를 늘리지 않는다.
+구현은 vertical slice와 검증 gate를 사용했다. Credential·endpoint → Home/runtime → EC2 → IAM → Route 53 → cross-profile core → production wiring이 자동화 fixture와 함께 구현됐으며, 문서/completion·PTY/tmux·release gate를 순서대로 닫는 중이다. 실제 AWS credential과 CloudTrail 검증은 repository owner가 승인·제공해야 하는 마지막 외부 gate다.
 
-## 구현 시작은 Phase 0 계약으로 결정한다
+## 구현 시작은 Phase 0 계약으로 결정했다
 
 `omx ralplan preflight --json`은 현재 환경에서 `unsupported_documented_leader_proof`로 종료하므로 구현 시작 gate로 사용하지 않는다. OMX는 선택적 launcher로만 취급하며, OMX의 leader proof나 role routing 성공 여부는 AWS Browse v2의 기능·보안 계약과 무관하다.
 

@@ -44,8 +44,12 @@ bb aws sso corp
 bb aws assume dev
 bb aws assume current
 bb aws assume exec dev -- aws sts get-caller-identity
-# Browse a read-only single-region resource graph; IAM and Route 53 are global.
+# Open the local-first progressive browser; AWS calls begin only after intent.
 bb aws browse --profile dev --region ap-northeast-2
+# Scoped automation uses stdout and supports exact cross-profile searches.
+bb aws query ec2 instances --profile dev --region ap-northeast-2 --json
+bb aws query domain api.example.com --scope all --json
+bb aws query role DeployRole --scope current --json
 bb wenv import --check
 bb wenv import --apply
 bb wenv show dev
@@ -128,6 +132,16 @@ TUI color. fzf is not a bb runtime dependency. `bb shell init zsh` emits the
 small wrapper that evaluates only
 successful `bb wenv <preset>` output in the current shell. It has no checkout,
 `BB_ROOT`, or libexec dependency.
+
+The AWS resource browser is a dedicated progressive TUI rather than the shared
+staged selector. Its Home screen is local-only; explicit category/relation
+opens use narrowed AWS SDK for Go v2 EC2, IAM, and Route 53 read providers after
+AWS CLI profile discovery/credential export and SDK STS identity verification.
+Cross-profile domain/role search runs only after submit, with bounded concurrency
+and per-profile coverage. `bb aws browse` is interactive and has no `--json`;
+automation uses `bb aws query`. Automated implementation and production wiring
+are complete while PTY/tmux/release gates and owner-approved real AWS/CloudTrail
+smoke remain pending, so this branch is not yet a released AWS browser.
 
 bb-owned structured reads are formatted as human-readable labels and tables by
 default. Add `--json` for automation and the stable schema-v1 envelope:

@@ -3,9 +3,9 @@
 독자        저장소 소유자와 구현·검토 담당자
 목적        주요 조사 흐름에서 사용자가 누르는 키, 화면 전이, AWS 호출 시점을 구현 가능한 예시로 고정한다
 대상 환경   AWS SDK for Go v2, credential export capability를 통과한 AWS CLI v2, 여러 AWS CLI profile, 120x30 기준 TTY
-최종 검토   2026-08-27
-다음 검토   Phase 1 golden test 작성 시
-상태        기획 화면 예시, 아직 구현되지 않음
+최종 검토   2026-08-28
+다음 검토   PTY/tmux 및 real AWS smoke 결과 시
+상태        model/golden 자동화 구현 반영, 실제 terminal/AWS acceptance 대기
 
 관련 문서   [PRD](PRD.md) · [설계](DESIGN.md) · [아키텍처](ARCHITECTURE.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [검토 기록](REVIEW.md) · [인덱스](README.md)
 

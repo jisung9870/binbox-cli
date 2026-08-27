@@ -294,6 +294,10 @@ generated shell wrapper; `assume exec` keeps credentials in one child process.
 
 ## 2026-08-27 — Read-only AWS relationship browsing keeps AWS CLI ownership
 
+Status: superseded on 2026-08-28 by the hybrid credential-control-plane and
+SDK-data-plane decision below. The rationale and rejected snapshot design are
+retained here as historical context.
+
 Decision: `bb aws browse` reads a single regional EC2/VPC inventory plus global
 Route 53/IAM inventory through direct AWS CLI JSON commands, normalizes it into
 an in-memory resource graph, and reuses the staged selector for navigation. bb
@@ -310,6 +314,26 @@ Why binbox owns it: it is a command-scoped, portable inspection workflow that
 extends the existing AWS profile and selector contracts. Why AWS CLI still owns
 authentication and pagination: reusing its configured SSO/profile chain avoids
 creating a second credential or SDK lifecycle inside bb.
+
+## 2026-08-28 — AWS browser uses CLI credentials and narrowed SDK reads
+
+Decision: `bb aws browse` renders a zero-call Home, then dispatches only explicit
+category, relation, refresh, or submitted search intent. AWS CLI capability is
+restricted to profile discovery and process-format credential export; AWS SDK
+for Go v2 performs STS identity verification and typed EC2/IAM/Route 53 read
+operations. There is no CLI resource-operation fallback.
+
+Each context binds profile/region to verified partition, account, principal,
+and credential generation. Query/store commits reject stale generation or
+changed identity, retain completed pages across later partial failure, and keep
+profile-scoped observations separate. Exact domain/role search is current-first,
+bounded, and starts only after submit; scoped `bb aws query` owns JSON automation
+because interactive `bb aws browse` no longer accepts `--json`.
+
+Implementation and production wiring are automated but not release-complete:
+PTY/tmux/release gates and repository-owner-approved real AWS/CloudTrail smoke
+remain pending. The full decision and security gate are retained in
+`aws-plan/ADR-001-HYBRID-AWS-ACCESS.md`.
 
 `bb wenv show` is inspection-only. `bb wenv apply` renders the current-to-target
 environment diff on stderr and emits eval-safe stdout only after confirmation.

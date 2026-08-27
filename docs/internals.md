@@ -2,9 +2,11 @@
 
 ## Purpose and status
 
-This is the maintainer entry point for the Go implementation of `bb` at
-v0.10.0. It explains where behavior lives and the contracts a code change must
-preserve. Product ownership and non-goals remain authoritative in
+This is the maintainer entry point for the current Go implementation of `bb`.
+The unreleased AWS browser core, typed providers, progressive TUI, scoped query,
+and production wiring are automated; final PTY/tmux/release/real-AWS
+gates remain pending. This guide explains where behavior lives and the
+contracts a code change must preserve. Product ownership and non-goals remain authoritative in
 [architecture.md](architecture.md); user-facing syntax remains authoritative in
 [commands.md](commands.md) and `bb <command> --help`.
 
@@ -43,7 +45,9 @@ modifying the host system. Command routing is centralized in `App.dispatch`.
 | `internal/bb/shell.go` | Checkout-independent current-shell wrappers |
 | `internal/bb/tm.go`, `sessionizer.go` | Project/session selection, tmux commands, and legacy project import |
 | `internal/bb/profile.go`, `assume.go`, `wenv.go`, `sec.go` | AWS config, scoped credentials, declarative environments, and encrypted secrets |
-| `internal/bb/aws_browse.go` | Read-only AWS CLI JSON collection, normalized resource graph, and staged relationship browser |
+| `internal/bb/aws_browse.go`, `internal/bb/aws_query.go` | Interactive-only progressive browser entry and scoped query grammar/output |
+| `internal/bb/awsbrowser/` | Credential bridge, STS-verified context registry, narrowed SDK providers, generation-fenced query/store, dedicated TUI/plain view |
+| `internal/bb/awsbrowser/integration/` | Lazy production composition and bounded explicit-submit cross-profile search |
 | `internal/bb/external.go`, `legacy_read.go` | Direct-argv Git, Kubernetes, SSM, and local inspection adapters |
 | `internal/bb/tfx.go`, `tvx.go` | Guarded Terraform and fixed-policy Trivy workflows |
 | `internal/bb/nvim*.go` | LazyVim config validation, planning, linking, and doctor checks |

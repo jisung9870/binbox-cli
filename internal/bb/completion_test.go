@@ -26,6 +26,53 @@ func TestZshCompletionIsNativeDynamicAndOmitsGitCommands(t *testing.T) {
 	}
 }
 
+func TestZshCompletionMatchesAWSBrowseAndQueryGrammar(t *testing.T) {
+	a, out, _, _ := testApp(t)
+	if err := a.Run([]string{"completion", "zsh"}); err != nil {
+		t.Fatal(err)
+	}
+	completion := out.String()
+	for _, want := range []string{
+		"'query:run a scoped read-only query'",
+		"'ec2:query EC2 resources'",
+		"'instances:list or find instances in the current context'",
+		"'domain:find an exact domain'",
+		"'role:find an exact IAM role'",
+		"--scope) _bb_static 'query scope' 'current:current context only' 'all:all configured profiles'",
+		"'--profile:AWS profile' '--region:AWS region' '--json:stable JSON envelope'",
+		"'--profile:AWS profile' '--region:AWS region' '--scope:search scope' '--json:stable JSON envelope'",
+	} {
+		if !strings.Contains(completion, want) {
+			t.Fatalf("AWS completion missing %q", want)
+		}
+	}
+	browseStart := strings.Index(completion, `elif [[ "${words[3]}" == browse ]]`)
+	if browseStart < 0 {
+		t.Fatal("AWS browse completion block missing")
+	}
+	browseEnd := strings.Index(completion[browseStart:], "elif (( CURRENT == 4 ))")
+	if browseEnd < 0 {
+		t.Fatal("AWS browse completion block is malformed")
+	}
+	browse := completion[browseStart : browseStart+browseEnd]
+	if strings.Contains(browse, "--json") {
+		t.Fatalf("AWS browse completion still advertises removed --json: %q", browse)
+	}
+	ec2Start := strings.Index(completion, `elif [[ "${words[4]}" == ec2 ]]`)
+	domainStart := strings.Index(completion, `elif [[ "${words[4]}" == domain || "${words[4]}" == role ]]`)
+	if ec2Start < 0 || domainStart <= ec2Start {
+		t.Fatal("AWS query completion branches are missing or out of order")
+	}
+	ec2 := completion[ec2Start:domainStart]
+	if strings.Contains(ec2, "--scope") || !strings.Contains(ec2, "--json") {
+		t.Fatalf("EC2 query completion must offer JSON but not scope: %q", ec2)
+	}
+	domainRole := completion[domainStart:]
+	if !strings.Contains(domainRole, "--scope") || !strings.Contains(domainRole, "current:current context only") || !strings.Contains(domainRole, "all:all configured profiles") {
+		t.Fatalf("domain/role completion missing current/all scope: %q", domainRole)
+	}
+}
+
 func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 	a, out, config, _ := testApp(t)
 	if err := a.Run([]string{"wenv", "set", "dev", "APP_MODE=local"}); err != nil {

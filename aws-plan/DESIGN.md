@@ -4,10 +4,10 @@
 
 ## Source of truth
 
-- Status: Approved planning baseline, implementation not started
-- Last refreshed: 2026-08-27
-- Primary product surfaces: `bb aws browse` 전용 TUI, plain terminal fallback, 이후의 scoped JSON query
-- Evidence reviewed: `internal/bb/aws_browse.go`, `internal/bb/aws_browse_test.go`, `internal/bb/select.go`, `internal/bb/assume.go`, `internal/bb/profile.go`, root `DESIGN.md`, `docs/product-aws-resource-browser-202608.md`, `docs/design-aws-resource-browser-202608.md`, AWS SDK for Go v2·AWS CLI·Route 53·EC2·IAM 공식 문서, 독립 UX·아키텍처·dependency·코드 감사
+- Status: Automated implementation and production wiring complete; final acceptance in progress; real AWS/CloudTrail smoke pending
+- Last refreshed: 2026-08-28
+- Primary product surfaces: `bb aws browse` 전용 TUI, plain terminal fallback, scoped human/JSON query
+- Evidence reviewed: `internal/bb/aws_browse.go`, `internal/bb/aws_query.go`, `internal/bb/awsbrowser/*`, `internal/bb/awsbrowser/providers/*`, `internal/bb/awsbrowser/integration/*`, root `DESIGN.md`, `docs/product-aws-resource-browser-202608.md`, `docs/design-aws-resource-browser-202608.md`, AWS SDK for Go v2·AWS CLI·Route 53·EC2·IAM 공식 문서, 독립 UX·아키텍처·dependency·코드 감사
 - Supersedes for the AWS surface: root `DESIGN.md`의 preloaded graph, one-list staged selector, 50열 미만 metadata 숨김 계약
 
 ## Brand
@@ -293,7 +293,7 @@ Focus는 marker와 `LIST`, `FILTER`, `DETAIL` 텍스트를 함께 사용한다. 
 - Framework/styling system: Go, Bubble Tea v2, Lip Gloss v2. AWS surface는 dedicated model을 사용한다.
 - Design-token constraints: common color와 safe text만 공유한다. generic selector의 96열 cap과 description hiding은 가져오지 않는다.
 - Performance constraints: Home은 CLI process와 SDK request에 독립적이고 local filter는 network-free다. Resource work는 caller context를 받는 SDK request로, credential export는 context-aware child로만 시작한다.
-- Compatibility constraints: TUI는 stderr, machine output은 stdout을 쓴다. AWS CLI v2는 profile discovery·SSO·credential export, AWS SDK for Go v2는 STS·EC2·IAM·Route 53 transport·retry·typed error를 맡는다. Provider가 paginator/cursor와 성공 page commit을 소유하며 CLI resource fallback은 없다. resource mutation은 없다. non-TTY `bb aws browse`는 AWS 호출과 prompt 없이 `bb aws query` 안내를 반환한다.
+- Compatibility constraints: TUI는 stderr, machine output은 stdout을 쓴다. Browser runtime의 AWS CLI v2 capability는 profile discovery·credential export로 제한되고, AWS SDK for Go v2는 STS·EC2·IAM·Route 53 transport·retry·typed error를 맡는다. 기존 SSO login은 별도 호환 surface다. Provider가 paginator/cursor와 성공 page commit을 소유하며 CLI resource fallback은 없다. resource mutation은 없다. non-TTY `bb aws browse`는 AWS 호출과 prompt 없이 `bb aws query` 안내를 반환한다.
 - Test/screenshot expectations: 120x30, 80x24, 50x16, 40x12 golden; loading/cancel/resize/back-stack model test; fake narrowed SDK client와 credential bridge fixture; endpoint poison test; `NO_COLOR`; forced-plain TTY와 non-TTY/EOF 분리; alt-screen cleanup; control-character sanitization.
 
 ## Open questions

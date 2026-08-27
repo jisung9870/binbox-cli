@@ -4,6 +4,10 @@ This document describes the supported surface of the installed Go binary. Run
 `bb <command> --help` for exact flags. External tools remain the owners of their
 provider state; `bb doctor` reports whether they are available.
 
+The AWS browse/query rows describe the unreleased branch surface. Automated
+implementation and production wiring exist, but final terminal/release/real
+AWS gates are pending.
+
 | Area | Commands | Contract |
 |---|---|---|
 | Build and health | `version`, `doctor`, `doctor nvim` | Versioned output and required/optional capability checks |
@@ -13,7 +17,7 @@ provider state; `bb doctor` reports whether they are available.
 | Git | `gx root/branch/log` | Direct Git reads plus explicit branch mutations |
 | Kubernetes | `kx context/namespace/log/exec/port-forward` | Direct kubectl argv with explicit context, namespace, pod, and ports |
 | AWS SSM | `assm shell/port-forward` | Direct AWS CLI Session Manager invocation with explicit instance and ports |
-| AWS resources | `aws browse [--profile NAME] [--region REGION] [--json]` | Read-only EC2/EBS/SG/VPC/Route 53/IAM graph; single-region regional resources, global IAM/Route 53, partial failures as warnings |
+| AWS resources | `aws browse [--profile NAME] [--region REGION]`; `aws query ec2 instances`; `aws query domain <fqdn>`; `aws query role <exact-name>` | Local-first progressive TUI plus scoped human/JSON query; typed SDK EC2/IAM/Route 53 reads, STS-verified contexts, explicit-submit cross-profile search; browse is interactive and has no `--json` |
 | AWS SSO | `aws sso [session]`, `aws sso list` | Search-first SSO-session login; AWS CLI owns browser authentication and the token cache |
 | AWS credentials | `aws assume [profile]/list/current/unset/exec` | Search-first account/role profile selection; AWS CLI resolves credentials; bb stores none and emits them only to the shell pipe or a scoped child process |
 | AWS compatibility | `profile ...`, `assume ...` | Existing profile configuration and assume commands remain available as compatibility surfaces |

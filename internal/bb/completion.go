@@ -128,12 +128,38 @@ _bb() {
       ;;
     aws)
       if (( CURRENT == 3 )); then
-        _bb_static 'AWS command' 'browse:browse read-only AWS resources' 'sso:log in to an SSO session' 'assume:apply profile credentials'
+        _bb_static 'AWS command' 'browse:browse read-only AWS resources' 'query:run a scoped read-only query' 'sso:log in to an SSO session' 'assume:apply profile credentials'
+      elif [[ "${words[3]}" == query ]]; then
+        if (( CURRENT == 4 )); then
+          _bb_static 'AWS query' 'ec2:query EC2 resources' 'domain:find an exact domain' 'role:find an exact IAM role'
+        elif [[ "${words[4]}" == ec2 ]]; then
+          if (( CURRENT == 5 )); then
+            _bb_static 'EC2 query' 'instances:list or find instances in the current context'
+          elif [[ "${words[5]}" == instances ]]; then
+            case "${words[CURRENT-1]}" in
+              --profile) _bb_dynamic 'AWS profile' profile ;;
+              --region) ;;
+              *) _bb_static 'query option' '--profile:AWS profile' '--region:AWS region' '--json:stable JSON envelope' ;;
+            esac
+          fi
+        elif [[ "${words[4]}" == domain || "${words[4]}" == role ]]; then
+          if (( CURRENT >= 6 )); then
+            case "${words[CURRENT-1]}" in
+              --profile) _bb_dynamic 'AWS profile' profile ;;
+              --region) ;;
+              --scope) _bb_static 'query scope' 'current:current context only' 'all:all configured profiles' ;;
+              *) _bb_static 'query option' '--profile:AWS profile' '--region:AWS region' '--scope:search scope' '--json:stable JSON envelope' ;;
+            esac
+          fi
+        fi
+      elif [[ "${words[3]}" == browse ]]; then
+        case "${words[CURRENT-1]}" in
+          --profile) _bb_dynamic 'AWS profile' profile ;;
+          --region) ;;
+          *) _bb_static 'browse option' '--profile:AWS profile' '--region:AWS region' ;;
+        esac
       elif (( CURRENT == 4 )); then
         case "${words[3]}" in
-          browse)
-            _bb_static 'browse option' '--profile:AWS profile' '--region:AWS region' '--json:stable JSON envelope'
-            ;;
           sso)
             _bb_static 'SSO command' 'list:list SSO sessions'
             _bb_dynamic 'AWS SSO session' sso-session
@@ -143,8 +169,10 @@ _bb() {
             _bb_dynamic 'AWS profile' profile
             ;;
         esac
-      elif (( CURRENT == 5 )) && [[ "${words[3]}" == assume && "${words[4]}" == exec ]]; then
-        _bb_dynamic 'AWS profile' profile
+      elif (( CURRENT == 5 )); then
+        if [[ "${words[3]}" == assume && "${words[4]}" == exec ]]; then
+          _bb_dynamic 'AWS profile' profile
+        fi
       fi
       ;;
     assume)

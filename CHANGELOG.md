@@ -8,9 +8,15 @@ release tags and the corresponding release records.
 
 ### Added
 
-- Added `bb aws browse` for a read-only, single-region EC2/EBS/security-group/VPC
-  graph plus global Route 53/IAM discovery, linked-resource navigation, partial
-  permission warnings, human summaries, and schema-v1 JSON.
+- Added the unreleased `bb aws browse` local-first progressive TUI with narrowed
+  AWS SDK for Go v2 EC2/IAM/Route 53 reads, STS-verified profile contexts,
+  generation fencing, linked-resource navigation, partial states, and
+  explicit-submit bounded cross-profile search.
+- Added `bb aws query ec2 instances|domain|role` for scoped human or schema-v1
+  JSON automation; interactive `aws browse` no longer accepts `--json`.
+- Restricted the browser's AWS CLI data path to profile discovery and
+  credential export; PTY/tmux/release gates and
+  owner-approved real AWS/CloudTrail smoke remain pending.
 - Added `bb setup shell` to register the checkout-independent zsh integration
   and native completion in `.zshrc` without duplicating an existing setup.
 

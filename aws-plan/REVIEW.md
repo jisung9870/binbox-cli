@@ -2,14 +2,14 @@
 
 독자        저장소 소유자와 구현 승인자
 목적        기존안 반증, 역할별 반복 검토, 반영 결정과 구현 영향 범위를 추적한다
-대상 환경   2026-08-27 working tree, AWS SDK for Go v2와 AWS CLI v2 공식 문서
-최종 검토   2026-08-27
-다음 검토   구현 착수 승인 시
-상태        hybrid architecture 독립 검토 반영 완료
+대상 환경   2026-08-28 working tree, AWS SDK for Go v2와 AWS CLI v2 공식 문서
+최종 검토   2026-08-28
+다음 검토   PTY/tmux·release·실계정 gate 완료 시
+상태        hybrid 자동화 구현 반영, finalization 및 real AWS smoke 대기
 
 관련 문서   [PRD](PRD.md) · [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [아키텍처](ARCHITECTURE.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [인덱스](README.md)
 
-검토 결과, 기존 P0의 “전체 snapshot 후 category 화면”과 이후의 “resource도 모두 AWS CLI child로 조회” 안을 폐기한다. 최종 기준은 zero-call Home, dedicated async TUI, relation-scoped SDK fetch, bounded cross-profile search다. AWS CLI는 profile discovery·SSO·credential export에만 남긴다.
+검토 결과, 기존 P0의 “전체 snapshot 후 category 화면”과 이후의 “resource도 모두 AWS CLI child로 조회” 안을 폐기한다. 최종 기준은 zero-call Home, dedicated async TUI, relation-scoped SDK fetch, bounded cross-profile search다. Browser runtime의 AWS CLI capability는 profile discovery·credential export로 제한하며 기존 SSO login은 별도 호환 surface다.
 
 ## 검토 루프 0: 기존안은 시작 속도와 상세 읽기에서 탈락했다
 
@@ -134,7 +134,7 @@
 6. ambient credential과 named-profile worker를 분리하고 `credential_source=Environment`를 별도 분류한다.
 7. `bb aws query`가 non-interactive JSON 범위를 명시하고 non-TTY browse는 prompt나 AWS call을 시작하지 않는다.
 
-Phase 1은 Phase 0 credential·security gate 뒤 zero-call Home, narrowed SDK interface, cancellation, scope-aware store부터 시작한다. 구현은 사용자 요청에 따라 별도 turn에서 시작한다.
+이 판정에 따라 zero-call Home, narrowed SDK interface, cancellation, scope-aware store와 production CLI wiring이 구현됐다. PTY/tmux, release/no-skip/size, 실제 AWS/CloudTrail evidence가 남아 있으며 이 항목이 닫히기 전에는 release 완료로 판정하지 않는다.
 
 ## 검토 루프 3: CLI-only 기준의 1차 blocker audit
 
@@ -210,9 +210,9 @@ Phase 1은 Phase 0 credential·security gate 뒤 zero-call Home, narrowed SDK in
 | App contract | `app_test.go`, `identity_test.go` | stderr/stdout, env 격리 | shell/JSON identity |
 | Shared selector | `select.go`와 기존 tests | AWS 전용 model 분리 | 비-AWS selector 무변경 |
 
-## 구현 때 함께 supersede할 기존 문서
+## 구현과 함께 supersede한 기존 문서
 
-이번 요청 범위는 `aws-plan/` 문서 작성이므로 기존 dirty working tree를 수정하지 않았다. 구현을 시작할 때 다음 기존 문서의 preload/single-account 결정을 `aws-plan/` 기준으로 갱신해야 한다.
+2026-08-28 documentation alignment에서 다음 기존 문서의 preload/single-account 결정을 `aws-plan/` 기준으로 갱신했다. 기존 rationale은 decision log에서 superseded 상태로 보존한다.
 
 - root `DESIGN.md`
 - `docs/product-aws-resource-browser-202608.md`

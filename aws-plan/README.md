@@ -3,9 +3,9 @@
 독자        저장소 소유자와 이후 구현·검토 담당자
 목적        AWS Console의 반복적인 서비스·계정 이동을 대체할 전용 read-only TUI의 제품·UX·기술 계약을 확정한다
 대상 환경   AWS SDK for Go v2, AWS CLI v2, zsh/tmux/Orca 터미널, 여러 AWS profile과 계정·리전
-최종 검토   2026-08-27
-다음 검토   Phase 0 credential·security spike 결과 시
-상태        기획 기준안 확정, 구현 미착수
+최종 검토   2026-08-28
+다음 검토   PTY/tmux·release·실계정 gate 완료 시
+상태        자동화 구현과 production wiring 완료, 최종 gate 진행 중, 실계정 smoke 대기
 
 `bb aws browse`는 시작할 때 전체 AWS inventory를 만들지 않는다. 로컬 정보로 서비스 카탈로그를 즉시 열고, EC2·Route 53·IAM 같은 카테고리에 들어가거나 연결 리소스를 선택할 때 필요한 조회만 실행한다. 도메인·IAM role처럼 소유 계정을 모를 수 있는 검색은 사용자가 검색을 확정한 뒤 여러 AWS profile을 제한된 동시성으로 자동 조회한다.
 
@@ -17,7 +17,7 @@
 - Tag, Security Group rule, IAM policy는 한 줄로 줄이지 않고 별도 전체 화면에서 읽는다.
 - EC2 → EBS/SG/instance profile → IAM role → policy 이동을 같은 탐색 stack 안에서 처리한다.
 - 도메인·role cross-profile 검색은 모든 키 입력마다 실행하지 않고, 검색 확정 시 선택 범위의 profile을 자동 fan-out 한다.
-- AWS 변경 API는 계속 금지한다. AWS CLI는 profile discovery·SSO login·ambient/named credential export를 맡고, AWS SDK for Go v2가 STS·EC2·IAM·Route 53 read operation을 실행한다.
+- AWS 변경 API는 계속 금지한다. Browser runtime에서 AWS CLI는 profile discovery와 ambient/named credential export만 맡고, AWS SDK for Go v2가 STS·EC2·IAM·Route 53 read operation을 실행한다. 기존 SSO login/assume 명령은 별도 호환 surface다.
 
 ## 문서 지도
 
@@ -31,7 +31,7 @@
 
 ## 기존 작업과의 관계
 
-현재 working tree의 `internal/bb/aws_browse.go`와 기존 AWS browser 문서는 아직 출시되지 않은 P0 초안이다. 기존 코드는 보존해야 할 기준 구현이 아니라 교체 대상 탐색 자료로 취급한다. 이미 배포된 `bb aws assume`과 `bb assume`은 호환 surface이므로 강제 rename하지 않지만, 새 TUI와 내부 모델에서는 대상을 `assume`이 아니라 `AWS profile` 또는 `account/role context`라고 부른다.
+기존 CLI-preload `internal/bb/aws_browse.go`와 문서 설계는 Git history와 decision log에 superseded 근거로 남는다. 현재 branch에는 credential/runtime/provider/query/store, progressive TUI, scoped query, bounded cross-profile search와 production wiring의 자동화 구현이 있으며 최종 acceptance가 진행 중이다. 이미 배포된 `bb aws assume`과 `bb assume`은 호환 surface이므로 강제 rename하지 않지만, 새 TUI와 내부 모델에서는 대상을 `assume`이 아니라 `AWS profile` 또는 `account/role context`라고 부른다.
 
 ## 구현 기본값
 

@@ -19,6 +19,7 @@ var plainCatalog = []catalogItem{homeCatalog[0], homeCatalog[1], homeCatalog[2],
 
 type plainFrame struct {
 	target, label string
+	intent        Intent
 	projection    IntentProjection
 	context       *AWSContext
 	detail        *ResourceProjection
@@ -100,7 +101,13 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 				continue
 			}
 			frame := &history[len(history)-1]
-			if err := p.load(ctx, terminal.Err, config, frame, Intent{Kind: IntentRefresh, Target: frame.target}, inputs); err != nil {
+			intent := frame.intent
+			if intent.Kind != IntentSearch || intent.Target != "cross-profile-search" {
+				intent = Intent{Kind: IntentRefresh, Target: frame.target, Profile: intent.Profile, Region: intent.Region}
+			}
+			frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
+			fmt.Fprintln(terminal.Err, frame.status)
+			if err := p.load(ctx, terminal.Err, config, frame, intent, inputs, true); err != nil {
 				if errors.Is(err, errPlainBack) {
 					continue
 				}
@@ -127,7 +134,7 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 			frame := &history[len(history)-1]
 			frame.search = false
 			frame.label = "Search results · " + query
-			if err := p.load(ctx, terminal.Err, config, frame, Intent{Kind: IntentSearch, Target: frame.target, SearchKind: fields[1], Query: query, Scope: fields[2]}, inputs); err != nil {
+			if err := p.load(ctx, terminal.Err, config, frame, Intent{Kind: IntentSearch, Target: frame.target, SearchKind: fields[1], Query: query, Scope: fields[2]}, inputs, false); err != nil {
 				if errors.Is(err, errPlainBack) {
 					history = history[:len(history)-1]
 					continue
@@ -159,7 +166,7 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 					continue
 				}
 				kind := IntentOpen
-				if err := p.load(ctx, terminal.Err, config, &history[len(history)-1], Intent{Kind: kind, Target: item.ID}, inputs); err != nil {
+				if err := p.load(ctx, terminal.Err, config, &history[len(history)-1], Intent{Kind: kind, Target: item.ID}, inputs, false); err != nil {
 					if errors.Is(err, errPlainBack) {
 						history = history[:len(history)-1]
 						continue
@@ -197,7 +204,7 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 			}
 			next := plainFrame{target: relation.Target, label: relation.Label, context: frame.context}
 			history = append(history, next)
-			if err := p.load(ctx, terminal.Err, config, &history[len(history)-1], Intent{Kind: IntentOpen, Target: relation.Target}, inputs); err != nil {
+			if err := p.load(ctx, terminal.Err, config, &history[len(history)-1], Intent{Kind: IntentOpen, Target: relation.Target}, inputs, false); err != nil {
 				if errors.Is(err, errPlainBack) {
 					history = history[:len(history)-1]
 					continue
@@ -213,18 +220,21 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 	}
 }
 
-func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *plainFrame, intent Intent, inputs *plainInputSource) error {
+func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *plainFrame, intent Intent, inputs *plainInputSource, exactContext bool) error {
 	if p.Dispatcher == nil {
 		fmt.Fprintln(out, safeIntentText(frame.label)+": not loaded")
 		return nil
 	}
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	if frame.context != nil && frame.context.Validate() == nil {
-		intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
-	} else {
-		intent.Profile, intent.Region = config.Profile, config.Region
+	if !exactContext {
+		if frame.context != nil && frame.context.Validate() == nil {
+			intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
+		} else {
+			intent.Profile, intent.Region = config.Profile, config.Region
+		}
 	}
+	frame.intent = intent
 	started := make(chan plainDispatchResult, 1)
 	go func() {
 		stream, err := p.Dispatcher.Dispatch(dispatchCtx, intent)
@@ -284,7 +294,7 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 				return nil
 			}
 			terminal = terminal || terminalLoadState(update.Query.Snapshot.State)
-			if err := p.applyPlainUpdate(out, frame, intent.Kind, update); err != nil {
+			if err := p.applyPlainUpdate(out, frame, exactContext || intent.Kind == IntentRefresh, update); err != nil {
 				return err
 			}
 			if terminal {
@@ -329,7 +339,7 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 				return nil
 			}
 			terminal = terminal || terminalLoadState(update.Query.Snapshot.State)
-			if err := p.applyPlainUpdate(out, frame, intent.Kind, update); err != nil {
+			if err := p.applyPlainUpdate(out, frame, exactContext || intent.Kind == IntentRefresh, update); err != nil {
 				return err
 			}
 			if terminal {
@@ -345,7 +355,7 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 	}
 }
 
-func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, kind IntentKind, update IntentUpdate) error {
+func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing bool, update IntentUpdate) error {
 	if update.Context != nil && update.Context.Validate() == nil {
 		copy := *update.Context
 		frame.context = &copy
@@ -361,7 +371,7 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, kind IntentKin
 		projection = ProjectQueryUpdate(update.Query)
 	}
 	state := update.Query.Snapshot.State
-	preserve := kind == IntentRefresh && state == LoadRefreshing && len(frame.projection.Resources) != 0
+	preserve := refreshing && !terminalLoadState(state) && len(frame.projection.Resources) != 0
 	if !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty) {
 		frame.projection = projection
 	}

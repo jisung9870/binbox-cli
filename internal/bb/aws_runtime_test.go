@@ -133,6 +133,34 @@ func TestAWSIntentSearchCancellationIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestAWSIntentDispatcherRepeatedSearchRetainsBoundedRequest(t *testing.T) {
+	var requests []awsintegration.SearchRequest
+	dispatcher := &awsIntentDispatcher{search: awsIntentSearchFunc(func(_ context.Context, request awsintegration.SearchRequest) (awsintegration.SearchResult, error) {
+		requests = append(requests, request)
+		return awsintegration.SearchResult{}, nil
+	})}
+	intent := awsbrowser.Intent{
+		Kind: awsbrowser.IntentSearch, Target: "cross-profile-search", SearchKind: "role",
+		Scope: "all", Query: "reader", Profile: "dev", Region: "us-east-1",
+	}
+	for range 2 {
+		stream, err := dispatcher.Dispatch(context.Background(), intent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		update := <-stream.Updates()
+		if !update.Done || update.Query.Snapshot.State != awsbrowser.LoadEmpty {
+			t.Fatalf("search update=%+v", update)
+		}
+	}
+	want := awsintegration.SearchRequest{
+		Kind: awsintegration.SearchRole, Scope: awsintegration.SearchAll, Query: "reader", Profile: "dev", Region: "us-east-1",
+	}
+	if len(requests) != 2 || requests[0] != want || requests[1] != want {
+		t.Fatalf("repeated requests=%+v want=%+v", requests, want)
+	}
+}
+
 func TestAWSAppConstructionAndBrowserHomeAreZeroCall(t *testing.T) {
 	stderr := new(bytes.Buffer)
 	app := New(new(bytes.Buffer), stderr, []string{"BB_SELECTOR=plain"})

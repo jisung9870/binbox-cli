@@ -271,6 +271,52 @@ func TestModelRefreshPreservesOldProjectionAndRejectsLateStream(t *testing.T) {
 	}
 }
 
+func TestModelSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) {
+	initial, refresh := newTestIntentStream(), newTestIntentStream()
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
+	config := Config{Profile: "dev", Region: "us-east-1"}
+	var model tea.Model = NewModel(context.Background(), config, dispatcher)
+	model, _ = model.Update(ctrl('g'))
+	for _, character := range "reader" {
+		model, _ = model.Update(key(character))
+	}
+	model, wait := runModelCommand(t, model, key(tea.KeyEnter))
+	audit := testStoreContext(t, "audit", "999999999999", "us-west-2", 2)
+	old := resourceProjection("old-role", "matched")
+	initial.updates <- IntentUpdate{
+		Context:    &audit,
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{old}},
+		Coverage:   &SearchCoverage{Profiles: []SearchProfileCoverage{{Profile: "audit", Status: "matched", Matches: 1}}},
+		Done:       true,
+	}
+	model, _ = model.Update(wait())
+
+	model, dispatch := model.Update(ctrl('r'))
+	if dispatch == nil || !strings.Contains(model.View().Content, "Showing cached 1 · refreshing") || !strings.Contains(model.View().Content, "old-role") {
+		t.Fatalf("search refresh did not enter cached-refreshing state: %s", model.View().Content)
+	}
+	model, wait = model.Update(dispatch())
+	if len(dispatcher.intents) != 2 {
+		t.Fatalf("search refresh intents=%+v", dispatcher.intents)
+	}
+	want := Intent{Kind: IntentSearch, Target: "cross-profile-search", SearchKind: "domain", Query: "reader", Scope: "all", Profile: "dev", Region: "us-east-1"}
+	if dispatcher.intents[0] != want || dispatcher.intents[1] != want {
+		t.Fatalf("search refresh did not repeat original intent:\nfirst=%+v\nrefresh=%+v\nwant=%+v", dispatcher.intents[0], dispatcher.intents[1], want)
+	}
+	newResource := resourceProjection("new-role", "matched")
+	refresh.updates <- IntentUpdate{
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{newResource}},
+		Coverage:   &SearchCoverage{Profiles: []SearchProfileCoverage{{Profile: "dev", Status: "matched", Matches: 1}}},
+		Done:       true,
+	}
+	model, _ = model.Update(wait())
+	if strings.Contains(model.View().Content, "old-role") || !strings.Contains(model.View().Content, "new-role") || strings.Contains(model.View().Content, "unsupported") {
+		t.Fatalf("search refresh did not atomically install results: %s", model.View().Content)
+	}
+}
+
 func TestModelTypedStaleAndPartialFailuresAreSafe(t *testing.T) {
 	stream := newTestIntentStream()
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}

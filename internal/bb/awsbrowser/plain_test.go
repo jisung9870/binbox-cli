@@ -80,6 +80,42 @@ func TestPlainRefreshKeepsCachedProjectionUntilReady(t *testing.T) {
 	}
 }
 
+func TestPlainSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) {
+	initial, refresh := newTestIntentStream(), newTestIntentStream()
+	audit := testStoreContext(t, "audit", "999999999999", "us-west-2", 2)
+	initial.updates <- IntentUpdate{
+		Context:    &audit,
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("old-role", "matched")}},
+		Coverage:   &SearchCoverage{Profiles: []SearchProfileCoverage{{Profile: "audit", Status: "matched", Matches: 1}}},
+		Done:       true,
+	}
+	refresh.updates <- IntentUpdate{
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{resourceProjection("new-role", "matched")}},
+		Coverage:   &SearchCoverage{Profiles: []SearchProfileCoverage{{Profile: "dev", Status: "matched", Matches: 1}}},
+		Done:       true,
+	}
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{
+		In: strings.NewReader("open 4\nsearch role all reader\nrefresh\nquit\n"), Err: &out,
+	}, Config{Profile: "dev", Region: "us-east-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Intent{Kind: IntentSearch, Target: "cross-profile-search", SearchKind: "role", Query: "reader", Scope: "all", Profile: "dev", Region: "us-east-1"}
+	if len(dispatcher.intents) != 2 || dispatcher.intents[0] != want || dispatcher.intents[1] != want {
+		t.Fatalf("plain search refresh intents=%+v want repeated %+v", dispatcher.intents, want)
+	}
+	output := out.String()
+	refreshing := strings.LastIndex(output, "Showing cached 1 · refreshing")
+	ready := strings.LastIndex(output, "Ready · 1 resources")
+	if refreshing < 0 || ready < refreshing || !strings.Contains(output[:ready], "old-role") || !strings.Contains(output[ready:], "new-role") || strings.Contains(output, "unsupported") {
+		t.Fatalf("plain search refresh output:\n%s", output)
+	}
+}
+
 func TestPlainSearchUsesIntentStreamAndSanitizesFailure(t *testing.T) {
 	stream := newTestIntentStream()
 	stream.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadForbidden}, Failure: &ProviderFailure{State: LoadForbidden, Service: "iam\x1b[31m", Operation: "GetRole"}}, Done: true}

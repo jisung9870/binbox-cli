@@ -40,6 +40,7 @@ var searchScopes = []string{"all", "current"}
 type routeFrame struct {
 	mode             routeMode
 	target, label    string
+	intent           Intent
 	status           string
 	projection       IntentProjection
 	selected         int
@@ -341,9 +342,10 @@ func (m Model) pushAndDispatch(intent Intent, label string, inherited *AWSContex
 	if inherited != nil && inherited.Validate() == nil {
 		intent.Profile, intent.Region = inherited.Profile, inherited.Region
 	}
+	intent = m.resolveIntentContext(intent)
 	dispatchCtx, cancel := context.WithCancel(m.ctx)
 	frame := routeFrame{
-		mode: routeList, target: intent.Target, label: label, context: inherited,
+		mode: routeList, target: intent.Target, label: label, intent: intent, context: inherited,
 		status: "Loading " + safeIntentText(label) + "… · Esc cancel", generation: m.nextGeneration, dispatchCancel: cancel,
 	}
 	m.history = append(m.history, frame)
@@ -360,9 +362,9 @@ func (m Model) refreshCurrent() (tea.Model, tea.Cmd) {
 	frame.refreshing = true
 	frame.terminalUpdate = false
 	frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
-	intent := Intent{Kind: IntentRefresh, Target: frame.target}
-	if frame.context != nil && frame.context.Validate() == nil {
-		intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
+	intent := frame.intent
+	if intent.Kind != IntentSearch || intent.Target != "cross-profile-search" {
+		intent = Intent{Kind: IntentRefresh, Target: frame.target, Profile: intent.Profile, Region: intent.Region}
 	}
 	return m, m.dispatch(dispatchCtx, intent, frame.generation)
 }
@@ -371,15 +373,20 @@ func (m Model) dispatch(ctx context.Context, intent Intent, generation uint64) t
 	if m.dispatcher == nil {
 		return nil
 	}
+	intent = m.resolveIntentContext(intent)
+	return func() tea.Msg {
+		stream, err := m.dispatcher.Dispatch(ctx, intent)
+		return intentStartedMsg{generation: generation, result: IntentResultMsg{Intent: intent, Stream: stream, Err: err}}
+	}
+}
+
+func (m Model) resolveIntentContext(intent Intent) Intent {
 	if intent.Profile == "" && intent.Region == "" {
 		intent.Profile, intent.Region = m.config.Profile, m.config.Region
 	} else if intent.Region == "" {
 		intent.Region = m.config.Region
 	}
-	return func() tea.Msg {
-		stream, err := m.dispatcher.Dispatch(ctx, intent)
-		return intentStartedMsg{generation: generation, result: IntentResultMsg{Intent: intent, Stream: stream, Err: err}}
-	}
+	return intent
 }
 
 func waitIntent(generation uint64, stream IntentStream) tea.Cmd {
@@ -405,7 +412,7 @@ func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
 		projection = ProjectQueryUpdate(update.Query)
 	}
 	state := update.Query.Snapshot.State
-	preserve := frame.refreshing && state == LoadRefreshing && len(frame.projection.Resources) != 0
+	preserve := frame.refreshing && !terminalLoadState(state) && len(frame.projection.Resources) != 0
 	if !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty) {
 		frame.projection = projection
 		if frame.selected >= len(frame.projection.Resources) {

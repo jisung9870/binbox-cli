@@ -2,9 +2,9 @@
 
 독자        구현 에이전트, 통합 담당자, 검증 담당자
 목적        멀티에이전트가 충돌 없이 AWS Browse v2를 단계별 구현하고 검증하는 방식을 고정한다
-대상 환경   2026-08-27 working tree, Go 1.25, Codex native subagents, OMX 0.149.1
+대상 환경   2026-08-27 working tree, Go 1.25, Codex native subagents
 최종 검토   2026-08-27
-다음 검토   OMX leader preflight 복구 또는 Phase 0 완료 시
+다음 검토   Phase 0 완료 또는 native collaboration surface 변경 시
 상태        작업 방식 기준안, 구현 미착수
 등급        L2, 구현 종료까지 사용
 
@@ -12,16 +12,17 @@
 
 구현은 vertical slice와 검증 gate를 사용한다. Phase 0에서 credential·endpoint 계약을 실제 코드로 증명한 뒤 Home → EC2 → IAM → Route 53 → cross-profile 순서로 기능을 완성한다. 각 단계의 작성자와 검증자는 분리하고, gate가 실패한 상태에서 다음 단계 코드를 늘리지 않는다.
 
-## OMX leader proof가 구현 시작 조건이다
+## 구현 시작은 Phase 0 계약으로 결정한다
 
-2026-08-27 `omx ralplan preflight --json` 결과는 `unsupported_documented_leader_proof`이며 `documented_root_identity.status=unknown`이다. AGENTS.md 계약상 이 상태에서는 OMX 역할 delegation과 구현을 시작하지 않는다.
+`omx ralplan preflight --json`은 현재 환경에서 `unsupported_documented_leader_proof`로 종료하므로 구현 시작 gate로 사용하지 않는다. OMX는 선택적 launcher로만 취급하며, OMX의 leader proof나 role routing 성공 여부는 AWS Browse v2의 기능·보안 계약과 무관하다.
 
-시작 조건은 다음 두 가지다.
+구현은 다음 조건을 확인한 뒤 시작한다.
 
-1. 같은 repository/session에서 preflight가 `ok=true`를 반환한다.
-2. 역할 routing surface가 제공되면 installed `agent_type`을 사용하고, 제공되지 않으면 임의 role label을 만들지 않는다.
+1. repository의 기존 변경과 이번 구현 범위를 구분한다.
+2. [ADR-001 P0 gate](ADR-001-HYBRID-AWS-ACCESS.md#p0-validation-gate)의 검증 대상·실패 조건·허용 파일을 첫 작업에 고정한다.
+3. 현재 session이 native subagent를 허용하고 작업을 독립적으로 나눌 수 있을 때만 lane을 병렬로 실행한다. 제공되지 않으면 Leader가 같은 gate를 순차적으로 수행한다.
 
-이 조건은 기능 설계 문제가 아니라 orchestration runtime blocker다. 복구 전에는 문서·read-only 진단만 허용한다.
+즉 orchestration runtime은 실행 방식을 바꿀 수는 있어도 구현 자체를 막지 않는다. 다음 phase 진입 여부는 아래 기능·보안 gate만으로 판정한다.
 
 ## 모델은 작업 위험과 반복성에 따라 배치한다
 
@@ -37,9 +38,9 @@
 | `test-engineer` | `gpt-5.6-terra` medium | fake·race·golden·failure test | production contract 독단 변경 |
 | `verifier`/`code-reviewer` | `gpt-5.6-sol` high | 독립 완료·보안·회귀 판정 | 작성자 결과 무검증 수용 |
 
-이 배치는 Sol을 복잡한 전문 작업, Terra를 intelligence/cost 균형, Luna를 반복적 고처리량 작업에 쓰는 [OpenAI GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model)와 repository의 OMX role table을 함께 따른다. Luna 결과가 의미 판단을 요구하거나 Terra 작업이 credential·endpoint·account identity를 건드리면 Sol lane으로 승격한다.
+이 배치는 Sol을 복잡한 전문 작업, Terra를 intelligence/cost 균형, Luna를 반복적 고처리량 작업에 쓰는 [OpenAI GPT-5.6 model guidance](https://developers.openai.com/api/docs/guides/latest-model)를 따른다. 실제 model override는 현재 session의 정책과 제공 surface가 허용할 때만 적용한다. Luna 결과가 의미 판단을 요구하거나 Terra 작업이 credential·endpoint·account identity를 건드리면 Sol lane으로 승격한다.
 
-## 한 번에 Leader와 세 lane만 실행한다
+## 한 번에 Leader와 최대 세 lane만 실행한다
 
 동시 실행 slot은 Leader 포함 4개다. 작업 파동별 구성은 다음과 같다.
 
@@ -164,7 +165,7 @@ Rollback 절차:
 
 ## 일정은 gate 통과 속도로 관리한다
 
-2026-08-27 기준 예상 작업량은 Phase 0 1일, shell·EC2 2~3일, IAM 1~2일, Route 53 1~2일, cross-profile·hardening 2~3일이다. 이는 3개 worker lane이 충돌 없이 작동한다는 가정의 추정이며, wall-clock 약속이 아니다.
+2026-08-27 기준 예상 작업량은 Phase 0 1일, shell·EC2 2~3일, IAM 1~2일, Route 53 1~2일, cross-profile·hardening 2~3일이다. 이는 native subagent가 제공되고 3개 worker lane이 충돌 없이 작동한다는 가정의 추정이며, wall-clock 약속이 아니다. 순차 실행 시에는 다시 산정한다.
 
 담당 구조:
 
@@ -175,7 +176,7 @@ Rollback 절차:
 
 ## 재검토 트리거
 
-- OMX preflight의 leader proof 계약 또는 역할 routing surface가 바뀐다.
+- Codex native subagent의 생성·메시지·대기 계약이 바뀐다.
 - SDK endpoint firewall을 public API로 증명할 수 없다.
 - provider 10개, profile 50개, stripped binary 40 MiB 중 하나를 넘는다.
 - 두 agent가 같은 파일을 반복적으로 수정해야 해 ownership 분리가 실패한다.

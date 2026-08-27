@@ -111,6 +111,27 @@ func renderList(m Model, route routeFrame) string {
 		fit(route.status, inner),
 		"",
 	}
+	if route.coverage != nil {
+		if route.coverage.DiscoveryStatus != "" {
+			lines = append(lines, fit("Profile discovery · "+safeIntentText(route.coverage.DiscoveryStatus), inner))
+		}
+		for _, profile := range route.coverage.Profiles {
+			name := profile.Profile
+			if name == "" {
+				name = "ambient"
+			}
+			marker := "profile"
+			if profile.Current {
+				marker = "current"
+			}
+			account := profile.AccountID
+			if account == "" {
+				account = "unresolved"
+			}
+			lines = append(lines, fit(fmt.Sprintf("Coverage · %s %s · %s · %s · matches %d", marker, safeIntentText(name), safeIntentText(account), safeIntentText(profile.Status), profile.Matches), inner))
+		}
+		lines = append(lines, "")
+	}
 	resources := route.projection.Resources
 	if len(resources) == 0 {
 		lines = append(lines, "No resource result has been loaded.")
@@ -161,6 +182,32 @@ func renderDetail(m Model, route routeFrame) string {
 	content := []string{}
 	if resource.Subtitle != "" {
 		content = append(content, fit(safeIntentText(resource.Subtitle), inner), "")
+	}
+	if resource.Context != nil && resource.Context.Validate() == nil {
+		profile := resource.Context.Profile
+		if profile == "" {
+			profile = "ambient"
+		}
+		current := "no"
+		if resource.Current {
+			current = "yes"
+		}
+		available := make([]string, len(resource.AvailableViaProfiles))
+		for index, value := range resource.AvailableViaProfiles {
+			if value == "" {
+				value = "ambient"
+			}
+			available[index] = safeIntentText(value)
+		}
+		if len(available) == 0 {
+			available = []string{safeIntentText(profile)}
+		}
+		content = append(content, "Provenance",
+			fit("  Account "+safeIntentText(resource.Context.AccountID), inner),
+			fit("  Principal "+safeIntentText(resource.Context.PrincipalARN), inner),
+			fit("  Profile "+safeIntentText(profile)+" · current "+current, inner),
+			fit("  Region "+safeIntentText(resource.Context.Region), inner),
+			fit("  Available via "+strings.Join(available, ", "), inner), "")
 	}
 	content = append(content, fmt.Sprintf("Relations (%d)", len(resource.Relations)))
 	if len(resource.Relations) == 0 {

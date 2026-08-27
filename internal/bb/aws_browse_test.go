@@ -15,12 +15,25 @@ func TestParseAWSBrowseOptions(t *testing.T) {
 		t.Fatalf("opts=%+v err=%v", opts, err)
 	}
 	for _, args := range [][]string{
-		{"extra"}, {"--profile"}, {"--region", "bad\nregion"}, {"--profile", "bad profile"}, {"--json"},
+		{"extra"}, {"--profile"}, {"--region", "bad\nregion"}, {"--region", "not-a-region"}, {"--profile", "bad profile"}, {"--profile", ".hidden"}, {"--profile", "-hidden"}, {"--json"},
 		{"--profile", "dev", "--profile", "audit"}, {"--region", "us-east-1", "--region", "us-west-2"},
 	} {
 		if _, err := parseAWSBrowseOptions(args); ExitCode(err) != ExitInvalidInvocation {
 			t.Fatalf("args=%q err=%v exit=%d", args, err, ExitCode(err))
 		}
+	}
+}
+
+func TestAWSBrowseInvalidContextIsExitTwoBeforeTerminalOrPathLookup(t *testing.T) {
+	for _, args := range [][]string{{"--profile", ".hidden"}, {"--profile", "-hidden"}, {"--region", "not-a-region"}} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			a := New(new(bytes.Buffer), new(bytes.Buffer), nil)
+			a.awsBrowserTerminal = func() awsbrowser.Terminal { t.Fatal("invalid context opened terminal"); return awsbrowser.Terminal{} }
+			a.lookPath = func(string) (string, error) { t.Fatal("invalid context looked up AWS CLI"); return "", nil }
+			if err := a.Run(append([]string{"aws", "browse"}, args...)); ExitCode(err) != ExitInvalidInvocation {
+				t.Fatalf("args=%q err=%v exit=%d", args, err, ExitCode(err))
+			}
+		})
 	}
 }
 

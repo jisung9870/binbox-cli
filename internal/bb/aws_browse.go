@@ -29,7 +29,7 @@ func parseAWSBrowseOptions(args []string) (awsBrowseOptions, error) {
 				if profileSet {
 					return opts, invalid("AWS profile may be specified only once")
 				}
-				if !awsProfileNameRE.MatchString(args[1]) {
+				if awsbrowser.ValidateContextSelection(args[1], "") != nil {
 					return opts, invalid("invalid AWS profile name")
 				}
 				opts.Profile = args[1]
@@ -37,6 +37,9 @@ func parseAWSBrowseOptions(args []string) (awsBrowseOptions, error) {
 			} else {
 				if regionSet {
 					return opts, invalid("AWS region may be specified only once")
+				}
+				if awsbrowser.ValidateContextSelection("", args[1]) != nil {
+					return opts, invalid("invalid AWS region")
 				}
 				opts.Region = args[1]
 				regionSet = true

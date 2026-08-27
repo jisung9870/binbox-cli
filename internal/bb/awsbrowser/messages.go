@@ -3,12 +3,32 @@ package awsbrowser
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
+
+var (
+	contextProfileRE           = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	contextRegionRE            = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+-[0-9]+$`)
+	errInvalidContextSelection = errors.New("invalid AWS context selection")
+)
+
+// ValidateContextSelection is the shared CLI/integration boundary for an
+// optional explicit profile and region. Empty values select ambient/default
+// resolution; non-empty values must already be canonical and bounded.
+func ValidateContextSelection(profile, region string) error {
+	if profile != strings.TrimSpace(profile) || region != strings.TrimSpace(region) ||
+		(profile != "" && !contextProfileRE.MatchString(profile)) ||
+		(region != "" && (len(region) > 64 || !contextRegionRE.MatchString(region))) {
+		return errInvalidContextSelection
+	}
+	return nil
+}
 
 type IntentKind string
 
@@ -56,10 +76,34 @@ type ResourceProjection struct {
 	Subtitle  string
 	Fields    []ProjectionField
 	Relations []ProjectionRelation
+	// Context is the exact credential-free execution context that produced this
+	// resource. It is per-resource because cross-profile results may span
+	// accounts; callers must not promote it to one list-wide context.
+	Context              *AWSContext
+	Current              bool
+	AvailableViaProfiles []string
 }
 
 type IntentProjection struct {
 	Resources []ResourceProjection
+}
+
+// SearchProfileCoverage and SearchCoverage are integration-independent,
+// credential-free DTOs for interactive search. String statuses are sanitized
+// at the integration boundary and intentionally carry no provider message.
+type SearchProfileCoverage struct {
+	Profile   string
+	Region    string
+	AccountID string
+	Status    string
+	Current   bool
+	Matches   int
+}
+
+type SearchCoverage struct {
+	DiscoveryStatus string
+	Profiles        []SearchProfileCoverage
+	Partial         bool
 }
 
 // IntentUpdate is one progressive stream item. Query carries the exact store
@@ -69,6 +113,7 @@ type IntentUpdate struct {
 	Context    *AWSContext
 	Query      QueryUpdate
 	Projection IntentProjection
+	Coverage   *SearchCoverage
 	Done       bool
 }
 
@@ -141,17 +186,20 @@ func ProjectQueryUpdate(update QueryUpdate) IntentProjection {
 	for _, page := range update.Snapshot.Pages() {
 		for _, observed := range page.Resources() {
 			fields := observed.Observation.Fields()
-			projection := ResourceProjection{
-				Target:   observed.Key.Type + ":" + observed.Key.ID,
-				Title:    projectionTitle(observed.Key, fields),
-				Subtitle: projectionSubtitle(fields),
-			}
-			projection.Fields = projectFields(fields)
-			projection.Relations = projectRelations(fields)
+			projection := ProjectResourceFields(observed.Key, fields)
 			resources = append(resources, projection)
 		}
 	}
 	return IntentProjection{Resources: resources}
+}
+
+// ProjectResourceFields applies the same sanitized, provider-independent
+// projection boundary to canonical search resources and streamed query pages.
+func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProjection {
+	return ResourceProjection{
+		Target: key.Type + ":" + key.ID, Title: projectionTitle(key, fields), Subtitle: projectionSubtitle(fields),
+		Fields: projectFields(fields), Relations: projectRelations(fields),
+	}
 }
 
 func projectionTitle(key ResourceKey, fields map[string]any) string {
@@ -287,7 +335,9 @@ func projectRelations(fields map[string]any) []ProjectionRelation {
 			ObservedAt: relationTime(relation["observed_at"]),
 		}
 		if hasTarget && target.Validate() == nil {
-			item.Target = target.Type + ":" + target.ID
+			if NavigableRelationTargetType(target.Type) {
+				item.Target = target.Type + ":" + target.ID
+			}
 			if item.Label == "" {
 				item.Label = target.ID
 			}
@@ -300,6 +350,20 @@ func projectRelations(fields map[string]any) []ProjectionRelation {
 		result = append(result, item)
 	}
 	return result
+}
+
+// NavigableRelationTargetType is the frozen production binding contract. A
+// valid exact relation remains visible when false, but is evidence-only until a
+// narrowed read operation is implemented for its resource type.
+func NavigableRelationTargetType(resourceType string) bool {
+	switch resourceType {
+	case "ec2.instance", "ec2.volume", "ec2.security-group", "ec2.security-group-rule",
+		"ec2.vpc", "ec2.subnet", "ec2.route-table", "iam.role", "iam.instance-profile",
+		"iam.managed-policy", "iam.inline-policy", "iam.managed-policy-version", "hosted-zone":
+		return true
+	default:
+		return false
+	}
 }
 
 type namedRelation struct {

@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/jisung9870/binbox-cli/internal/bb/awsbrowser"
 )
 
 const (
@@ -20,8 +22,7 @@ const (
 )
 
 var (
-	awsQueryRegionRE = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+-[0-9]+$`)
-	awsQueryRoleRE   = regexp.MustCompile(`^[A-Za-z0-9_+=,.@-]+$`)
+	awsQueryRoleRE = regexp.MustCompile(`^[A-Za-z0-9_+=,.@-]+$`)
 )
 
 type awsQueryRequest struct {
@@ -218,7 +219,7 @@ func parseAWSQuery(args []string) (awsQueryRequest, bool, error) {
 				if profileSet {
 					return request, jsonMode, invalid("AWS profile may be specified only once")
 				}
-				if !awsProfileNameRE.MatchString(value) {
+				if awsbrowser.ValidateContextSelection(value, "") != nil {
 					return request, jsonMode, invalid("invalid AWS profile name")
 				}
 				request.Profile, profileSet = value, true
@@ -226,7 +227,7 @@ func parseAWSQuery(args []string) (awsQueryRequest, bool, error) {
 				if regionSet {
 					return request, jsonMode, invalid("AWS region may be specified only once")
 				}
-				if len(value) > 64 || !awsQueryRegionRE.MatchString(value) {
+				if awsbrowser.ValidateContextSelection("", value) != nil {
 					return request, jsonMode, invalid("invalid AWS region")
 				}
 				request.Region, regionSet = value, true

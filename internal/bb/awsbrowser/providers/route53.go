@@ -428,6 +428,8 @@ func mapRecordSets(ctx context.Context, key awsbrowser.QueryKey, zoneID string, 
 		if err != nil {
 			return nil, false, err
 		}
+		zoneRelation["source"] = resourceKey
+		zoneRelation["target"] = zoneKey
 		fields := map[string]any{
 			"hosted_zone_id":  zoneID,
 			"hosted_zone_key": zoneKey,

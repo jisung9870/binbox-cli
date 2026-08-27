@@ -87,6 +87,8 @@ func TestAWSQueryInvalidInvocationsNeverConstructBackend(t *testing.T) {
 		{"domain", "example.com", "--unknown"},
 		{"domain", "example.com", "--profile"},
 		{"domain", "example.com", "--profile", "--inject"},
+		{"domain", "example.com", "--profile", ".hidden"},
+		{"domain", "example.com", "--profile", "-hidden"},
 		{"domain", "example.com", "--profile", "dev", "--profile", "prod"},
 		{"domain", "example.com", "--region", "not-a-region"},
 		{"domain", "example.com", "--region", "us-east-1", "--region", "us-west-2"},
@@ -115,6 +117,18 @@ func TestAWSQueryInvalidInvocationsNeverConstructBackend(t *testing.T) {
 			}
 			if calls != 0 {
 				t.Fatalf("args=%q constructed backend %d times", args, calls)
+			}
+		})
+	}
+}
+
+func TestAWSQueryInvalidContextDoesNotDiscoverAWSCLI(t *testing.T) {
+	for _, args := range [][]string{{"role", "reader", "--profile", ".hidden"}, {"role", "reader", "--profile", "-hidden"}, {"domain", "example.com", "--region", "not-a-region"}} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			app := New(new(bytes.Buffer), new(bytes.Buffer), nil)
+			app.lookPath = func(string) (string, error) { t.Fatal("invalid context discovered AWS CLI"); return "", nil }
+			if err := app.Run(append([]string{"aws", "query"}, args...)); ExitCode(err) != ExitInvalidInvocation {
+				t.Fatalf("args=%q err=%v exit=%d", args, err, ExitCode(err))
 			}
 		})
 	}

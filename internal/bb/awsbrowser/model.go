@@ -52,6 +52,7 @@ type routeFrame struct {
 	scroll           int
 	terminalUpdate   bool
 	dispatchCancel   context.CancelFunc
+	coverage         *SearchCoverage
 	searchKind       int
 	searchScope      int
 	searchValue      string
@@ -312,7 +313,12 @@ func (m Model) enterCurrent() (tea.Model, tea.Cmd) {
 			frame.stream = nil
 		}
 		resource := frame.projection.Resources[frame.selected]
-		m.history = append(m.history, routeFrame{mode: routeDetail, target: resource.Target, label: resource.Title, context: frame.context, detail: resource})
+		resourceContext := frame.context
+		if resource.Context != nil && resource.Context.Validate() == nil {
+			copy := *resource.Context
+			resourceContext = &copy
+		}
+		m.history = append(m.history, routeFrame{mode: routeDetail, target: resource.Target, label: resource.Title, context: resourceContext, detail: resource})
 		return m, nil
 	}
 	if len(frame.detail.Relations) == 0 {
@@ -332,6 +338,9 @@ func (m Model) pushAndDispatch(intent Intent, label string, inherited *AWSContex
 		m.finishFrame(current)
 	}
 	m.nextGeneration++
+	if inherited != nil && inherited.Validate() == nil {
+		intent.Profile, intent.Region = inherited.Profile, inherited.Region
+	}
 	dispatchCtx, cancel := context.WithCancel(m.ctx)
 	frame := routeFrame{
 		mode: routeList, target: intent.Target, label: label, context: inherited,
@@ -351,14 +360,22 @@ func (m Model) refreshCurrent() (tea.Model, tea.Cmd) {
 	frame.refreshing = true
 	frame.terminalUpdate = false
 	frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
-	return m, m.dispatch(dispatchCtx, Intent{Kind: IntentRefresh, Target: frame.target}, frame.generation)
+	intent := Intent{Kind: IntentRefresh, Target: frame.target}
+	if frame.context != nil && frame.context.Validate() == nil {
+		intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
+	}
+	return m, m.dispatch(dispatchCtx, intent, frame.generation)
 }
 
 func (m Model) dispatch(ctx context.Context, intent Intent, generation uint64) tea.Cmd {
 	if m.dispatcher == nil {
 		return nil
 	}
-	intent.Profile, intent.Region = m.config.Profile, m.config.Region
+	if intent.Profile == "" && intent.Region == "" {
+		intent.Profile, intent.Region = m.config.Profile, m.config.Region
+	} else if intent.Region == "" {
+		intent.Region = m.config.Region
+	}
 	return func() tea.Msg {
 		stream, err := m.dispatcher.Dispatch(ctx, intent)
 		return intentStartedMsg{generation: generation, result: IntentResultMsg{Intent: intent, Stream: stream, Err: err}}
@@ -381,6 +398,9 @@ func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
 		frame.context = &copy
 	}
 	projection := update.Projection
+	if update.Coverage != nil {
+		frame.coverage = cloneSearchCoverage(update.Coverage)
+	}
 	if len(projection.Resources) == 0 && update.Query.Snapshot.ResourceCount() != 0 {
 		projection = ProjectQueryUpdate(update.Query)
 	}
@@ -393,9 +413,42 @@ func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
 		}
 	}
 	frame.status = queryStatus(update.Query, len(frame.projection.Resources))
+	if frame.coverage != nil {
+		frame.status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+	}
 	if state != LoadRefreshing && state != LoadLoading && state != LoadQueued {
 		frame.refreshing = false
 	}
+}
+
+func cloneSearchCoverage(coverage *SearchCoverage) *SearchCoverage {
+	if coverage == nil {
+		return nil
+	}
+	copy := *coverage
+	copy.Profiles = append([]SearchProfileCoverage(nil), coverage.Profiles...)
+	return &copy
+}
+
+func searchCoverageStatus(coverage *SearchCoverage, count int, state LoadState) string {
+	searched, matched := 0, 0
+	for _, profile := range coverage.Profiles {
+		if profile.Status != "not_searched" {
+			searched++
+		}
+		if profile.Status == "matched" {
+			matched++
+		}
+	}
+	prefix := "Ready"
+	if state != LoadReady && state != LoadEmpty {
+		prefix = "! " + loadStateLabel(state)
+	}
+	status := fmt.Sprintf("%s · %d resources · searched %d/%d · matched %d", prefix, count, searched, len(coverage.Profiles), matched)
+	if coverage.Partial {
+		status += " · Partial coverage"
+	}
+	return status
 }
 
 func queryStatus(update QueryUpdate, count int) string {

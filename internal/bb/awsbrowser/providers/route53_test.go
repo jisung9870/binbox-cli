@@ -331,6 +331,13 @@ func TestRoute53RecordKeyIsStableWhenMutableRoutingValuesChange(t *testing.T) {
 	if firstRouting["weight"] != int64(10) || secondRouting["weight"] != int64(90) || firstRouting["policy"] != "weighted" {
 		t.Fatalf("routing fields first=%v second=%v", firstRouting, secondRouting)
 	}
+	zoneRelation := first.Observation.Fields()["zone_relation"].(map[string]any)
+	if source, ok := zoneRelation["source"].(awsbrowser.ResourceKey); !ok || source != first.Key {
+		t.Fatalf("zone relation source=%+v resource=%+v", zoneRelation["source"], first.Key)
+	}
+	if target, ok := zoneRelation["target"].(awsbrowser.ResourceKey); !ok || target.Type != "hosted-zone" || target.ID != "Z1" {
+		t.Fatalf("zone relation target=%+v", zoneRelation["target"])
+	}
 }
 
 func TestRoute53RejectsSemanticallyInvalidNamesAndZoneIDsBeforeCallingAPI(t *testing.T) {

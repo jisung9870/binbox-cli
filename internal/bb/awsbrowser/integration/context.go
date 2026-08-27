@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/jisung9870/binbox-cli/internal/bb/awsbrowser"
@@ -16,11 +15,6 @@ import (
 const maxConfigBytes = 1 << 20
 
 var errRegionRequired = errors.New("AWS region is required")
-
-var (
-	explicitProfileRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	explicitRegionRE  = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+-[0-9]+$`)
-)
 
 type contextResolver struct {
 	env []string
@@ -31,10 +25,7 @@ func newContextResolver(env []string) contextResolver {
 }
 
 func validExplicitContextRequest(profile, region string) bool {
-	profile = strings.TrimSpace(profile)
-	region = strings.TrimSpace(region)
-	return (profile == "" || explicitProfileRE.MatchString(profile)) &&
-		(region == "" || len(region) <= 64 && explicitRegionRE.MatchString(region))
+	return awsbrowser.ValidateContextSelection(profile, region) == nil
 }
 
 func (resolver contextResolver) Resolve(ctx context.Context, profile, region string) (awsbrowser.ContextSpec, error) {

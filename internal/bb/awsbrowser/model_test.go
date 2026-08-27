@@ -348,6 +348,45 @@ func TestProjectQueryUpdateDerivesSafeFieldsAndNavigableRelations(t *testing.T) 
 	}
 }
 
+func TestProjectQueryUpdateKeepsUnmappedExactRelationsEvidenceOnly(t *testing.T) {
+	store := NewSessionStore()
+	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	query := testQueryKey(t, awsContext)
+	instance, _ := NewRegionalResourceKey(awsContext, "ec2.instance", "i-001")
+	natGateway, _ := NewRegionalResourceKey(awsContext, "ec2.nat-gateway", "nat-001")
+	when := time.Now().UTC()
+	observation := testOperationObservation(t, awsContext, OperationDescribeInstances, map[string]any{
+		"relations": []any{map[string]any{"target": natGateway, "kind": "id-exact", "reason": "route target nat gateway id"}},
+	}, when)
+	commitOneResource(t, store, query, instance, observation, when)
+	snapshot, _ := store.Snapshot(query)
+	relation := ProjectQueryUpdate(QueryUpdate{Key: query, Snapshot: snapshot}).Resources[0].Relations[0]
+	if relation.Target != "" || relation.Label != "nat-001" || relation.Kind != "id-exact" || relation.Reason != "route target nat gateway id" {
+		t.Fatalf("unmapped exact relation lost evidence or became navigable: %+v", relation)
+	}
+}
+
+func TestSearchResultRelationDispatchUsesSelectedResourceContext(t *testing.T) {
+	audit := testStoreContext(t, "audit", "999999999999", "us-west-2", 2)
+	stream := newTestIntentStream()
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
+	resource := ResourceProjection{
+		Target: "resource-record-set:record", Title: "api.example.com.", Context: &audit,
+		Relations: []ProjectionRelation{{Label: "Z1", Target: "hosted-zone:Z1", Kind: "api-exact"}},
+	}
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "us-east-1"}, dispatcher)
+	m.history = []routeFrame{{mode: routeList, label: "Search results", projection: IntentProjection{Resources: []ResourceProjection{resource}}}}
+	model, _ := m.Update(key(tea.KeyEnter))
+	model, command := model.Update(key(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("supported relation did not dispatch")
+	}
+	_ = command()
+	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Profile != "audit" || dispatcher.intents[0].Region != "us-west-2" || dispatcher.intents[0].Target != "hosted-zone:Z1" {
+		t.Fatalf("relation intent=%+v", dispatcher.intents)
+	}
+}
+
 func TestProjectQueryUpdatePreservesStructuredFieldsAndRoute53Evidence(t *testing.T) {
 	store := NewSessionStore()
 	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)

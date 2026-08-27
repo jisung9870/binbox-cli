@@ -59,6 +59,34 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 	}
 }
 
+func TestAWSNavigableRelationContractHasRuntimeMapping(t *testing.T) {
+	tests := map[string]string{
+		"ec2.instance": "i-1", "ec2.volume": "vol-1", "ec2.security-group": "sg-1",
+		"ec2.security-group-rule": "sgr-1", "ec2.vpc": "vpc-1", "ec2.subnet": "subnet-1",
+		"ec2.route-table": "rtb-1", "iam.role": "reader", "iam.instance-profile": "worker",
+		"iam.managed-policy":         "arn:aws:iam::123456789012:policy/read",
+		"iam.inline-policy":          "reader:inline",
+		"iam.managed-policy-version": "arn:aws:iam::123456789012:policy/read:v1",
+		"hosted-zone":                "Z1",
+	}
+	for resourceType, id := range tests {
+		if !awsbrowser.NavigableRelationTargetType(resourceType) {
+			t.Fatalf("runtime-mapped type %q is not navigable", resourceType)
+		}
+		if _, ok := awsRequestForIntent(awsbrowser.Intent{Target: resourceType + ":" + id}); !ok {
+			t.Fatalf("navigable type %q has no runtime mapping", resourceType)
+		}
+	}
+	for _, resourceType := range []string{"ec2.gateway", "ec2.egress-only-internet-gateway", "ec2.carrier-gateway", "ec2.local-gateway", "ec2.nat-gateway", "ec2.network-interface", "ec2.transit-gateway", "ec2.vpc-peering-connection", "networkmanager.core-network"} {
+		if awsbrowser.NavigableRelationTargetType(resourceType) {
+			t.Fatalf("unmapped emitted type %q is navigable", resourceType)
+		}
+		if _, ok := awsRequestForIntent(awsbrowser.Intent{Target: resourceType + ":id-1"}); ok {
+			t.Fatalf("unmapped emitted type %q reached runtime", resourceType)
+		}
+	}
+}
+
 func TestAWSSearchIntentMapsCurrentAndAll(t *testing.T) {
 	tests := []struct {
 		intent awsbrowser.Intent
@@ -172,5 +200,40 @@ func TestProductionAWSQueryConversionIsCanonicalAndSafe(t *testing.T) {
 	_, err = unsafe.Execute(context.Background(), awsQueryRequest{Kind: awsQueryKindRoleExact, Value: "reader", Scope: awsQueryScopeAll})
 	if err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("unsafe error escaped: %v", err)
+	}
+}
+
+func TestInteractiveSearchPreservesPartialCoverageAndPerResourceContext(t *testing.T) {
+	when := time.Date(2026, 8, 28, 1, 2, 3, 0, time.UTC)
+	awsContext, err := awsbrowser.NewAWSContext(
+		awsbrowser.ContextSpec{Mode: awsbrowser.ContextModeNamedProfile, Profile: "audit", Region: "us-west-2"},
+		awsbrowser.VerifiedIdentity{Partition: "aws", AccountID: "123456789012", PrincipalARN: "arn:aws:iam::123456789012:role/audit", CredentialGeneration: 1}, "audit",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, _ := awsbrowser.NewGlobalResourceKey(awsContext, "resource-record-set", "name=api.example.com.&zone=Z1")
+	zone, _ := awsbrowser.NewGlobalResourceKey(awsContext, "hosted-zone", "Z1")
+	observation, err := awsbrowser.NewResourceObservationForOperation(awsContext, awsbrowser.OperationListResourceRecordSets, map[string]any{
+		"name":          "api.example.com.",
+		"zone_relation": map[string]any{"target": zone, "kind": "api-exact", "reason": "record-listed-from-hosted-zone"},
+	}, when, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := intentUpdateFromSearch(awsintegration.SearchResult{
+		Resources:       []awsintegration.CanonicalSearchResource{{Key: record, Observations: []awsbrowser.ResourceObservation{observation}, AvailableViaProfiles: []string{"audit", "read-only"}}},
+		Coverage:        []awsintegration.ProfileCoverage{{Profile: "audit", Region: "us-west-2", AccountID: "123456789012", Current: true, Status: awsintegration.ProfileStatusMatched, Matches: 1}, {Profile: "locked", Status: awsintegration.ProfileStatusForbidden}},
+		DiscoveryStatus: awsintegration.ProfileStatusTimedOut,
+	})
+	if update.Coverage == nil || !update.Coverage.Partial || update.Coverage.DiscoveryStatus != "timed_out" || len(update.Coverage.Profiles) != 2 {
+		t.Fatalf("coverage=%+v", update.Coverage)
+	}
+	resource := update.Projection.Resources[0]
+	if resource.Context == nil || resource.Context.Profile != "audit" || !resource.Current || !reflect.DeepEqual(resource.AvailableViaProfiles, []string{"audit", "read-only"}) {
+		t.Fatalf("resource provenance=%+v", resource)
+	}
+	if len(resource.Relations) != 1 || resource.Relations[0].Target != "hosted-zone:Z1" {
+		t.Fatalf("resource relations=%+v", resource.Relations)
 	}
 }

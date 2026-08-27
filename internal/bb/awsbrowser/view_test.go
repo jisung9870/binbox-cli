@@ -108,6 +108,31 @@ func TestResolvedContextReplacesUnresolvedHeader(t *testing.T) {
 	}
 }
 
+func TestSearchCoverageAndSelectedResourceProvenanceAreVisible(t *testing.T) {
+	audit := testStoreContext(t, "audit", "123456789012", "us-west-2", 1)
+	resource := ResourceProjection{Title: "api.example.com.", Context: &audit, Current: true, AvailableViaProfiles: []string{"audit", "read-only"}}
+	coverage := &SearchCoverage{DiscoveryStatus: "timed_out", Partial: true, Profiles: []SearchProfileCoverage{
+		{Profile: "audit", AccountID: "123456789012", Status: "matched", Current: true, Matches: 1},
+		{Profile: "locked", Status: "forbidden"},
+	}}
+	m := NewModel(context.Background(), Config{}, nil)
+	m.width, m.height = 120, 30
+	m.history = []routeFrame{{mode: routeList, label: "Search results", status: searchCoverageStatus(coverage, 1, LoadReady), coverage: coverage, projection: IntentProjection{Resources: []ResourceProjection{resource}}}}
+	list := m.View().Content
+	for _, want := range []string{"Partial coverage", "Profile discovery · timed_out", "current audit", "locked", "forbidden"} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("search list missing %q:\n%s", want, list)
+		}
+	}
+	m.history = []routeFrame{{mode: routeDetail, context: &audit, detail: resource}}
+	detail := m.View().Content
+	for _, want := range []string{"Provenance", "Account 123456789012", "Principal arn:aws:sts::123456789012:assumed-role/ReadOnly/session", "Profile audit · current yes", "Region us-west-2", "Available via audit, read-only"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("search detail missing %q:\n%s", want, detail)
+		}
+	}
+}
+
 func assertGolden(t *testing.T, name, got string) {
 	t.Helper()
 	path := filepath.Join("testdata", name)

@@ -2,10 +2,8 @@ package bb
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 
@@ -130,7 +128,7 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 		request.Provider, request.Operation = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcs
 	default:
 		resourceType, id, ok := strings.Cut(intent.Target, ":")
-		if !ok || !safeAWSIntentParameter(id) {
+		if !ok || !awsbrowser.NavigableRelationTargetType(resourceType) || !safeAWSIntentParameter(id) {
 			return awsintegration.Request{}, false
 		}
 		request.Params = make(map[string]string)
@@ -304,8 +302,24 @@ func intentUpdateFromSearch(result awsintegration.SearchResult) awsbrowser.Inten
 	state, failure := searchLoadState(result)
 	return awsbrowser.IntentUpdate{
 		Query:      awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: state}, Failure: failure},
-		Projection: projectSearchResources(result.Resources), Done: true,
+		Projection: projectSearchResources(result), Coverage: searchCoverageProjection(result), Done: true,
 	}
+}
+
+func searchCoverageProjection(result awsintegration.SearchResult) *awsbrowser.SearchCoverage {
+	coverage := &awsbrowser.SearchCoverage{DiscoveryStatus: safeAWSQueryText(string(result.DiscoveryStatus))}
+	coverage.Profiles = make([]awsbrowser.SearchProfileCoverage, 0, len(result.Coverage))
+	coverage.Partial = result.DiscoveryStatus != ""
+	for _, profile := range result.Coverage {
+		coverage.Profiles = append(coverage.Profiles, awsbrowser.SearchProfileCoverage{
+			Profile: safeAWSQueryText(profile.Profile), Region: safeAWSQueryText(profile.Region), AccountID: safeAWSQueryText(profile.AccountID),
+			Status: safeAWSQueryText(string(profile.Status)), Current: profile.Current, Matches: profile.Matches,
+		})
+		if profile.Status != awsintegration.ProfileStatusMatched && profile.Status != awsintegration.ProfileStatusNotFound && profile.Status != "" {
+			coverage.Partial = true
+		}
+	}
+	return coverage
 }
 
 func searchLoadState(result awsintegration.SearchResult) (awsbrowser.LoadState, *awsbrowser.ProviderFailure) {
@@ -349,33 +363,31 @@ func loadStateForProfileStatus(status awsintegration.ProfileStatus) (awsbrowser.
 	}
 }
 
-func projectSearchResources(resources []awsintegration.CanonicalSearchResource) awsbrowser.IntentProjection {
-	projection := awsbrowser.IntentProjection{Resources: make([]awsbrowser.ResourceProjection, 0, len(resources))}
-	for _, resource := range resources {
+func projectSearchResources(result awsintegration.SearchResult) awsbrowser.IntentProjection {
+	projection := awsbrowser.IntentProjection{Resources: make([]awsbrowser.ResourceProjection, 0, len(result.Resources))}
+	currentProfiles := make(map[string]bool, len(result.Coverage))
+	for _, coverage := range result.Coverage {
+		currentProfiles[coverage.Profile] = coverage.Current
+	}
+	for _, resource := range result.Resources {
 		fields := map[string]any{}
+		var resourceContext *awsbrowser.AWSContext
 		if len(resource.Observations) != 0 {
-			fields = resource.Observations[0].Fields()
-		}
-		title := resource.Key.ID
-		for _, name := range []string{"name", "role_name", "dns_name", "record_name"} {
-			if value, ok := fields[name].(string); ok && strings.TrimSpace(value) != "" {
-				title = value + " · " + resource.Key.ID
-				break
+			observation := resource.Observations[0]
+			fields = observation.Fields()
+			if observation.Context.Validate() == nil {
+				copy := observation.Context
+				resourceContext = &copy
 			}
 		}
-		item := awsbrowser.ResourceProjection{Target: resource.Key.Type + ":" + resource.Key.ID, Title: safeAWSQueryText(title)}
-		names := make([]string, 0, len(fields))
-		for name := range fields {
-			if name != "relations" && name != "alias_relation" && name != "zone_relation" {
-				names = append(names, name)
-			}
+		item := awsbrowser.ProjectResourceFields(resource.Key, fields)
+		item.Context = resourceContext
+		item.AvailableViaProfiles = append([]string(nil), resource.AvailableViaProfiles...)
+		for index := range item.AvailableViaProfiles {
+			item.AvailableViaProfiles[index] = safeAWSQueryText(item.AvailableViaProfiles[index])
 		}
-		sort.Strings(names)
-		for _, name := range names {
-			encoded, err := json.Marshal(fields[name])
-			if err == nil {
-				item.Fields = append(item.Fields, awsbrowser.ProjectionField{Label: name, Value: safeAWSQueryText(strings.Trim(string(encoded), `"`))})
-			}
+		if resourceContext != nil {
+			item.Current = currentProfiles[resourceContext.Profile]
 		}
 		projection.Resources = append(projection.Resources, item)
 	}

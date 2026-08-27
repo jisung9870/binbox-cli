@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -15,7 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 )
 
-var profileNameRE = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+var profileNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 var namedProfileIdentityEnv = map[string]struct{}{
 	"AWS_ACCESS_KEY_ID":           {},
@@ -34,42 +33,16 @@ var namedProfileIdentityEnv = map[string]struct{}{
 	"BINBOX_ASSUME_PROFILE":       {},
 }
 
-type CredentialErrorKind string
-
-const (
-	CredentialUnknown        CredentialErrorKind = "unknown"
-	CredentialAuthRequired   CredentialErrorKind = "auth_required"
-	CredentialUnsupported    CredentialErrorKind = "unsupported"
-	CredentialCancelled      CredentialErrorKind = "cancelled"
-	CredentialOutputTooLarge CredentialErrorKind = "output_too_large"
-	CredentialInvalid        CredentialErrorKind = "invalid"
-)
-
-type CredentialError struct {
-	Kind CredentialErrorKind
-	Code string
-	err  error
-}
-
-func (e *CredentialError) Error() string {
-	if e.Code != "" {
-		return fmt.Sprintf("AWS credential export failed (%s)", e.Code)
-	}
-	return "AWS credential export failed"
-}
-
-func (e *CredentialError) Unwrap() error { return e.err }
-
 // CredentialProvider adapts AWS CLI v2 export-credentials output to the SDK.
 // The provider never exposes raw CLI output in its errors.
 type CredentialProvider struct {
-	cli        CLI
+	cli        CredentialExporter
 	profile    string
 	baseEnv    []string
 	generation atomic.Uint64
 }
 
-func NewCredentialProvider(cli CLI, profile string, env []string) (*CredentialProvider, error) {
+func NewCredentialProvider(cli CredentialExporter, profile string, env []string) (*CredentialProvider, error) {
 	if cli == nil {
 		return nil, errors.New("AWS CLI runner is required")
 	}
@@ -91,21 +64,9 @@ func (p *CredentialProvider) Generation() uint64 {
 }
 
 func (p *CredentialProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
-	args := []string{}
-	if p.profile != "" {
-		args = append(args, "--profile", p.profile)
-	}
-	args = append(args,
-		"configure", "export-credentials",
-		"--format", "process",
-		"--no-cli-pager",
-		"--no-cli-auto-prompt",
-		"--cli-error-format", "json",
-	)
-
-	stdout, stderr, err := p.cli.Run(ctx, args, credentialEnvironment(p.baseEnv, p.profile != ""))
+	stdout, err := p.cli.ExportCredentials(ctx, p.profile, credentialEnvironment(p.baseEnv, p.profile != ""))
 	if err != nil {
-		return aws.Credentials{}, classifyCredentialError(ctx, stderr, err)
+		return aws.Credentials{}, classifyCredentialError(ctx, err)
 	}
 
 	var document struct {
@@ -116,7 +77,7 @@ func (p *CredentialProvider) Retrieve(ctx context.Context) (aws.Credentials, err
 		Expiration      string `json:"Expiration"`
 	}
 	if err := json.Unmarshal(stdout, &document); err != nil {
-		return aws.Credentials{}, &CredentialError{Kind: CredentialInvalid, err: err}
+		return aws.Credentials{}, &CredentialError{Kind: CredentialInvalid}
 	}
 	if document.Version != 1 || document.AccessKeyID == "" || document.SecretAccessKey == "" {
 		return aws.Credentials{}, &CredentialError{Kind: CredentialInvalid}
@@ -131,7 +92,7 @@ func (p *CredentialProvider) Retrieve(ctx context.Context) (aws.Credentials, err
 	if document.Expiration != "" {
 		expires, err := time.Parse(time.RFC3339, document.Expiration)
 		if err != nil {
-			return aws.Credentials{}, &CredentialError{Kind: CredentialInvalid, err: err}
+			return aws.Credentials{}, &CredentialError{Kind: CredentialInvalid}
 		}
 		credentials.CanExpire = true
 		credentials.Expires = expires
@@ -172,55 +133,4 @@ func credentialEnvironment(base []string, named bool) []string {
 		env = append(env, name+"="+values[name])
 	}
 	return env
-}
-
-func classifyCredentialError(ctx context.Context, stderr []byte, err error) error {
-	if ctx.Err() != nil {
-		return &CredentialError{Kind: CredentialCancelled, err: ctx.Err()}
-	}
-	var limitError *OutputLimitError
-	if errors.As(err, &limitError) {
-		return &CredentialError{Kind: CredentialOutputTooLarge, err: limitError}
-	}
-
-	code := structuredErrorCode(stderr)
-	kind := CredentialUnknown
-	switch code {
-	case "UnauthorizedException", "InvalidGrantException", "ExpiredToken", "SSOTokenLoadError":
-		kind = CredentialAuthRequired
-	case "UnknownOptionsError", "Invalid choice":
-		kind = CredentialUnsupported
-	}
-	return &CredentialError{Kind: kind, Code: code, err: err}
-}
-
-func structuredErrorCode(data []byte) string {
-	var value any
-	if json.Unmarshal(data, &value) != nil {
-		return ""
-	}
-	return findErrorCode(value)
-}
-
-func findErrorCode(value any) string {
-	switch value := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"Code", "code", "ErrorCode", "errorCode", "__type"} {
-			if code, ok := value[key].(string); ok {
-				return code
-			}
-		}
-		for _, child := range value {
-			if code := findErrorCode(child); code != "" {
-				return code
-			}
-		}
-	case []any:
-		for _, child := range value {
-			if code := findErrorCode(child); code != "" {
-				return code
-			}
-		}
-	}
-	return ""
 }

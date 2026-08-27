@@ -22,6 +22,8 @@ type plainFrame struct {
 	projection    IntentProjection
 	context       *AWSContext
 	detail        *ResourceProjection
+	coverage      *SearchCoverage
+	status        string
 	search        bool
 }
 
@@ -176,7 +178,12 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 					continue
 				}
 				resource := frame.projection.Resources[n-1]
-				history = append(history, plainFrame{target: resource.Target, label: resource.Title, context: frame.context, detail: &resource})
+				resourceContext := frame.context
+				if resource.Context != nil && resource.Context.Validate() == nil {
+					copy := *resource.Context
+					resourceContext = &copy
+				}
+				history = append(history, plainFrame{target: resource.Target, label: resource.Title, context: resourceContext, detail: &resource})
 				continue
 			}
 			if n > len(frame.detail.Relations) {
@@ -213,7 +220,11 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 	}
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	intent.Profile, intent.Region = config.Profile, config.Region
+	if frame.context != nil && frame.context.Validate() == nil {
+		intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
+	} else {
+		intent.Profile, intent.Region = config.Profile, config.Region
+	}
 	started := make(chan plainDispatchResult, 1)
 	go func() {
 		stream, err := p.Dispatcher.Dispatch(dispatchCtx, intent)
@@ -343,6 +354,9 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, kind IntentKin
 		frame.context = &copy
 	}
 	projection := update.Projection
+	if update.Coverage != nil {
+		frame.coverage = cloneSearchCoverage(update.Coverage)
+	}
 	if len(projection.Resources) == 0 && update.Query.Snapshot.ResourceCount() != 0 {
 		projection = ProjectQueryUpdate(update.Query)
 	}
@@ -351,9 +365,15 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, kind IntentKin
 	if !preserve && (len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty) {
 		frame.projection = projection
 	}
-	if _, err := fmt.Fprintln(out, queryStatus(update.Query, len(frame.projection.Resources))); err != nil {
+	status := queryStatus(update.Query, len(frame.projection.Resources))
+	if frame.coverage != nil {
+		status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+	}
+	frame.status = status
+	if _, err := fmt.Fprintln(out, status); err != nil {
 		return err
 	}
+	writePlainCoverage(out, frame.coverage)
 	writePlainResources(out, frame.projection.Resources)
 	return nil
 }
@@ -430,10 +450,15 @@ func writePlainFrame(out io.Writer, frame plainFrame) error {
 		return err
 	}
 	if frame.detail == nil {
+		if frame.status != "" {
+			fmt.Fprintln(out, frame.status)
+		}
+		writePlainCoverage(out, frame.coverage)
 		writePlainResources(out, frame.projection.Resources)
 		_, err := fmt.Fprint(out, "command [open <n>|back|refresh|quit]: ")
 		return err
 	}
+	writePlainProvenance(out, *frame.detail)
 	for _, field := range frame.detail.Fields {
 		fmt.Fprintf(out, "%s: %s\n", safeIntentText(field.Label), safeIntentText(field.Value))
 	}
@@ -455,6 +480,60 @@ func writePlainFrame(out io.Writer, frame plainFrame) error {
 	}
 	_, err := fmt.Fprint(out, "command [open <n>|back|quit]: ")
 	return err
+}
+
+func writePlainCoverage(out io.Writer, coverage *SearchCoverage) {
+	if coverage == nil {
+		return
+	}
+	if coverage.DiscoveryStatus != "" {
+		fmt.Fprintln(out, "Profile discovery · "+safeIntentText(coverage.DiscoveryStatus))
+	}
+	for _, profile := range coverage.Profiles {
+		name := profile.Profile
+		if name == "" {
+			name = "ambient"
+		}
+		marker := "profile"
+		if profile.Current {
+			marker = "current"
+		}
+		account := profile.AccountID
+		if account == "" {
+			account = "unresolved"
+		}
+		fmt.Fprintf(out, "Coverage · %s %s · %s · %s · matches %d\n", marker, safeIntentText(name), safeIntentText(account), safeIntentText(profile.Status), profile.Matches)
+	}
+}
+
+func writePlainProvenance(out io.Writer, resource ResourceProjection) {
+	if resource.Context == nil || resource.Context.Validate() != nil {
+		return
+	}
+	profile := resource.Context.Profile
+	if profile == "" {
+		profile = "ambient"
+	}
+	current := "no"
+	if resource.Current {
+		current = "yes"
+	}
+	available := make([]string, len(resource.AvailableViaProfiles))
+	for index, value := range resource.AvailableViaProfiles {
+		if value == "" {
+			value = "ambient"
+		}
+		available[index] = safeIntentText(value)
+	}
+	if len(available) == 0 {
+		available = []string{safeIntentText(profile)}
+	}
+	fmt.Fprintln(out, "Provenance")
+	fmt.Fprintln(out, "Account "+safeIntentText(resource.Context.AccountID))
+	fmt.Fprintln(out, "Principal "+safeIntentText(resource.Context.PrincipalARN))
+	fmt.Fprintf(out, "Profile %s · current %s\n", safeIntentText(profile), current)
+	fmt.Fprintln(out, "Region "+safeIntentText(resource.Context.Region))
+	fmt.Fprintln(out, "Available via "+strings.Join(available, ", "))
 }
 
 func writePlainResources(out io.Writer, resources []ResourceProjection) {

@@ -106,6 +106,71 @@ func TestPlainSearchOpenAndEditingAreZeroCallUntilSubmit(t *testing.T) {
 	}
 }
 
+func TestPlainSearchRelationUsesSelectedResourceContext(t *testing.T) {
+	dev := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	audit := testStoreContext(t, "audit", "999999999999", "us-west-2", 2)
+	search, relation := newTestIntentStream(), newTestIntentStream()
+	search.updates <- IntentUpdate{
+		Context: &dev,
+		Query:   QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{
+			{Target: "resource-record-set:first", Title: "first.example.com.", Context: &dev},
+			{Target: "resource-record-set:api", Title: "api.example.com.", Context: &audit, Relations: []ProjectionRelation{{Label: "Hosted zone", Target: "hosted-zone:Z9"}}},
+		}},
+		Done: true,
+	}
+	relation.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadEmpty, FetchedAt: time.Now()}}, Done: true}
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{search, relation}}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nsearch domain all api.example.com\nopen 2\nopen 1\nquit\n"), Err: &out}, Config{Profile: "dev", Region: "us-east-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatcher.intents) != 2 {
+		t.Fatalf("intents=%+v output=%s", dispatcher.intents, out.String())
+	}
+	got := dispatcher.intents[1]
+	if got.Target != "hosted-zone:Z9" || got.Profile != "audit" || got.Region != "us-west-2" {
+		t.Fatalf("relation intent=%+v", got)
+	}
+}
+
+func TestPlainSearchRendersCoverageAndSelectedResourceProvenance(t *testing.T) {
+	audit := testStoreContext(t, "audit", "123456789012", "us-west-2", 1)
+	stream := newTestIntentStream()
+	stream.updates <- IntentUpdate{
+		Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{{
+			Target: "resource-record-set:api", Title: "api.example.com.", Context: &audit, Current: true,
+			AvailableViaProfiles: []string{"audit", "read-only"},
+		}}},
+		Coverage: &SearchCoverage{DiscoveryStatus: "timed_out", Partial: true, Profiles: []SearchProfileCoverage{
+			{Profile: "audit", AccountID: "123456789012", Status: "matched", Current: true, Matches: 1},
+			{Profile: "locked", Status: "forbidden"},
+		}},
+		Done: true,
+	}
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nsearch domain all api.example.com\nopen 1\nback\nquit\n"), Err: &out}, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := out.String()
+	if strings.Count(output, "Partial coverage") < 2 || strings.Count(output, "Profile discovery · timed_out") < 2 {
+		t.Fatalf("plain search did not preserve coverage across redraw:\n%s", output)
+	}
+	for _, want := range []string{
+		"Partial coverage", "Profile discovery · timed_out", "Coverage · current audit · 123456789012 · matched · matches 1",
+		"Coverage · profile locked · unresolved · forbidden · matches 0", "Provenance", "Account 123456789012",
+		"Principal arn:aws:sts::123456789012:assumed-role/ReadOnly/session", "Profile audit · current yes", "Region us-west-2", "Available via audit, read-only",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("plain search missing %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestPlainLoadingCanBeCancelledByInput(t *testing.T) {
 	stream := newTestIntentStream()
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}

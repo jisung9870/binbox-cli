@@ -12,11 +12,11 @@ func TestRelationEvidencePreservesKindReasonOperationAndTime(t *testing.T) {
 	target, _ := NewRegionalResourceKey(context, "security-group", "sg-001")
 	later := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
 	earlier := later.Add(-time.Minute)
-	correlated, err := NewRelationEvidence(RelationCorrelated, "private DNS value matches", "ListResourceRecordSets", later)
+	correlated, err := NewRelationEvidence(RelationCorrelated, "private DNS value matches", OperationListResourceRecordSets, GlobalRegion, later)
 	if err != nil {
 		t.Fatal(err)
 	}
-	exact, err := NewRelationEvidence(RelationIDExact, "group ID returned by instance", "DescribeInstances", earlier)
+	exact, err := NewRelationEvidence(RelationIDExact, "group ID returned by instance", OperationDescribeInstances, "us-east-1", earlier)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,8 @@ func TestRelationEvidencePreservesKindReasonOperationAndTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence := relation.Evidence()
-	if len(evidence) != 2 || evidence[0] != exact || evidence[1] != correlated {
+	if len(evidence) != 2 || evidence[0] != exact || evidence[1] != correlated ||
+		evidence[0].Scope != "us-east-1" || evidence[1].Scope != GlobalRegion {
 		t.Fatalf("evidence was not preserved and ordered: %+v", evidence)
 	}
 	evidence[0].Reason = "caller mutation"
@@ -37,10 +38,12 @@ func TestRelationEvidencePreservesKindReasonOperationAndTime(t *testing.T) {
 func TestRelationEvidenceRejectsIncompleteValues(t *testing.T) {
 	when := time.Now().UTC()
 	for _, evidence := range []RelationEvidence{
-		{Kind: "exact", Reason: "reason", Operation: "DescribeInstances", ObservedAt: when},
-		{Kind: RelationInferred, Operation: "DescribeInstances", ObservedAt: when},
-		{Kind: RelationInferred, Reason: "reason", ObservedAt: when},
-		{Kind: RelationInferred, Reason: "reason", Operation: "DescribeInstances"},
+		{Kind: "exact", Reason: "reason", Operation: OperationDescribeInstances, Scope: "us-east-1", ObservedAt: when},
+		{Kind: RelationInferred, Operation: OperationDescribeInstances, Scope: "us-east-1", ObservedAt: when},
+		{Kind: RelationInferred, Reason: "reason", Scope: "us-east-1", ObservedAt: when},
+		{Kind: RelationInferred, Reason: "reason", Operation: OperationDescribeInstances, ObservedAt: when},
+		{Kind: RelationInferred, Reason: "reason", Operation: OperationDescribeInstances, Scope: "all-regions", ObservedAt: when},
+		{Kind: RelationInferred, Reason: "reason", Operation: OperationDescribeInstances, Scope: "us-east-1"},
 	} {
 		if !errors.Is(evidence.Validate(), ErrInvalidRelationEvidence) {
 			t.Fatalf("invalid evidence accepted: %+v", evidence)

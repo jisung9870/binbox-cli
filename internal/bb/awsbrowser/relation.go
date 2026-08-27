@@ -37,14 +37,16 @@ type RelationEvidence struct {
 	Kind       RelationKind
 	Reason     string
 	Operation  string
+	Scope      string
 	ObservedAt time.Time
 }
 
-func NewRelationEvidence(kind RelationKind, reason, operation string, observedAt time.Time) (RelationEvidence, error) {
+func NewRelationEvidence(kind RelationKind, reason, operation, scope string, observedAt time.Time) (RelationEvidence, error) {
 	evidence := RelationEvidence{
 		Kind:       kind,
 		Reason:     strings.TrimSpace(reason),
 		Operation:  strings.TrimSpace(operation),
+		Scope:      strings.TrimSpace(scope),
 		ObservedAt: observedAt.UTC(),
 	}
 	if err := evidence.Validate(); err != nil {
@@ -55,7 +57,7 @@ func NewRelationEvidence(kind RelationKind, reason, operation string, observedAt
 
 func (evidence RelationEvidence) Validate() error {
 	if !evidence.Kind.valid() || !validIdentifier(evidence.Reason) || !validIdentifier(evidence.Operation) ||
-		evidence.ObservedAt.IsZero() {
+		(evidence.Scope != GlobalRegion && !regionNameRE.MatchString(evidence.Scope)) || evidence.ObservedAt.IsZero() {
 		return ErrInvalidRelationEvidence
 	}
 	return nil

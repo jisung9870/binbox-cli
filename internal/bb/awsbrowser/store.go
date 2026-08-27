@@ -3,6 +3,7 @@ package awsbrowser
 import (
 	"errors"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -80,14 +81,34 @@ func (snapshot QuerySnapshot) ResourceCount() int {
 }
 
 // CanonicalResource preserves independent observations keyed by their full
-// context provenance. Observations returns a deterministic copied slice.
+// context and operation provenance. Observations returns a deterministic
+// copied slice.
 type CanonicalResource struct {
 	Key ResourceKey
 
-	observations map[ContextProvenance]ResourceObservation
+	observations map[ObservationProvenance]ResourceObservation
 }
 
+// Observation is the compatibility lookup for a context. If several
+// operations exist, it deterministically returns the newest observation,
+// breaking timestamp ties by operation name.
 func (resource CanonicalResource) Observation(provenance ContextProvenance) (ResourceObservation, bool) {
+	var selected ResourceObservation
+	found := false
+	for identity, observation := range resource.observations {
+		if identity.ContextProvenance != provenance {
+			continue
+		}
+		if !found || observation.FetchedAt.After(selected.FetchedAt) ||
+			(observation.FetchedAt.Equal(selected.FetchedAt) && observation.Operation < selected.Operation) {
+			selected = observation
+			found = true
+		}
+	}
+	return selected.clone(), found
+}
+
+func (resource CanonicalResource) ObservationForOperation(provenance ObservationProvenance) (ResourceObservation, bool) {
 	observation, ok := resource.observations[provenance]
 	return observation.clone(), ok
 }
@@ -97,12 +118,12 @@ func (resource CanonicalResource) ObservationCount() int {
 }
 
 func (resource CanonicalResource) Observations() []ResourceObservation {
-	provenances := make([]ContextProvenance, 0, len(resource.observations))
+	provenances := make([]ObservationProvenance, 0, len(resource.observations))
 	for provenance := range resource.observations {
 		provenances = append(provenances, provenance)
 	}
 	sort.Slice(provenances, func(left, right int) bool {
-		return provenanceSortKey(provenances[left]) < provenanceSortKey(provenances[right])
+		return observationProvenanceSortKey(provenances[left]) < observationProvenanceSortKey(provenances[right])
 	})
 	result := make([]ResourceObservation, len(provenances))
 	for index, provenance := range provenances {
@@ -111,11 +132,15 @@ func (resource CanonicalResource) Observations() []ResourceObservation {
 	return result
 }
 
+func observationProvenanceSortKey(provenance ObservationProvenance) string {
+	return joinIdentityParts(provenanceSortKey(provenance.ContextProvenance), provenance.Operation)
+}
+
 func provenanceSortKey(provenance ContextProvenance) string {
 	return joinIdentityParts(
 		string(provenance.Mode), provenance.Profile, provenance.Partition,
 		provenance.AccountID, provenance.PrincipalARN, provenance.RoleName,
-		provenance.Region,
+		provenance.Region, strconv.FormatUint(provenance.CredentialGen, 10),
 	)
 }
 
@@ -132,13 +157,13 @@ type queryEntry struct {
 type SessionStore struct {
 	mu        sync.RWMutex
 	queries   map[QueryKey]*queryEntry
-	resources map[ResourceKey]map[ContextProvenance]ResourceObservation
+	resources map[ResourceKey]map[ObservationProvenance]ResourceObservation
 }
 
 func NewSessionStore() *SessionStore {
 	return &SessionStore{
 		queries:   make(map[QueryKey]*queryEntry),
-		resources: make(map[ResourceKey]map[ContextProvenance]ResourceObservation),
+		resources: make(map[ResourceKey]map[ObservationProvenance]ResourceObservation),
 	}
 }
 
@@ -367,7 +392,7 @@ func (store *SessionStore) Canonical(key ResourceKey) (CanonicalResource, bool) 
 	if !ok {
 		return CanonicalResource{}, false
 	}
-	copy := make(map[ContextProvenance]ResourceObservation, len(observations))
+	copy := make(map[ObservationProvenance]ResourceObservation, len(observations))
 	for provenance, observation := range observations {
 		copy[provenance] = observation.clone()
 	}
@@ -384,7 +409,7 @@ func (store *SessionStore) InvalidateContext(context AWSContext) int {
 	defer store.mu.Unlock()
 	return store.invalidateLocked(
 		func(key QueryKey) bool { return key.Context == context },
-		func(candidate ContextProvenance) bool { return candidate == provenance },
+		func(candidate ObservationProvenance) bool { return candidate.ContextProvenance == provenance },
 		func(ResourceKey) bool { return false },
 	)
 }
@@ -401,8 +426,8 @@ func (store *SessionStore) InvalidateAccount(partition, accountID string) int {
 		func(key QueryKey) bool {
 			return key.Context.Partition == partition && key.Context.AccountID == accountID
 		},
-		func(candidate ContextProvenance) bool {
-			return candidate.Partition == partition && candidate.AccountID == accountID
+		func(candidate ObservationProvenance) bool {
+			return candidate.ContextProvenance.Partition == partition && candidate.ContextProvenance.AccountID == accountID
 		},
 		func(key ResourceKey) bool { return key.Partition == partition && key.AccountID == accountID },
 	)
@@ -424,11 +449,12 @@ func (store *SessionStore) InvalidateGeneration(current AWSContext) int {
 	defer store.mu.Unlock()
 	return store.invalidateLocked(
 		func(key QueryKey) bool { return lineageMatches(key.Context) },
-		func(candidate ContextProvenance) bool {
+		func(candidate ObservationProvenance) bool {
+			contextProvenance := candidate.ContextProvenance
 			return lineageMatches(AWSContext{
-				Mode: candidate.Mode, Profile: candidate.Profile, Partition: candidate.Partition,
-				AccountID: candidate.AccountID, PrincipalARN: candidate.PrincipalARN,
-				RoleName: candidate.RoleName, Region: candidate.Region, CredentialGen: candidate.CredentialGen,
+				Mode: contextProvenance.Mode, Profile: contextProvenance.Profile, Partition: contextProvenance.Partition,
+				AccountID: contextProvenance.AccountID, PrincipalARN: contextProvenance.PrincipalARN,
+				RoleName: contextProvenance.RoleName, Region: contextProvenance.Region, CredentialGen: contextProvenance.CredentialGen,
 			})
 		},
 		func(ResourceKey) bool { return false },
@@ -445,10 +471,10 @@ func (store *SessionStore) entryLocked(key QueryKey) *queryEntry {
 }
 
 func (store *SessionStore) upsertObservationLocked(key ResourceKey, observation ResourceObservation) {
-	provenance, _ := observation.Context.Provenance()
+	provenance, _ := observation.Provenance()
 	observations := store.resources[key]
 	if observations == nil {
-		observations = make(map[ContextProvenance]ResourceObservation)
+		observations = make(map[ObservationProvenance]ResourceObservation)
 		store.resources[key] = observations
 	}
 	existing, ok := observations[provenance]
@@ -459,7 +485,7 @@ func (store *SessionStore) upsertObservationLocked(key ResourceKey, observation 
 
 func (store *SessionStore) invalidateLocked(
 	queryMatches func(QueryKey) bool,
-	observationMatches func(ContextProvenance) bool,
+	observationMatches func(ObservationProvenance) bool,
 	resourceMatches func(ResourceKey) bool,
 ) int {
 	removed := 0

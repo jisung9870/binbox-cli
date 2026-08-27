@@ -125,9 +125,11 @@ func (context AWSContext) Provenance() (ContextProvenance, error) {
 	}, nil
 }
 
-// ResourceKey is the canonical, account- and region-scoped identity of a
-// resource. Use NewRegionalResourceKey or NewGlobalResourceKey so unverified
-// account data cannot enter the canonical store.
+// ResourceKey is the canonical, account- and resource-region-scoped identity
+// of a resource. The selected region belongs to QueryKey and observation
+// provenance, not to global IAM or Route 53 resource identity. Consequently,
+// NewGlobalResourceKey canonicalizes the same global resource across selected
+// regions while NewRegionalResourceKey does not.
 type ResourceKey struct {
 	Partition string
 	AccountID string
@@ -265,30 +267,59 @@ func sensitiveParamName(name string) bool {
 	return normalized == "token"
 }
 
-// ResourceObservation is one complete, profile-scoped mapped view of a
-// resource. Fields returns a deep copy and never exposes the stored map.
+const ObservationOperationUnspecified = "unspecified"
+
+// ObservationProvenance identifies one independently refreshable mapped view
+// of a resource. Operations such as list, detail, policy, and tab reads must
+// not overwrite one another merely because they used the same AWS context.
+type ObservationProvenance struct {
+	ContextProvenance ContextProvenance
+	Operation         string
+}
+
+// ResourceObservation is one profile-scoped mapped view produced by exactly
+// one provider operation. Complete means that operation's output was fully
+// mapped; it never promises that optional detail, policy, or other lazy
+// hydration operations have run. Fields returns a deep copy and never exposes
+// the stored map.
 type ResourceObservation struct {
 	Context   AWSContext
+	Operation string
 	FetchedAt time.Time
 	Complete  bool
 
-	fields map[string]any
+	fields        map[string]any
+	operationSeal string
 }
 
+// NewResourceObservation is the compatibility constructor for callers that
+// do not yet identify their operation. Providers should use
+// NewResourceObservationForOperation with the exact SDK operation name.
 func NewResourceObservation(context AWSContext, fields map[string]any, fetchedAt time.Time, complete bool) (ResourceObservation, error) {
+	return NewResourceObservationForOperation(context, ObservationOperationUnspecified, fields, fetchedAt, complete)
+}
+
+func NewResourceObservationForOperation(context AWSContext, operation string, fields map[string]any, fetchedAt time.Time, complete bool) (ResourceObservation, error) {
 	if err := context.Validate(); err != nil || fetchedAt.IsZero() {
+		return ResourceObservation{}, ErrIncompleteObservation
+	}
+	operation = strings.TrimSpace(operation)
+	if !validIdentifier(operation) {
 		return ResourceObservation{}, ErrIncompleteObservation
 	}
 	cloned, err := cloneMappedFields(fields)
 	if err != nil {
 		return ResourceObservation{}, err
 	}
-	return ResourceObservation{
+	observation := ResourceObservation{
 		Context:   context,
+		Operation: operation,
 		FetchedAt: fetchedAt.UTC(),
 		Complete:  complete,
 		fields:    cloned,
-	}, nil
+	}
+	observation.operationSeal = observation.identitySeal()
+	return observation, nil
 }
 
 func (observation ResourceObservation) Fields() map[string]any {
@@ -302,9 +333,25 @@ func (observation ResourceObservation) clone() ResourceObservation {
 	return copy
 }
 
+func (observation ResourceObservation) Provenance() (ObservationProvenance, error) {
+	if observation.Context.Validate() != nil || observation.operationSeal == "" ||
+		observation.operationSeal != observation.identitySeal() || !validIdentifier(observation.Operation) {
+		return ObservationProvenance{}, ErrIncompleteObservation
+	}
+	contextProvenance, _ := observation.Context.Provenance()
+	return ObservationProvenance{ContextProvenance: contextProvenance, Operation: observation.Operation}, nil
+}
+
+func (observation ResourceObservation) identitySeal() string {
+	return joinIdentityParts(observation.Context.identitySeal(), observation.Operation)
+}
+
 func (observation ResourceObservation) validateComplete() error {
-	if !observation.Complete || observation.FetchedAt.IsZero() || observation.Context.Validate() != nil {
+	if !observation.Complete || observation.FetchedAt.IsZero() {
 		return ErrIncompleteObservation
+	}
+	if _, err := observation.Provenance(); err != nil {
+		return err
 	}
 	if _, err := cloneMappedFields(observation.fields); err != nil {
 		return err
@@ -360,6 +407,10 @@ func cloneObservedResources(resources []ObservedResource) []ObservedResource {
 	return result
 }
 
+// cloneMappedFields enforces the provider mapping boundary. SDK pointers,
+// structs, enum aliases, and response objects are rejected: providers must
+// normalize them into built-in scalar/slice/map values, time.Time, or a
+// canonical ResourceKey before constructing an observation.
 func cloneMappedFields(fields map[string]any) (map[string]any, error) {
 	if fields == nil {
 		return map[string]any{}, nil

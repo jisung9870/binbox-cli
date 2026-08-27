@@ -77,6 +77,25 @@ func TestQueryKeyNormalizesParametersAndRejectsCredentialNames(t *testing.T) {
 	}
 }
 
+func TestGlobalResourceKeyCanonicalizesWhileQueryAndObservationRemainSelectedRegionScoped(t *testing.T) {
+	east := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	west := testStoreContext(t, "dev", "123456789012", "us-west-2", 1)
+	eastGlobal, _ := NewGlobalResourceKey(east, "role", "arn:aws:iam::123456789012:role/ReadOnly")
+	westGlobal, _ := NewGlobalResourceKey(west, "role", "arn:aws:iam::123456789012:role/ReadOnly")
+	eastQuery, _ := NewQueryKey(east, ProviderIAM, OperationListRoles, nil)
+	westQuery, _ := NewQueryKey(west, ProviderIAM, OperationListRoles, nil)
+	eastObservation := testOperationObservation(t, east, OperationListRoles, map[string]any{"name": "ReadOnly"}, time.Now())
+	westObservation := testOperationObservation(t, west, OperationListRoles, map[string]any{"name": "ReadOnly"}, time.Now())
+	eastProvenance, _ := eastObservation.Provenance()
+	westProvenance, _ := westObservation.Provenance()
+	if eastGlobal != westGlobal {
+		t.Fatalf("global resource key varied by selected region: east=%+v west=%+v", eastGlobal, westGlobal)
+	}
+	if eastQuery == westQuery || eastProvenance == westProvenance {
+		t.Fatal("query/observation provenance lost selected-region scope")
+	}
+}
+
 func TestMappedFieldsRejectCredentialShapesAndRawObjects(t *testing.T) {
 	context := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
 	when := time.Now().UTC()
@@ -88,6 +107,28 @@ func TestMappedFieldsRejectCredentialShapesAndRawObjects(t *testing.T) {
 		if _, err := NewResourceObservation(context, fields, when, true); !errors.Is(err, ErrInvalidMappedFields) {
 			t.Fatalf("unsafe mapped fields accepted: fields=%+v err=%v", fields, err)
 		}
+	}
+}
+
+func TestMappedFieldsRequireSDKValuesToBeNormalizedAndKeepExternalTargetsStructured(t *testing.T) {
+	type sdkEnum string
+	type sdkStruct struct{ Value string }
+	context := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	when := time.Now().UTC()
+	for _, value := range []any{sdkEnum("running"), &sdkStruct{Value: "raw"}, sdkStruct{Value: "raw"}, new(string)} {
+		if _, err := NewResourceObservationForOperation(context, OperationDescribeInstances, map[string]any{"value": value}, when, true); !errors.Is(err, ErrInvalidMappedFields) {
+			t.Fatalf("un-normalized SDK-shaped value %T accepted: %v", value, err)
+		}
+	}
+	observation, err := NewResourceObservationForOperation(context, OperationDescribeSecurityGroupRules, map[string]any{
+		"external-targets": []any{
+			map[string]any{"kind": "cidr", "value": "10.0.0.0/8"},
+			map[string]any{"kind": "dns", "value": "example.test"},
+			map[string]any{"kind": "principal", "value": "*"},
+		},
+	}, when, true)
+	if err != nil || len(observation.Fields()["external-targets"].([]any)) != 3 {
+		t.Fatalf("structured external targets were not preserved: fields=%+v err=%v", observation.Fields(), err)
 	}
 }
 
@@ -132,6 +173,62 @@ func TestSessionStoreCrossProfileIsolationAndDuplicateProvenance(t *testing.T) {
 	observation, ok := canonical.Observation(provenance)
 	if !ok || observation.Fields()["name"] != "newer-dev-view" {
 		t.Fatalf("newest duplicate observation not retained: %+v ok=%v", observation.Fields(), ok)
+	}
+}
+
+func TestSessionStorePreservesIndependentOperationObservations(t *testing.T) {
+	store := NewSessionStore()
+	context := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	key, _ := NewRegionalResourceKey(context, "instance", "i-operations")
+	when := time.Now().UTC()
+	list := testOperationObservation(t, context, OperationDescribeInstances, map[string]any{"view": "list"}, when)
+	detail := testOperationObservation(t, context, OperationDescribeVolumes, map[string]any{"view": "detail"}, when.Add(time.Minute))
+	for _, observation := range []ResourceObservation{list, detail} {
+		if err := store.StoreObservation(key, observation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	canonical, _ := store.Canonical(key)
+	if canonical.ObservationCount() != 2 {
+		t.Fatalf("operation observations overwrote each other: %d", canonical.ObservationCount())
+	}
+	listProvenance, _ := list.Provenance()
+	gotList, ok := canonical.ObservationForOperation(listProvenance)
+	if !ok || gotList.Fields()["view"] != "list" {
+		t.Fatalf("list observation missing: %+v ok=%v", gotList, ok)
+	}
+	contextProvenance, _ := context.Provenance()
+	newest, ok := canonical.Observation(contextProvenance)
+	if !ok || newest.Operation != OperationDescribeVolumes || newest.Fields()["view"] != "detail" {
+		t.Fatalf("compatibility lookup did not return newest operation: %+v ok=%v", newest, ok)
+	}
+
+	mutated := detail
+	mutated.Operation = OperationDescribeInstances
+	if !errors.Is(store.StoreObservation(key, mutated), ErrIncompleteObservation) {
+		t.Fatal("mutated operation identity was accepted")
+	}
+	copy := canonical.Observations()
+	copy[0].fields["view"] = "caller mutation"
+	again, _ := store.Canonical(key)
+	gotList, _ = again.ObservationForOperation(listProvenance)
+	if gotList.Fields()["view"] != "list" {
+		t.Fatal("operation observation exposed store memory")
+	}
+
+	tieStore := NewSessionStore()
+	for _, observation := range []ResourceObservation{
+		testOperationObservation(t, context, OperationDescribeVolumes, map[string]any{"view": "volume"}, when),
+		testOperationObservation(t, context, OperationDescribeInstances, map[string]any{"view": "instance"}, when),
+	} {
+		if err := tieStore.StoreObservation(key, observation); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tied, _ := tieStore.Canonical(key)
+	stable, _ := tied.Observation(contextProvenance)
+	if stable.Operation != OperationDescribeInstances {
+		t.Fatalf("operation tie-break was not stable: %s", stable.Operation)
 	}
 }
 
@@ -361,6 +458,15 @@ func testQueryKey(t *testing.T, context AWSContext) QueryKey {
 func testObservation(t *testing.T, context AWSContext, fields map[string]any, fetchedAt time.Time) ResourceObservation {
 	t.Helper()
 	observation, err := NewResourceObservation(context, fields, fetchedAt, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return observation
+}
+
+func testOperationObservation(t *testing.T, context AWSContext, operation string, fields map[string]any, fetchedAt time.Time) ResourceObservation {
+	t.Helper()
+	observation, err := NewResourceObservationForOperation(context, operation, fields, fetchedAt, true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -446,7 +446,7 @@ func sanitizedProviderFailure(err error, key QueryKey, partialPages uint64) (Pro
 	var providerError *ProviderError
 	switch {
 	case errors.Is(err, ErrContextChanged):
-		failure.Kind, cache = ProviderContextChanged, false
+		failure.Kind, failure.PartialPages, cache = ProviderContextChanged, 0, false
 	case errors.Is(err, context.Canceled):
 		failure.State, failure.Kind, cache = LoadCancelled, ProviderCancelled, false
 	case errors.Is(err, context.DeadlineExceeded):

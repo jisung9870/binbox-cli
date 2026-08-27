@@ -275,6 +275,12 @@ func (multiplexer *runtimeMultiplexer) Execute(ctx context.Context, key awsbrows
 	if !identityMatches(key.Context, runtime.Identity()) {
 		return awsbrowser.ErrContextChanged
 	}
+	ctx = awsbrowser.WithReadIdentity(ctx, awsbrowser.VerifiedIdentity{
+		Partition:            key.Context.Partition,
+		AccountID:            key.Context.AccountID,
+		PrincipalARN:         key.Context.PrincipalARN,
+		CredentialGeneration: key.Context.CredentialGen,
+	})
 
 	var executor awsbrowser.QueryExecutor
 	switch key.Provider {

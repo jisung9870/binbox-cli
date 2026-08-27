@@ -262,6 +262,27 @@ func TestContextChangedInvalidatesRegistry(t *testing.T) {
 	}
 }
 
+func TestContextChangedInvalidatesCommittedPagesWithoutPartialClaim(t *testing.T) {
+	key := testCoordinatorKey(t, 1)
+	store := NewSessionStore()
+	executor := queryExecutorFunc(func(_ context.Context, got QueryKey, sink QueryPageSink) error {
+		if err := sink.Page(successfulQueryPage(t, got, "i-first", 0, true)); err != nil {
+			return err
+		}
+		return ErrContextChanged
+	})
+	coordinator, _ := NewQueryCoordinator(store, executor, 1)
+	subscription, _ := coordinator.Subscribe(key)
+	update := terminalUpdate(t, subscription.Updates())
+	if update.Failure == nil || update.Failure.Kind != ProviderContextChanged || update.Partial() ||
+		update.Snapshot.ResourceCount() != 0 {
+		t.Fatalf("context-change update=%+v", update)
+	}
+	if _, ok := store.Snapshot(key); ok {
+		t.Fatal("context-changed page remained in cache")
+	}
+}
+
 func TestNoPageFailureDoesNotEnterCache(t *testing.T) {
 	for _, err := range []error{context.Canceled, context.DeadlineExceeded, ErrQueryDecode} {
 		key := testCoordinatorKeyWithParam(t, 1, err.Error())

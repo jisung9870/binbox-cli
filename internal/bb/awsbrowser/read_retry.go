@@ -12,10 +12,29 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-// ErrContextChanged means a read response was discarded because its
-// credential generation could not be committed to the runtime's verified
-// account and partition.
+// ErrContextChanged means a read response was discarded because its verified
+// credential generation or principal cannot be committed under the query's
+// original identity.
 var ErrContextChanged = errors.New("AWS runtime context changed")
+
+type readIdentityContextKey struct{}
+
+// WithReadIdentity binds guarded SDK reads to the verified identity carried by
+// a QueryKey. A read that revalidates to any other generation or principal is
+// rejected before its response can be mapped or committed under that key.
+func WithReadIdentity(ctx context.Context, identity VerifiedIdentity) context.Context {
+	return context.WithValue(ctx, readIdentityContextKey{}, identity)
+}
+
+// ValidateReadIdentity lets RuntimeContext test doubles honor the same bound
+// read contract as the production guarded clients.
+func ValidateReadIdentity(ctx context.Context, identity VerifiedIdentity) error {
+	expected, ok := ctx.Value(readIdentityContextKey{}).(VerifiedIdentity)
+	if ok && expected != identity {
+		return ErrContextChanged
+	}
+	return nil
+}
 
 type readGuard struct {
 	runtime *sdkRuntime
@@ -109,6 +128,9 @@ func guardedRead[T any](ctx context.Context, guard *readGuard, call func(context
 		return zero, err
 	}
 	expected := guard.Identity()
+	if err := ValidateReadIdentity(ctx, expected); err != nil {
+		return zero, err
+	}
 
 	value, err := call(ctx)
 	if err != nil {
@@ -119,6 +141,9 @@ func guardedRead[T any](ctx context.Context, guard *readGuard, call func(context
 			return zero, err
 		}
 		expected = guard.Identity()
+		if err := ValidateReadIdentity(ctx, expected); err != nil {
+			return zero, err
+		}
 		value, err = call(ctx)
 		if err != nil {
 			return value, err
@@ -130,6 +155,9 @@ func guardedRead[T any](ctx context.Context, guard *readGuard, call func(context
 		return value, nil
 	}
 	if err := guard.revalidate(ctx, expected); err != nil {
+		return zero, err
+	}
+	if err := ValidateReadIdentity(ctx, guard.Identity()); err != nil {
 		return zero, err
 	}
 

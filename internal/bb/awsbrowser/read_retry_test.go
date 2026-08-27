@@ -141,6 +141,34 @@ func TestReadDiscardsGenerationCrossingAndRetriesAfterSameAccountRevalidation(t 
 	}
 }
 
+func TestQueryBoundReadRejectsRevalidatedGenerationAndPrincipal(t *testing.T) {
+	exporter := &recordingCredentialExporter{output: validCredentialDocument()}
+	var provider *CredentialProvider
+	calls := 0
+	client := &ec2Stub{describeInstances: func(context.Context) (*ec2.DescribeInstancesOutput, error) {
+		calls++
+		provider.generation.Add(1)
+		return &ec2.DescribeInstancesOutput{}, nil
+	}}
+	runtime, gotProvider, stsClient := testVerifiedRuntime(t, exporter, func(call int) *sts.GetCallerIdentityOutput {
+		return callerIdentity("aws", "123456789012", "reader-generation-"+strconv.Itoa(call))
+	}, client)
+	provider = gotProvider
+	bound := WithReadIdentity(context.Background(), runtime.Identity())
+
+	output, err := runtime.EC2().DescribeInstances(bound, &ec2.DescribeInstancesInput{})
+	if output != nil || !errors.Is(err, ErrContextChanged) || calls != 1 {
+		t.Fatalf("output=%v error=%v calls=%d", output, err, calls)
+	}
+	if identity := runtime.Identity(); identity.CredentialGeneration != 2 ||
+		identity.PrincipalARN != "arn:aws:sts::123456789012:assumed-role/ReadOnly/reader-generation-2" {
+		t.Fatalf("identity=%+v", identity)
+	}
+	if stsClient.callCount() != 2 {
+		t.Fatalf("STS calls=%d want initial plus revalidation", stsClient.callCount())
+	}
+}
+
 func TestReadRejectsAccountOrPartitionChangeBeforeCommit(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
@@ -46,6 +47,7 @@ func (factory *fakeFactory) count() int {
 }
 
 type fakeRuntime struct {
+	mu       sync.RWMutex
 	identity awsbrowser.VerifiedIdentity
 	sts      awsbrowser.STSAPI
 	ec2      awsbrowser.EC2API
@@ -53,11 +55,20 @@ type fakeRuntime struct {
 	route53  awsbrowser.Route53API
 }
 
-func (runtime *fakeRuntime) Identity() awsbrowser.VerifiedIdentity { return runtime.identity }
-func (runtime *fakeRuntime) STS() awsbrowser.STSAPI                { return runtime.sts }
-func (runtime *fakeRuntime) EC2() awsbrowser.EC2API                { return runtime.ec2 }
-func (runtime *fakeRuntime) IAM() awsbrowser.IAMAPI                { return runtime.iam }
-func (runtime *fakeRuntime) Route53() awsbrowser.Route53API        { return runtime.route53 }
+func (runtime *fakeRuntime) Identity() awsbrowser.VerifiedIdentity {
+	runtime.mu.RLock()
+	defer runtime.mu.RUnlock()
+	return runtime.identity
+}
+func (runtime *fakeRuntime) setIdentity(identity awsbrowser.VerifiedIdentity) {
+	runtime.mu.Lock()
+	runtime.identity = identity
+	runtime.mu.Unlock()
+}
+func (runtime *fakeRuntime) STS() awsbrowser.STSAPI         { return runtime.sts }
+func (runtime *fakeRuntime) EC2() awsbrowser.EC2API         { return runtime.ec2 }
+func (runtime *fakeRuntime) IAM() awsbrowser.IAMAPI         { return runtime.iam }
+func (runtime *fakeRuntime) Route53() awsbrowser.Route53API { return runtime.route53 }
 
 type fakeSTS struct{ awsbrowser.STSAPI }
 
@@ -298,6 +309,83 @@ func TestMultiplexerRejectsStaleVerifiedIdentity(t *testing.T) {
 	if !errors.Is(err, awsbrowser.ErrContextChanged) || calls != 0 {
 		t.Fatalf("error=%v provider calls=%d", err, calls)
 	}
+}
+
+func TestQueryRejectsGenerationCrossingBeforeFirstPageCommit(t *testing.T) {
+	var runtime *fakeRuntime
+	calls := 0
+	client := &fakeEC2{describeInstances: func(ctx context.Context, _ *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+		calls++
+		runtime.setIdentity(testIdentity(2))
+		if err := awsbrowser.ValidateReadIdentity(ctx, runtime.Identity()); err != nil {
+			return nil, err
+		}
+		return instancePage("i-stale", ""), nil
+	}}
+	runtime = completeRuntime(testIdentity(1), client, nil, nil)
+	core, err := NewWithRuntimeFactory(&fakeFactory{runtime: runtime}, nil, func() time.Time { return fixedNow }, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, queryErr := core.Query(context.Background(), Request{
+		Region: "us-east-1", Provider: awsbrowser.ProviderEC2, Operation: awsbrowser.OperationDescribeInstances,
+	})
+	if queryErr == nil || result.Update.Failure == nil || result.Update.Failure.Kind != awsbrowser.ProviderContextChanged ||
+		result.Update.Snapshot.ResourceCount() != 0 || calls != 1 {
+		t.Fatalf("result=%+v error=%v calls=%d", result, queryErr, calls)
+	}
+}
+
+func TestQueryRejectsGenerationCrossingOnSubsequentPageAndReResolves(t *testing.T) {
+	var runtime *fakeRuntime
+	calls := 0
+	client := &fakeEC2{describeInstances: func(ctx context.Context, _ *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+		calls++
+		switch calls {
+		case 1:
+			if err := awsbrowser.ValidateReadIdentity(ctx, runtime.Identity()); err != nil {
+				return nil, err
+			}
+			return instancePage("i-first", "next"), nil
+		case 2:
+			runtime.setIdentity(testIdentity(2))
+			if err := awsbrowser.ValidateReadIdentity(ctx, runtime.Identity()); err != nil {
+				return nil, err
+			}
+			return instancePage("i-stale", ""), nil
+		default:
+			if err := awsbrowser.ValidateReadIdentity(ctx, runtime.Identity()); err != nil {
+				return nil, err
+			}
+			return instancePage("i-current", ""), nil
+		}
+	}}
+	runtime = completeRuntime(testIdentity(1), client, nil, nil)
+	core, err := NewWithRuntimeFactory(&fakeFactory{runtime: runtime}, nil, func() time.Time { return fixedNow }, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Region: "us-east-1", Provider: awsbrowser.ProviderEC2, Operation: awsbrowser.OperationDescribeInstances}
+
+	first, firstErr := core.Query(context.Background(), request)
+	if firstErr == nil || first.Update.Failure == nil || first.Update.Failure.Kind != awsbrowser.ProviderContextChanged ||
+		first.Update.Snapshot.ResourceCount() != 0 {
+		t.Fatalf("crossed result=%+v error=%v", first, firstErr)
+	}
+	second, secondErr := core.Query(context.Background(), request)
+	if secondErr != nil || second.Update.Failure != nil || second.Update.Key == nil ||
+		second.Update.Key.Context.CredentialGen != 2 || second.Update.Snapshot.ResourceCount() != 1 || calls != 3 {
+		t.Fatalf("retried result=%+v error=%v calls=%d", second, secondErr, calls)
+	}
+}
+
+func instancePage(id, next string) *ec2.DescribeInstancesOutput {
+	output := &ec2.DescribeInstancesOutput{Reservations: []ec2types.Reservation{{Instances: []ec2types.Instance{{InstanceId: aws.String(id)}}}}}
+	if next != "" {
+		output.NextToken = aws.String(next)
+	}
+	return output
 }
 
 func TestCallerCancellationUnsubscribesAndReachesProvider(t *testing.T) {

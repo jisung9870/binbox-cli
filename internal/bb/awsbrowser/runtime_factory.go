@@ -14,10 +14,13 @@ var regionNameRE = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+-[0-9]+$`)
 
 type sdkRuntimeBuilder func(context.Context, string, *CredentialProvider) (*sdkRuntime, error)
 
+type profileSourceValidator func(context.Context, string, []string) error
+
 type runtimeFactory struct {
-	exporter CredentialExporter
-	env      []string
-	build    sdkRuntimeBuilder
+	exporter              CredentialExporter
+	env                   []string
+	build                 sdkRuntimeBuilder
+	validateProfileSource profileSourceValidator
 }
 
 var _ RuntimeFactory = (*runtimeFactory)(nil)
@@ -31,23 +34,27 @@ func NewRuntimeFactory(awsCLIPath string, env []string) (RuntimeFactory, error) 
 	}
 	return newRuntimeFactory(NewExecCLI(awsCLIPath), env, func(ctx context.Context, region string, provider *CredentialProvider) (*sdkRuntime, error) {
 		return newSDKRuntime(ctx, region, provider, config.LoadDefaultConfig)
-	})
+	}, validateNamedProfileSource)
 }
 
-func newRuntimeFactory(exporter CredentialExporter, env []string, build sdkRuntimeBuilder) (*runtimeFactory, error) {
+func newRuntimeFactory(exporter CredentialExporter, env []string, build sdkRuntimeBuilder, validateSource profileSourceValidator) (*runtimeFactory, error) {
 	if exporter == nil {
 		return nil, errors.New("AWS credential exporter is required")
 	}
 	if build == nil {
 		return nil, errors.New("AWS SDK runtime builder is required")
 	}
+	if validateSource == nil {
+		return nil, errors.New("AWS profile source validator is required")
+	}
 	if env == nil {
 		env = os.Environ()
 	}
 	return &runtimeFactory{
-		exporter: exporter,
-		env:      append([]string(nil), env...),
-		build:    build,
+		exporter:              exporter,
+		env:                   append([]string(nil), env...),
+		build:                 build,
+		validateProfileSource: validateSource,
 	}, nil
 }
 
@@ -55,6 +62,14 @@ func (f *runtimeFactory) Resolve(ctx context.Context, spec ContextSpec) (Runtime
 	profile, err := validateContextSpec(spec)
 	if err != nil {
 		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if spec.Mode == ContextModeNamedProfile {
+		if err := f.validateProfileSource(ctx, profile, f.env); err != nil {
+			return nil, err
+		}
 	}
 
 	provider, err := NewCredentialProvider(f.exporter, profile, f.env)

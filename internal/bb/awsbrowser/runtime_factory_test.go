@@ -3,7 +3,10 @@ package awsbrowser
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -39,6 +42,8 @@ type blockingCredentialExporter struct {
 	started chan struct{}
 	once    sync.Once
 }
+
+func allowProfileSource(context.Context, string, []string) error { return nil }
 
 func (e *blockingCredentialExporter) ExportCredentials(ctx context.Context, _ string, _ []string) ([]byte, error) {
 	e.once.Do(func() { close(e.started) })
@@ -177,9 +182,13 @@ func fakeSDKRuntime(provider *CredentialProvider, identity func(int) *sts.GetCal
 func TestRuntimeFactoryValidatesContextBeforeBuilding(t *testing.T) {
 	exporter := &recordingCredentialExporter{output: validCredentialDocument()}
 	builds := 0
+	validations := 0
 	factory, err := newRuntimeFactory(exporter, []string{}, func(context.Context, string, *CredentialProvider) (*sdkRuntime, error) {
 		builds++
 		return nil, errors.New("unexpected build")
+	}, func(context.Context, string, []string) error {
+		validations++
+		return errors.New("unexpected validation")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -199,8 +208,8 @@ func TestRuntimeFactoryValidatesContextBeforeBuilding(t *testing.T) {
 			t.Errorf("spec=%+v was accepted", spec)
 		}
 	}
-	if builds != 0 || len(exporter.calls()) != 0 {
-		t.Fatalf("invalid contexts executed work: builds=%d exports=%v", builds, exporter.calls())
+	if validations != 0 || builds != 0 || len(exporter.calls()) != 0 {
+		t.Fatalf("invalid contexts executed work: validations=%d builds=%d exports=%v", validations, builds, exporter.calls())
 	}
 }
 
@@ -217,7 +226,7 @@ func TestRuntimeFactoryResolvesAmbientAndIsolatesNamedProfiles(t *testing.T) {
 		caches = append(caches, runtime.credentials)
 		regions = append(regions, region)
 		return runtime, nil
-	})
+	}, allowProfileSource)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +264,7 @@ func TestRuntimeFactoryCredentialChildUsesResolveCancellation(t *testing.T) {
 			return callerIdentity("aws", "123456789012", "reader")
 		}, nil)
 		return runtime, nil
-	})
+	}, allowProfileSource)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,6 +288,223 @@ func TestRuntimeFactoryCredentialChildUsesResolveCancellation(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("credential child did not stop after cancellation")
+	}
+}
+
+func TestRuntimeFactoryProfileValidationUsesResolveCancellationAndDoesNoRejectedWork(t *testing.T) {
+	exporter := &recordingCredentialExporter{output: validCredentialDocument()}
+	started := make(chan struct{})
+	builds := 0
+	factory, err := newRuntimeFactory(exporter, []string{"HOME=/snapshot/home"}, func(context.Context, string, *CredentialProvider) (*sdkRuntime, error) {
+		builds++
+		return nil, errors.New("unexpected build")
+	}, func(ctx context.Context, profile string, env []string) error {
+		if profile != "dev" || !reflect.DeepEqual(env, []string{"HOME=/snapshot/home"}) {
+			t.Errorf("validator profile=%q env=%v", profile, env)
+		}
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := factory.Resolve(ctx, ContextSpec{Mode: ContextModeNamedProfile, Profile: "dev", Region: "us-east-1"})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("profile validation did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error=%v want context cancellation", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("profile validation did not stop after cancellation")
+	}
+	if builds != 0 || len(exporter.calls()) != 0 {
+		t.Fatalf("rejected profile executed work: builds=%d exports=%v", builds, exporter.calls())
+	}
+}
+
+func TestRuntimeFactoryCanceledContextDoesNoWork(t *testing.T) {
+	exporter := &recordingCredentialExporter{output: validCredentialDocument()}
+	validations := 0
+	builds := 0
+	factory, err := newRuntimeFactory(exporter, []string{}, func(context.Context, string, *CredentialProvider) (*sdkRuntime, error) {
+		builds++
+		return nil, errors.New("unexpected build")
+	}, func(context.Context, string, []string) error {
+		validations++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = factory.Resolve(ctx, ContextSpec{Mode: ContextModeNamedProfile, Profile: "dev", Region: "us-east-1"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error=%v want context cancellation", err)
+	}
+	if validations != 0 || builds != 0 || len(exporter.calls()) != 0 {
+		t.Fatalf("canceled resolve executed work: validations=%d builds=%d exports=%v", validations, builds, exporter.calls())
+	}
+}
+
+func TestRuntimeFactoryAmbientContextDoesNotValidateProfileFiles(t *testing.T) {
+	exporter := &recordingCredentialExporter{output: validCredentialDocument()}
+	factory, err := newRuntimeFactory(exporter, []string{"AWS_CONFIG_FILE=/must/not/read"}, func(_ context.Context, _ string, provider *CredentialProvider) (*sdkRuntime, error) {
+		runtime, _ := fakeSDKRuntime(provider, func(int) *sts.GetCallerIdentityOutput {
+			return callerIdentity("aws", "123456789012", "ambient")
+		}, nil)
+		return runtime, nil
+	}, func(context.Context, string, []string) error {
+		return errors.New("ambient context read profile files")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := factory.Resolve(context.Background(), ContextSpec{Mode: ContextModeAmbient, Region: "us-east-1"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRuntimeFactoryNamedSourcesReachIdentityVerificationWithIsolatedProviders(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config")
+	credentialsPath := filepath.Join(directory, "credentials")
+	config := "[profile sso]\n" +
+		"sso_session = engineering\n" +
+		"[profile role]\n" +
+		"role_arn = arn:aws:iam::123456789012:role/ReadOnly\n" +
+		"source_profile = static\n" +
+		"[profile process]\n" +
+		"credential_process = private-command --secret value\n"
+	credentials := "[static]\n" +
+		"aws_access_key_id = AKIAEXAMPLE\n" +
+		"aws_secret_access_key = never-retained\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credentialsPath, []byte(credentials), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	exporter := &recordingCredentialExporter{output: validCredentialDocument()}
+	var providers []*CredentialProvider
+	var stsClients []*credentialSTS
+	env := []string{"AWS_CONFIG_FILE=" + configPath, "AWS_SHARED_CREDENTIALS_FILE=" + credentialsPath}
+	factory, err := newRuntimeFactory(exporter, env, func(_ context.Context, _ string, provider *CredentialProvider) (*sdkRuntime, error) {
+		runtime, stsClient := fakeSDKRuntime(provider, func(int) *sts.GetCallerIdentityOutput {
+			return callerIdentity("aws", "123456789012", provider.profile)
+		}, nil)
+		providers = append(providers, provider)
+		stsClients = append(stsClients, stsClient)
+		return runtime, nil
+	}, validateNamedProfileSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	profiles := []string{"static", "sso", "role", "process"}
+	for _, profile := range profiles {
+		runtime, err := factory.Resolve(context.Background(), ContextSpec{Mode: ContextModeNamedProfile, Profile: profile, Region: "us-east-1"})
+		if err != nil {
+			t.Fatalf("profile %q: %v", profile, err)
+		}
+		if runtime.Identity().CredentialGeneration != 1 {
+			t.Fatalf("profile %q identity=%+v", profile, runtime.Identity())
+		}
+	}
+	if got := exporter.calls(); !reflect.DeepEqual(got, profiles) {
+		t.Fatalf("export profiles=%v want=%v", got, profiles)
+	}
+	for i := range providers {
+		if stsClients[i].callCount() != 1 {
+			t.Fatalf("profile %q STS calls=%d", profiles[i], stsClients[i].callCount())
+		}
+		for j := 0; j < i; j++ {
+			if providers[i] == providers[j] {
+				t.Fatalf("profiles %q and %q shared provider", profiles[i], profiles[j])
+			}
+		}
+	}
+}
+
+func TestRuntimeFactoryRejectsUnsafeNamedTopologiesBeforeExporterOrBuild(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{
+			name:   "environment source",
+			config: "[profile dev]\nrole_arn = arn:aws:iam::123456789012:role/SecretRole\ncredential_source = Environment\n",
+			want:   "Environment is not allowed",
+		},
+		{
+			name: "cyclic source profiles",
+			config: "[profile dev]\nrole_arn = arn:aws:iam::123456789012:role/Dev\nsource_profile = base\n" +
+				"[profile base]\nrole_arn = arn:aws:iam::123456789012:role/Base\nsource_profile = dev\n",
+			want: "cycle in source_profile chain",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			configPath := filepath.Join(directory, "secret-config-path")
+			if err := os.WriteFile(configPath, []byte(test.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			exporter := &recordingCredentialExporter{output: validCredentialDocument()}
+			builds := 0
+			factory, err := newRuntimeFactory(exporter, []string{"AWS_CONFIG_FILE=" + configPath, "AWS_SHARED_CREDENTIALS_FILE=" + filepath.Join(directory, "missing")}, func(context.Context, string, *CredentialProvider) (*sdkRuntime, error) {
+				builds++
+				return nil, errors.New("unexpected build")
+			}, validateNamedProfileSource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = factory.Resolve(context.Background(), ContextSpec{Mode: ContextModeNamedProfile, Profile: "dev", Region: "us-east-1"})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error=%v want substring %q", err, test.want)
+			}
+			if strings.Contains(err.Error(), directory) || strings.Contains(err.Error(), "SecretRole") {
+				t.Fatalf("error exposed path or value: %q", err)
+			}
+			if builds != 0 || len(exporter.calls()) != 0 {
+				t.Fatalf("rejected profile executed work: builds=%d exports=%v", builds, exporter.calls())
+			}
+		})
+	}
+}
+
+func TestNewRuntimeFactoryWiresNamedProfileValidationBeforeCLIOrSDK(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config")
+	config := "[profile dev]\nrole_arn = arn:aws:iam::123456789012:role/NeverUsed\ncredential_source = Environment\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	factory, err := NewRuntimeFactory(filepath.Join(directory, "aws-must-not-run"), []string{
+		"AWS_CONFIG_FILE=" + configPath,
+		"AWS_SHARED_CREDENTIALS_FILE=" + filepath.Join(directory, "missing"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = factory.Resolve(context.Background(), ContextSpec{Mode: ContextModeNamedProfile, Profile: "dev", Region: "us-east-1"})
+	if err == nil || !strings.Contains(err.Error(), "Environment is not allowed") {
+		t.Fatalf("error=%v want profile source rejection", err)
 	}
 }
 

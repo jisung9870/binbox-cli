@@ -33,6 +33,7 @@ type App struct {
 	isTerminal         func(uintptr) bool
 	readPassword       func(uintptr) ([]byte, error)
 	awsBrowserTerminal func() awsbrowser.Terminal
+	awsQueryService    awsQueryServiceFactory
 }
 
 func New(out, err io.Writer, env []string) *App {
@@ -62,6 +63,7 @@ func New(out, err io.Writer, env []string) *App {
 		}
 		return terminal
 	}
+	a.awsQueryService = unavailableAWSQueryService
 	return a
 }
 
@@ -165,7 +167,7 @@ Commands:
   gx ...                 Explicit Git workflow compatibility adapter
   kx ...                 Explicit kubectl workflow compatibility adapter
   assm ...               Explicit AWS SSM session adapter
-  aws browse|sso|assume ...  Browse resources or authenticate/apply credentials
+  aws browse|query|sso|assume ...  Browse/query resources or authenticate/apply credentials
   assume ...             Compatibility alias for "bb aws assume"
   profile ...            Compatibility profile configuration surface
   wenv ...               Manage and apply declarative environment presets

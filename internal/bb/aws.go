@@ -9,8 +9,12 @@ import (
 func (a *App) aws(args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprint(a.out, `Usage:
-  bb aws browse [--profile NAME] [--region REGION] [--json]
+  bb aws browse [--profile NAME] [--region REGION]
                                   Browse read-only AWS resources and links
+  bb aws query ec2 instances [--profile NAME] [--region REGION] [--json]
+  bb aws query domain <fqdn> [--profile NAME] [--region REGION] [--scope current|all] [--json]
+  bb aws query role <exact-name> [--profile NAME] [--region REGION] [--scope current|all] [--json]
+                                  Run one scoped read-only AWS query
   bb aws sso [session]             Select or log in to an AWS SSO session
   bb aws sso list                  List configured AWS SSO sessions
   bb aws assume [profile]          Select or apply AWS CLI-resolved credentials
@@ -25,6 +29,8 @@ an AWS account, role, and region. The AWS CLI owns tokens and credentials.
 	switch args[0] {
 	case "browse":
 		return a.awsBrowse(args[1:])
+	case "query":
+		return a.awsQuery(args[1:])
 	case "sso":
 		return a.awsSSO(args[1:])
 	case "assume":

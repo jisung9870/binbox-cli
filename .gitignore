@@ -1,5 +1,6 @@
 /.tmp/
 /dist/
+/bb
 /.omx/cache/
 /.omx/logs/
 /.omx/runtime/

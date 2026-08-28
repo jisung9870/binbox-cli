@@ -213,8 +213,8 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 
 ### B0 — 구현 기준선 고정
 
-- 완료 상태: live progressive browser, context group/multi-region, Name-first, Summary/Detail/Tags, current relation navigation, k9s형 full-screen command/filter/history.
-- 완료 판정: 기존 test·vet·build가 통과하고 문서가 현재 코드와 일치한다.
+- 완료 상태: 2026-08-28 검증 완료. live progressive browser, context group/multi-region, Name-first, Summary/Detail/Tags, current relation navigation, k9s형 full-screen command/filter/history를 기준선으로 고정했다.
+- 완료 판정: test·race·vet·stripped build가 통과했고 현행 문서의 centered card·single-region·3-pane 충돌을 정리했다. 증거는 [B0 기준선](B0-BASELINE.md)에 기록한다.
 
 ### B1 — 관계 계약 정리와 현재 chain 강화
 

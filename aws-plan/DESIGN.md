@@ -263,11 +263,11 @@ Focus는 marker와 `LIST`, `FILTER`, `DETAIL` 텍스트를 함께 사용한다. 
 ## Responsive behavior
 
 - Supported breakpoints/devices:
-  - 120열 이상: service sidebar + resource list + detail의 3-pane.
-  - 80–119열: list + detail 2-pane, service는 route/home으로 이동.
-  - 40–79열: 한 화면에 list 또는 detail card 하나, 값 wrap, footer 두 줄.
+  - 120열 이상: full-viewport single route에 identity·account/region·relation evidence column을 더 표시한다.
+  - 80–119열: full-viewport resource 또는 relation table을 표시한다.
+  - 40–79열: 한 화면에 list, Summary, Detail, relation 중 한 route를 표시하고 secondary metadata를 줄인다.
   - 시작 terminal이 40x12 미만: alt-screen 진입 전 plain command loop.
-- Layout adaptations: 화면 폭이 줄면 pane을 route로 바꾸지, critical metadata를 숨기지 않는다.
+- Layout adaptations: 화면 폭이 줄면 secondary column부터 줄이고 source, context, selection, error·coverage는 숨기지 않는다.
 - Resize behavior: TUI 실행 중 40x12 미만으로 줄어들면 `Terminal too small (need 40x12). Resize or rerun with BB_SELECTOR=plain.`을 표시하고 진행 중 request와 route를 유지한다.
 - Touch/hover differences: 지원하지 않는다. mouse는 P2 이후 별도 검토다.
 
@@ -300,4 +300,4 @@ Focus는 marker와 `LIST`, `FILTER`, `DETAIL` 텍스트를 함께 사용한다. 
 
 ## Open questions
 
-- [ ] 실계정 smoke 후 120열 3-pane의 service/list/detail 폭 비율을 조정할지 / owner / 긴 resource name과 policy navigation 밀도에 영향.
+- [ ] 실계정 smoke 후 120열 이상의 relation evidence column 우선순위를 조정할지 / owner / 긴 resource name과 condition 가독성에 영향.

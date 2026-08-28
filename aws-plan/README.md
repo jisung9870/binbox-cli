@@ -24,7 +24,7 @@
 ## 문서 지도
 
 - [PRD.md](PRD.md): 문제, 사용자 흐름, 기능 범위, 완료 조건.
-- [DESIGN.md](DESIGN.md): 정보 구조, 화면, 키보드 동작, 반응형·접근성 계약.
+- [DESIGN.md](DESIGN.md): 초기 v2 UX 설계 기록. 현행 화면 계약은 루트 `DESIGN.md`와 관계 탐색 확장 설계가 우선한다.
 - [SCENARIOS.md](SCENARIOS.md): 실제 키 입력, 화면 전이, AWS 호출 시점을 묶은 동작 예시.
 - [ARCHITECTURE.md](ARCHITECTURE.md): lazy provider, 멀티계정 검색, cache, 오류·권한·검증 구조.
 - [ADR-001-HYBRID-AWS-ACCESS.md](ADR-001-HYBRID-AWS-ACCESS.md): SDK data-plane과 CLI credential/control-plane 채택 결정.
@@ -32,6 +32,7 @@
 - [REVIEW.md](REVIEW.md): 반복 독립 검토 결과, 반영 여부, 구현 영향 범위.
 - [design-aws-tui-202608.md](design-aws-tui-202608.md): 현행 live browser에서 출발하는 관계 탐색·snapshot graph 확장 설계.
 - [spec-aws-tui-relations-202608.md](spec-aws-tui-relations-202608.md): 관계 Tier, evidence·coverage 계약, vertical-slice 완료 조건.
+- [B0-BASELINE.md](B0-BASELINE.md): B0 코드·문서 기준선과 2026-08-28 검증 증거.
 
 ## 기존 작업과의 관계
 

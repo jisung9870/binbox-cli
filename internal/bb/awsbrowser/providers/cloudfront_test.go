@@ -60,13 +60,14 @@ func TestCloudFrontMapsPathAwareS3Origins(t *testing.T) {
 	if projection.Title != "d24odq2ocbsmjd.cloudfront.net" || len(projection.Relations) != 3 {
 		t.Fatalf("projection=%+v", projection)
 	}
-	want := []struct{ label, target string }{
-		{"Default /* → udg-kr-game-binary.s3.ap-northeast-2.amazonaws.com", "s3.bucket:udg-kr-game-binary"},
-		{"report/* → udg-us-game-dump.s3.us-east-1.amazonaws.com", "s3.bucket:udg-us-game-dump"},
-		{"character/* → udg-us-game-dump.s3.us-east-1.amazonaws.com", "s3.bucket:udg-us-game-dump"},
+	want := []struct{ label, target, condition string }{
+		{"Default /* → udg-kr-game-binary.s3.ap-northeast-2.amazonaws.com", "s3.bucket:udg-kr-game-binary", "*"},
+		{"report/* → udg-us-game-dump.s3.us-east-1.amazonaws.com", "s3.bucket:udg-us-game-dump", "report/*"},
+		{"character/* → udg-us-game-dump.s3.us-east-1.amazonaws.com", "s3.bucket:udg-us-game-dump", "character/*"},
 	}
 	for index, relation := range projection.Relations {
-		if relation.Label != want[index].label || relation.Target != want[index].target || relation.Kind != string(awsbrowser.RelationInferred) {
+		if relation.Label != want[index].label || relation.Target != want[index].target || relation.Type != string(awsbrowser.RelationRoutesTo) ||
+			relation.Direction != string(awsbrowser.RelationOutgoing) || relation.Condition != want[index].condition || relation.Kind != string(awsbrowser.RelationInferred) {
 			t.Fatalf("relation[%d]=%+v", index, relation)
 		}
 	}
@@ -121,7 +122,9 @@ func TestCloudFrontCustomOriginRemainsEvidenceOnly(t *testing.T) {
 	}
 	resource := sink.pages[0].Resources()[0]
 	projection := awsbrowser.ProjectResourceFields(resource.Key, resource.Observation.Fields())
-	if len(projection.Relations) != 1 || projection.Relations[0].Target != "" || projection.Relations[0].Label != "Default /* → origin.example.com" || projection.Relations[0].Kind != string(awsbrowser.RelationUnsupported) {
+	if len(projection.Relations) != 1 || projection.Relations[0].Target != "" || projection.Relations[0].Label != "Default /* → origin.example.com" ||
+		projection.Relations[0].Type != string(awsbrowser.RelationRoutesTo) || projection.Relations[0].Direction != string(awsbrowser.RelationOutgoing) ||
+		projection.Relations[0].Condition != "*" || projection.Relations[0].Kind != string(awsbrowser.RelationUnsupported) {
 		t.Fatalf("custom origin relation=%+v", projection.Relations)
 	}
 }

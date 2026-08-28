@@ -425,7 +425,7 @@ func mapRecordSets(ctx context.Context, key awsbrowser.QueryKey, zoneID string, 
 		if err != nil {
 			return nil, false, err
 		}
-		zoneRelation, err := relationFields(awsbrowser.RelationAPIExact, "record-listed-from-hosted-zone", key.Operation, fetchedAt)
+		zoneRelation, err := relationFields(awsbrowser.RelationMemberOf, "", awsbrowser.RelationAPIExact, "record-listed-from-hosted-zone", key.Operation, fetchedAt)
 		if err != nil {
 			return nil, false, err
 		}
@@ -475,7 +475,7 @@ func mapRecordSets(ctx context.Context, key awsbrowser.QueryKey, zoneID string, 
 				"hosted_zone_id":         aliasZoneID,
 				"evaluate_target_health": set.AliasTarget.EvaluateTargetHealth,
 			}
-			aliasRelation, err := relationFields(awsbrowser.RelationAPIExact, "alias-target-returned-by-api", key.Operation, fetchedAt)
+			aliasRelation, err := relationFields(awsbrowser.RelationAliasTo, string(recordType)+" alias", awsbrowser.RelationAPIExact, "alias-target-returned-by-api", key.Operation, fetchedAt)
 			if err != nil {
 				return nil, false, err
 			}
@@ -498,17 +498,24 @@ func mapRecordSets(ctx context.Context, key awsbrowser.QueryKey, zoneID string, 
 	return resources, leftTarget, nil
 }
 
-func relationFields(kind awsbrowser.RelationKind, reason, operation string, observedAt time.Time) (map[string]any, error) {
+func relationFields(relationType awsbrowser.RelationType, condition string, kind awsbrowser.RelationKind, reason, operation string, observedAt time.Time) (map[string]any, error) {
 	evidence, err := awsbrowser.NewRelationEvidence(kind, reason, operation, awsbrowser.GlobalRegion, observedAt)
 	if err != nil {
 		return nil, err
 	}
+	semantics, err := awsbrowser.NewRelationSemantics(relationType, awsbrowser.RelationOutgoing, condition)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
-		"kind":        string(evidence.Kind),
-		"reason":      evidence.Reason,
-		"scope":       evidence.Scope,
-		"operation":   evidence.Operation,
-		"observed_at": evidence.ObservedAt,
+		"relation_type": string(semantics.Type),
+		"direction":     string(semantics.Direction),
+		"condition":     semantics.Condition,
+		"kind":          string(evidence.Kind),
+		"reason":        evidence.Reason,
+		"scope":         evidence.Scope,
+		"operation":     evidence.Operation,
+		"observed_at":   evidence.ObservedAt,
 	}, nil
 }
 

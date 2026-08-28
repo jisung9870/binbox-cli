@@ -158,7 +158,10 @@ func TestAWSQueryJSONEnvelopeAndRequest(t *testing.T) {
 				Results: []awsQueryResult{{
 					Resource:  awsQueryResource{Partition: "aws", AccountID: "123456789012", Region: "global", Type: "resource-record-set", ID: "record-key"},
 					Context:   awsQueryContext{Profile: "dev", AccountID: "123456789012", PrincipalARN: "arn:aws:iam::123456789012:role/read", RoleName: "read", Region: "ap-northeast-2"},
-					FetchedAt: fetchedAt, Fields: map[string]any{"name": "api.example.com.", "type": "A"}, AvailableViaProfiles: []string{"dev"},
+					FetchedAt: fetchedAt, Fields: map[string]any{
+						"name": "api.example.com.", "type": "A",
+						"relations": []any{map[string]any{"relation_type": "alias-to", "direction": "outgoing", "condition": "A alias", "kind": "api-exact"}},
+					}, AvailableViaProfiles: []string{"dev"},
 				}},
 				Errors:   []awsQueryFailure{{Profile: "locked", Kind: "forbidden", Service: "route53", Operation: "ListHostedZones", Code: "AccessDenied", RequestID: "req-1"}},
 				Warnings: []string{"partial coverage"},
@@ -188,6 +191,10 @@ func TestAWSQueryJSONEnvelopeAndRequest(t *testing.T) {
 	}
 	if !reflect.DeepEqual(document.Data.Query, wantRequest) || len(document.Data.Results) != 1 || len(document.Data.Errors) != 1 || !document.Data.Coverage.Partial {
 		t.Fatalf("data=%+v", document.Data)
+	}
+	relation := document.Data.Results[0].Fields["relations"].([]any)[0].(map[string]any)
+	if relation["relation_type"] != "alias-to" || relation["direction"] != "outgoing" || relation["condition"] != "A alias" || relation["kind"] != "api-exact" {
+		t.Fatalf("query relation semantics=%+v", relation)
 	}
 }
 

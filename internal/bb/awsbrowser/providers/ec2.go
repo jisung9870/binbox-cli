@@ -589,7 +589,7 @@ func s(v *string) string { return aws.ToString(v) }
 func b(v *bool) bool     { return aws.ToBool(v) }
 func i32(v *int32) int32 { return aws.ToInt32(v) }
 
-func relation(context awsbrowser.AWSContext, operation, reason, targetType, targetID string, at time.Time) (map[string]any, error) {
+func relation(context awsbrowser.AWSContext, operation, reason, targetType, targetID string, relationType awsbrowser.RelationType, condition string, at time.Time) (map[string]any, error) {
 	target, e := awsbrowser.NewRegionalResourceKey(context, "ec2."+targetType, targetID)
 	if e != nil {
 		return nil, e
@@ -598,10 +598,14 @@ func relation(context awsbrowser.AWSContext, operation, reason, targetType, targ
 	if e != nil {
 		return nil, e
 	}
-	return map[string]any{"target": target, "kind": string(evidence.Kind), "reason": evidence.Reason, "operation": evidence.Operation, "scope": evidence.Scope, "observed_at": evidence.ObservedAt}, nil
+	semantics, e := awsbrowser.NewRelationSemantics(relationType, awsbrowser.RelationOutgoing, condition)
+	if e != nil {
+		return nil, e
+	}
+	return map[string]any{"target": target, "relation_type": string(semantics.Type), "direction": string(semantics.Direction), "condition": semantics.Condition, "kind": string(evidence.Kind), "reason": evidence.Reason, "operation": evidence.Operation, "scope": evidence.Scope, "observed_at": evidence.ObservedAt}, nil
 }
 
-func globalRelation(context awsbrowser.AWSContext, operation, reason, targetType, targetID string, at time.Time) (map[string]any, error) {
+func globalRelation(context awsbrowser.AWSContext, operation, reason, targetType, targetID string, relationType awsbrowser.RelationType, condition string, at time.Time) (map[string]any, error) {
 	target, err := awsbrowser.NewGlobalResourceKey(context, targetType, targetID)
 	if err != nil {
 		return nil, err
@@ -610,7 +614,11 @@ func globalRelation(context awsbrowser.AWSContext, operation, reason, targetType
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"target": target, "kind": string(evidence.Kind), "reason": evidence.Reason, "operation": evidence.Operation, "scope": evidence.Scope, "observed_at": evidence.ObservedAt}, nil
+	semantics, err := awsbrowser.NewRelationSemantics(relationType, awsbrowser.RelationOutgoing, condition)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"target": target, "relation_type": string(semantics.Type), "direction": string(semantics.Direction), "condition": semantics.Condition, "kind": string(evidence.Kind), "reason": evidence.Reason, "operation": evidence.Operation, "scope": evidence.Scope, "observed_at": evidence.ObservedAt}, nil
 }
 
 func parseGlobalARN(context awsbrowser.AWSContext, value, service, resourcePrefix string) (awsarn.ARN, error) {
@@ -636,15 +644,15 @@ func instanceProfileRelation(context awsbrowser.AWSContext, operation string, pr
 	if !iamInstanceProfileNameRE.MatchString(name) || len(name) > 128 {
 		return "", "", nil, errInvalidEC2Query
 	}
-	relation, err := globalRelation(context, operation, "instance iam profile arn", "iam.instance-profile", name, at)
+	relation, err := globalRelation(context, operation, "instance iam profile arn", "iam.instance-profile", name, awsbrowser.RelationUses, "", at)
 	return parsed.String(), name, relation, err
 }
 
-func addRelation(context awsbrowser.AWSContext, operation, reason, targetType, targetID string, at time.Time, relations *[]any) error {
+func addRelation(context awsbrowser.AWSContext, operation, reason, targetType, targetID string, relationType awsbrowser.RelationType, condition string, at time.Time, relations *[]any) error {
 	if targetID == "" {
 		return nil
 	}
-	r, e := relation(context, operation, reason, targetType, targetID, at)
+	r, e := relation(context, operation, reason, targetType, targetID, relationType, condition, at)
 	if e == nil {
 		*relations = append(*relations, r)
 	}
@@ -673,10 +681,10 @@ func mapInstance(c awsbrowser.AWSContext, op string, at time.Time, v types.Insta
 		return awsbrowser.ObservedResource{}, err
 	}
 	rel := []any{}
-	if e := addRelation(c, op, "instance vpc id", "vpc", s(v.VpcId), at, &rel); e != nil {
+	if e := addRelation(c, op, "instance vpc id", "vpc", s(v.VpcId), awsbrowser.RelationMemberOf, "", at, &rel); e != nil {
 		return awsbrowser.ObservedResource{}, e
 	}
-	if e := addRelation(c, op, "instance subnet id", "subnet", s(v.SubnetId), at, &rel); e != nil {
+	if e := addRelation(c, op, "instance subnet id", "subnet", s(v.SubnetId), awsbrowser.RelationMemberOf, "", at, &rel); e != nil {
 		return awsbrowser.ObservedResource{}, e
 	}
 	groups := []awsbrowser.ResourceKey{}
@@ -687,7 +695,9 @@ func mapInstance(c awsbrowser.AWSContext, op string, at time.Time, v types.Insta
 				return awsbrowser.ObservedResource{}, e
 			}
 			groups = append(groups, k)
-			_ = addRelation(c, op, "instance security group id", "security-group", s(g.GroupId), at, &rel)
+			if e = addRelation(c, op, "instance security group id", "security-group", s(g.GroupId), awsbrowser.RelationUses, "network interface", at, &rel); e != nil {
+				return awsbrowser.ObservedResource{}, e
+			}
 		}
 	}
 	volumes := []awsbrowser.ResourceKey{}
@@ -698,7 +708,9 @@ func mapInstance(c awsbrowser.AWSContext, op string, at time.Time, v types.Insta
 				return awsbrowser.ObservedResource{}, e
 			}
 			volumes = append(volumes, k)
-			_ = addRelation(c, op, "instance block device volume id", "volume", s(m.Ebs.VolumeId), at, &rel)
+			if e = addRelation(c, op, "instance block device volume id", "volume", s(m.Ebs.VolumeId), awsbrowser.RelationAttachedTo, s(m.DeviceName), at, &rel); e != nil {
+				return awsbrowser.ObservedResource{}, e
+			}
 		}
 	}
 	profileARN, profileName, profileRelation, err := instanceProfileRelation(c, op, v.IamInstanceProfile, at)
@@ -737,7 +749,7 @@ func mapVolume(c awsbrowser.AWSContext, op string, at time.Time, v types.Volume)
 			item["attach_time"] = a.AttachTime.UTC()
 		}
 		attachments = append(attachments, item)
-		if e := addRelation(c, op, "volume attachment instance id", "instance", s(a.InstanceId), at, &rel); e != nil {
+		if e := addRelation(c, op, "volume attachment instance id", "instance", s(a.InstanceId), awsbrowser.RelationAttachedTo, s(a.Device), at, &rel); e != nil {
 			return awsbrowser.ObservedResource{}, e
 		}
 	}
@@ -776,7 +788,7 @@ func mapSecurityGroup(c awsbrowser.AWSContext, op string, at time.Time, v types.
 		return awsbrowser.ObservedResource{}, err
 	}
 	rel := []any{}
-	if err = addRelation(c, op, "security group vpc id", "vpc", s(v.VpcId), at, &rel); err != nil {
+	if err = addRelation(c, op, "security group vpc id", "vpc", s(v.VpcId), awsbrowser.RelationMemberOf, "", at, &rel); err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
 	rules := make([]any, 0, len(v.IpPermissions)+len(v.IpPermissionsEgress))
@@ -784,7 +796,7 @@ func mapSecurityGroup(c awsbrowser.AWSContext, op string, at time.Time, v types.
 		rules = append(rules, permission(r, "ingress"))
 		for _, g := range r.UserIdGroupPairs {
 			if (s(g.UserId) == "" || s(g.UserId) == c.AccountID) && s(g.VpcId) == s(v.VpcId) {
-				if err = addRelation(c, op, "security group rule referenced group id", "security-group", s(g.GroupId), at, &rel); err != nil {
+				if err = addRelation(c, op, "security group rule referenced group id", "security-group", s(g.GroupId), awsbrowser.RelationReferences, "ingress", at, &rel); err != nil {
 					return awsbrowser.ObservedResource{}, err
 				}
 			}
@@ -794,7 +806,7 @@ func mapSecurityGroup(c awsbrowser.AWSContext, op string, at time.Time, v types.
 		rules = append(rules, permission(r, "egress"))
 		for _, g := range r.UserIdGroupPairs {
 			if (s(g.UserId) == "" || s(g.UserId) == c.AccountID) && s(g.VpcId) == s(v.VpcId) {
-				if err = addRelation(c, op, "security group rule referenced group id", "security-group", s(g.GroupId), at, &rel); err != nil {
+				if err = addRelation(c, op, "security group rule referenced group id", "security-group", s(g.GroupId), awsbrowser.RelationReferences, "egress", at, &rel); err != nil {
 					return awsbrowser.ObservedResource{}, err
 				}
 			}
@@ -812,14 +824,18 @@ func mapSecurityGroupRule(c awsbrowser.AWSContext, op string, at time.Time, v ty
 		return awsbrowser.ObservedResource{}, err
 	}
 	rel := []any{}
-	if err = addRelation(c, op, "security group rule group id", "security-group", s(v.GroupId), at, &rel); err != nil {
+	if err = addRelation(c, op, "security group rule group id", "security-group", s(v.GroupId), awsbrowser.RelationMemberOf, "", at, &rel); err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
 	reference := map[string]any{}
 	if v.ReferencedGroupInfo != nil {
 		reference = map[string]any{"group_id": s(v.ReferencedGroupInfo.GroupId), "account_id": s(v.ReferencedGroupInfo.UserId), "vpc_id": s(v.ReferencedGroupInfo.VpcId)}
 		if (s(v.ReferencedGroupInfo.UserId) == "" || s(v.ReferencedGroupInfo.UserId) == c.AccountID) && s(v.ReferencedGroupInfo.VpcId) != "" && s(v.ReferencedGroupInfo.VpcPeeringConnectionId) == "" {
-			if err = addRelation(c, op, "security group rule referenced group id", "security-group", s(v.ReferencedGroupInfo.GroupId), at, &rel); err != nil {
+			condition := "ingress"
+			if b(v.IsEgress) {
+				condition = "egress"
+			}
+			if err = addRelation(c, op, "security group rule referenced group id", "security-group", s(v.ReferencedGroupInfo.GroupId), awsbrowser.RelationReferences, condition, at, &rel); err != nil {
 				return awsbrowser.ObservedResource{}, err
 			}
 		}
@@ -843,7 +859,7 @@ func mapSubnet(c awsbrowser.AWSContext, op string, at time.Time, v types.Subnet)
 		return awsbrowser.ObservedResource{}, err
 	}
 	rel := []any{}
-	if err = addRelation(c, op, "subnet vpc id", "vpc", s(v.VpcId), at, &rel); err != nil {
+	if err = addRelation(c, op, "subnet vpc id", "vpc", s(v.VpcId), awsbrowser.RelationMemberOf, "", at, &rel); err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
 	if err = bindRelationSources(c, "subnet", s(v.SubnetId), rel); err != nil {
@@ -858,13 +874,13 @@ func mapRouteTable(c awsbrowser.AWSContext, op string, at time.Time, v types.Rou
 		return awsbrowser.ObservedResource{}, err
 	}
 	rel := []any{}
-	if err = addRelation(c, op, "route table vpc id", "vpc", s(v.VpcId), at, &rel); err != nil {
+	if err = addRelation(c, op, "route table vpc id", "vpc", s(v.VpcId), awsbrowser.RelationMemberOf, "", at, &rel); err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
 	associations := make([]any, 0, len(v.Associations))
 	for _, a := range v.Associations {
 		associations = append(associations, map[string]any{"association_id": s(a.RouteTableAssociationId), "subnet_id": s(a.SubnetId), "gateway_id": s(a.GatewayId), "main": b(a.Main)})
-		if err = addRelation(c, op, "route table association subnet id", "subnet", s(a.SubnetId), at, &rel); err != nil {
+		if err = addRelation(c, op, "route table association subnet id", "subnet", s(a.SubnetId), awsbrowser.RelationAssociatedWith, "", at, &rel); err != nil {
 			return awsbrowser.ObservedResource{}, err
 		}
 	}
@@ -875,6 +891,7 @@ func mapRouteTable(c awsbrowser.AWSContext, op string, at time.Time, v types.Rou
 		if strings.EqualFold(strings.TrimSpace(gatewayID), "local") {
 			gatewayID = ""
 		}
+		condition := routeCondition(r)
 		for _, target := range []struct{ reason, kind, id string }{
 			{"route target instance id", "instance", s(r.InstanceId)},
 			{"route target gateway id", "gateway", gatewayID},
@@ -886,7 +903,7 @@ func mapRouteTable(c awsbrowser.AWSContext, op string, at time.Time, v types.Rou
 			{"route target transit gateway id", "transit-gateway", s(r.TransitGatewayId)},
 			{"route target vpc peering connection id", "vpc-peering-connection", s(r.VpcPeeringConnectionId)},
 		} {
-			if err = addRelation(c, op, target.reason, target.kind, target.id, at, &rel); err != nil {
+			if err = addRelation(c, op, target.reason, target.kind, target.id, awsbrowser.RelationRoutesTo, condition, at, &rel); err != nil {
 				return awsbrowser.ObservedResource{}, err
 			}
 		}
@@ -895,7 +912,7 @@ func mapRouteTable(c awsbrowser.AWSContext, op string, at time.Time, v types.Rou
 			if parseErr != nil {
 				return awsbrowser.ObservedResource{}, parseErr
 			}
-			coreRelation, relationErr := globalRelation(c, op, "route target core network arn", "networkmanager.core-network", parsed.String(), at)
+			coreRelation, relationErr := globalRelation(c, op, "route target core network arn", "networkmanager.core-network", parsed.String(), awsbrowser.RelationRoutesTo, condition, at)
 			if relationErr != nil {
 				return awsbrowser.ObservedResource{}, relationErr
 			}
@@ -906,6 +923,20 @@ func mapRouteTable(c awsbrowser.AWSContext, op string, at time.Time, v types.Rou
 		return awsbrowser.ObservedResource{}, err
 	}
 	return observed(c, op, "route-table", s(v.RouteTableId), at, map[string]any{"vpc_id": s(v.VpcId), "owner_id": s(v.OwnerId), "associations": associations, "routes": routes, "tags": mappedTags, "relations": rel})
+}
+
+func routeCondition(route types.Route) string {
+	return stringsJoinNonEmpty(s(route.DestinationCidrBlock), s(route.DestinationIpv6CidrBlock), s(route.DestinationPrefixListId))
+}
+
+func stringsJoinNonEmpty(values ...string) string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, value)
+		}
+	}
+	return strings.Join(result, " ")
 }
 
 var _ awsbrowser.QueryExecutor = (*EC2QueryExecutor)(nil)

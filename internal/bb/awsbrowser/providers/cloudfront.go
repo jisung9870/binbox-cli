@@ -185,7 +185,8 @@ func appendCloudFrontRoute(context awsbrowser.AWSContext, source awsbrowser.Reso
 		"path_pattern": path, "target_origin_id": targetOriginID, "origin_domain": domain,
 	})
 	relation := map[string]any{
-		"label": label + " → " + domain, "kind": string(awsbrowser.RelationUnsupported),
+		"label": label + " → " + domain, "relation_type": string(awsbrowser.RelationRoutesTo),
+		"direction": string(awsbrowser.RelationOutgoing), "condition": path, "kind": string(awsbrowser.RelationUnsupported),
 		"reason": "cloudfront-origin-domain", "operation": operation, "scope": awsbrowser.GlobalRegion,
 		"observed_at": observedAt, "source": source,
 	}
@@ -198,7 +199,11 @@ func appendCloudFrontRoute(context awsbrowser.AWSContext, source awsbrowser.Reso
 		if err != nil {
 			return err
 		}
-		edge, err := awsbrowser.NewRelation(source, target, evidence)
+		semantics, err := awsbrowser.NewRelationSemantics(awsbrowser.RelationRoutesTo, awsbrowser.RelationOutgoing, path)
+		if err != nil {
+			return err
+		}
+		edge, err := awsbrowser.NewRelation(source, target, semantics, evidence)
 		if err != nil {
 			return err
 		}
@@ -206,6 +211,9 @@ func appendCloudFrontRoute(context awsbrowser.AWSContext, source awsbrowser.Reso
 		relation["target"] = edge.Target
 		relation["kind"] = string(validated.Kind)
 		relation["reason"] = validated.Reason
+		relation["relation_type"] = string(edge.Semantics.Type)
+		relation["direction"] = string(edge.Semantics.Direction)
+		relation["condition"] = edge.Semantics.Condition
 	}
 	*relations = append(*relations, relation)
 	return nil

@@ -64,6 +64,9 @@ type ProjectionField struct {
 type ProjectionRelation struct {
 	Label      string
 	Target     string
+	Type       string
+	Direction  string
+	Condition  string
 	Kind       string
 	Reason     string
 	Scope      string
@@ -246,10 +249,12 @@ func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProje
 		relations = append(relations,
 			ProjectionRelation{
 				Label: "Inbound rules", Target: "ec2.security-group-rules-inbound:" + key.ID,
+				Type: string(RelationContains), Direction: string(RelationOutgoing),
 				Kind: "scoped-query", Reason: "security group inbound rules", Scope: key.Region,
 			},
 			ProjectionRelation{
 				Label: "Outbound rules", Target: "ec2.security-group-rules-outbound:" + key.ID,
+				Type: string(RelationContains), Direction: string(RelationOutgoing),
 				Kind: "scoped-query", Reason: "security group outbound rules", Scope: key.Region,
 			},
 		)
@@ -263,10 +268,12 @@ func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProje
 		relations = append(relations,
 			ProjectionRelation{
 				Label: "Attached policies", Target: "iam.role-attached-policies:" + key.ID,
+				Type: string(RelationContains), Direction: string(RelationOutgoing),
 				Kind: "scoped-query", Reason: "managed policies attached to role", Scope: GlobalRegion,
 			},
 			ProjectionRelation{
 				Label: "Inline policies", Target: "iam.role-inline-policies:" + key.ID,
+				Type: string(RelationContains), Direction: string(RelationOutgoing),
 				Kind: "scoped-query", Reason: "inline policies embedded in role", Scope: GlobalRegion,
 			},
 		)
@@ -274,6 +281,7 @@ func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProje
 		if versionID, ok := fields["default_version_id"].(string); ok && strings.TrimSpace(versionID) != "" {
 			relations = append(relations, ProjectionRelation{
 				Label: "Default policy document", Target: "iam.managed-policy-version:" + key.ID + ":" + versionID,
+				Type: string(RelationHasVersion), Direction: string(RelationOutgoing), Condition: safeIntentText(versionID),
 				Kind: "scoped-query", Reason: "managed policy default version document", Scope: GlobalRegion,
 			})
 		}
@@ -291,6 +299,7 @@ func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProje
 	case "hosted-zone":
 		relations = append(relations, ProjectionRelation{
 			Label: "DNS records", Target: "route53.records:" + key.ID,
+			Type: string(RelationContains), Direction: string(RelationOutgoing),
 			Kind: "scoped-query", Reason: "record sets in hosted zone", Scope: GlobalRegion,
 		})
 	}
@@ -512,7 +521,9 @@ func projectRelations(fields map[string]any) []ProjectionRelation {
 		kind, _ := relation["kind"].(string)
 		reason, _ := relation["reason"].(string)
 		item := ProjectionRelation{
-			Label: label, Kind: safeIntentText(kind), Reason: safeIntentText(reason),
+			Label: label, Type: safeRelationString(relation["relation_type"]),
+			Direction: safeRelationString(relation["direction"]), Condition: safeRelationString(relation["condition"]),
+			Kind: safeIntentText(kind), Reason: safeIntentText(reason),
 			Scope: safeRelationString(relation["scope"]), Operation: safeRelationString(relation["operation"]),
 			ObservedAt: relationTime(relation["observed_at"]),
 		}

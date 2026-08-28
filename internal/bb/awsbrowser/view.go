@@ -704,9 +704,16 @@ func renderRelationGroup(m Model, route routeFrame) string {
 		preview := []string{}
 		selected := relations[route.relationSelected]
 		if m.height >= 18 {
+			meaning := stringsJoinNonEmpty(selected.Type, selected.Direction)
+			if selected.Condition != "" {
+				meaning = stringsJoinNonEmpty(meaning, "condition "+selected.Condition)
+			}
 			evidence := stringsJoinNonEmpty(selected.Kind, selected.Scope, selected.Operation, selected.ObservedAt)
-			if selected.Reason != "" || evidence != "" {
+			if meaning != "" || selected.Reason != "" || evidence != "" {
 				preview = append(preview, "", styles.section.Render("Relationship evidence"))
+				if meaning != "" {
+					preview = append(preview, wrapText("  "+safeIntentText(meaning), inner)...)
+				}
 				if selected.Reason != "" {
 					preview = append(preview, wrapText("  "+safeIntentText(selected.Reason), inner)...)
 				}
@@ -728,7 +735,7 @@ func renderRelationGroup(m Model, route routeFrame) string {
 			if relation.Target == "" {
 				action = "evidence only"
 			}
-			row := fit(marker+safeIntentText(relation.Label)+" · "+action, inner)
+			row := fit(marker+stringsJoinNonEmpty(safeIntentText(relation.Label), safeIntentText(relation.Type))+" · "+action, inner)
 			if index == route.relationSelected {
 				row = styles.selected.Render(row)
 			}

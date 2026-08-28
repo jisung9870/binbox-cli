@@ -7,7 +7,67 @@ import (
 	"time"
 )
 
-var ErrInvalidRelationEvidence = errors.New("invalid relation evidence")
+var (
+	ErrInvalidRelationEvidence  = errors.New("invalid relation evidence")
+	ErrInvalidRelationSemantics = errors.New("invalid relation semantics")
+)
+
+// RelationType describes what an edge means. It is deliberately separate from
+// RelationKind, which describes how confident the observation is.
+type RelationType string
+
+const (
+	RelationAttachedTo     RelationType = "attached-to"
+	RelationAssociatedWith RelationType = "associated-with"
+	RelationContains       RelationType = "contains"
+	RelationHasVersion     RelationType = "has-version"
+	RelationMemberOf       RelationType = "member-of"
+	RelationReferences     RelationType = "references"
+	RelationUses           RelationType = "uses"
+	RelationAliasTo        RelationType = "alias-to"
+	RelationRoutesTo       RelationType = "routes-to"
+)
+
+func (relationType RelationType) valid() bool {
+	switch relationType {
+	case RelationAttachedTo, RelationAssociatedWith, RelationContains, RelationHasVersion,
+		RelationMemberOf, RelationReferences, RelationUses, RelationAliasTo, RelationRoutesTo:
+		return true
+	default:
+		return false
+	}
+}
+
+type RelationDirection string
+
+const (
+	RelationOutgoing RelationDirection = "outgoing"
+	RelationIncoming RelationDirection = "incoming"
+)
+
+// RelationSemantics is the stable, provider-independent meaning of an edge.
+// Condition distinguishes edges that share a source and target, such as
+// separate CloudFront path patterns routed to the same S3 bucket.
+type RelationSemantics struct {
+	Type      RelationType
+	Direction RelationDirection
+	Condition string
+}
+
+func NewRelationSemantics(relationType RelationType, direction RelationDirection, condition string) (RelationSemantics, error) {
+	semantics := RelationSemantics{Type: relationType, Direction: direction, Condition: strings.TrimSpace(condition)}
+	if err := semantics.Validate(); err != nil {
+		return RelationSemantics{}, err
+	}
+	return semantics, nil
+}
+
+func (semantics RelationSemantics) Validate() error {
+	if !semantics.Type.valid() || semantics.Direction != RelationOutgoing && semantics.Direction != RelationIncoming {
+		return ErrInvalidRelationSemantics
+	}
+	return nil
+}
 
 // RelationKind describes confidence without promoting correlation or
 // inference to an exact relationship.
@@ -66,13 +126,17 @@ func (evidence RelationEvidence) Validate() error {
 // Relation is an immutable canonical edge. Evidence returns a copied,
 // observation-time-ordered slice suitable for model and coordinator fakes.
 type Relation struct {
-	Source ResourceKey
-	Target ResourceKey
+	Source    ResourceKey
+	Target    ResourceKey
+	Semantics RelationSemantics
 
 	evidence []RelationEvidence
 }
 
-func NewRelation(source, target ResourceKey, evidence ...RelationEvidence) (Relation, error) {
+func NewRelation(source, target ResourceKey, semantics RelationSemantics, evidence ...RelationEvidence) (Relation, error) {
+	if err := semantics.Validate(); err != nil {
+		return Relation{}, err
+	}
 	if source.Validate() != nil || target.Validate() != nil || len(evidence) == 0 {
 		return Relation{}, ErrInvalidRelationEvidence
 	}
@@ -85,7 +149,7 @@ func NewRelation(source, target ResourceKey, evidence ...RelationEvidence) (Rela
 	sort.SliceStable(copy, func(left, right int) bool {
 		return copy[left].ObservedAt.Before(copy[right].ObservedAt)
 	})
-	return Relation{Source: source, Target: target, evidence: copy}, nil
+	return Relation{Source: source, Target: target, Semantics: semantics, evidence: copy}, nil
 }
 
 func (relation Relation) Evidence() []RelationEvidence {

@@ -708,13 +708,14 @@ func TestRoute53CloudFrontS3TracePreservesPathCategories(t *testing.T) {
 	distribution := ProjectResourceFields(distributionKey, map[string]any{
 		"domain_name": "d24odq2ocbsmjd.cloudfront.net",
 		"relations": []any{
-			map[string]any{"label": "Default /* → kr origin", "target": krBucket, "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
-			map[string]any{"label": "report/* → us origin", "target": usBucket, "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
-			map[string]any{"label": "character/* → us origin", "target": usBucket, "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
+			map[string]any{"label": "Default /* → kr origin", "target": krBucket, "relation_type": "routes-to", "direction": "outgoing", "condition": "*", "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
+			map[string]any{"label": "report/* → us origin", "target": usBucket, "relation_type": "routes-to", "direction": "outgoing", "condition": "report/*", "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
+			map[string]any{"label": "character/* → us origin", "target": usBucket, "relation_type": "routes-to", "direction": "outgoing", "condition": "character/*", "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
 		},
 	})
 	groups = relationGroups(distribution)
-	if distribution.Title != "d24odq2ocbsmjd.cloudfront.net" || len(groups) != 1 || groups[0].Key != "origins" || len(groups[0].Relations) != 3 || groups[0].Relations[1].Label != "report/* → us origin" {
+	if distribution.Title != "d24odq2ocbsmjd.cloudfront.net" || len(groups) != 1 || groups[0].Key != "origins" || len(groups[0].Relations) != 3 ||
+		groups[0].Relations[1].Label != "report/* → us origin" || groups[0].Relations[1].Type != "routes-to" || groups[0].Relations[1].Condition != "report/*" {
 		t.Fatalf("distribution=%+v groups=%+v", distribution, groups)
 	}
 	m.history = []routeFrame{{mode: routeDetail, detail: distribution, context: &awsContext}}
@@ -723,7 +724,8 @@ func TestRoute53CloudFrontS3TracePreservesPathCategories(t *testing.T) {
 	if command != nil || current.current().mode != routeRelations || current.current().relationGroup != "origins" {
 		t.Fatalf("origins did not open locally: command=%v frame=%+v", command != nil, current.current())
 	}
-	if view := current.View().Content; !strings.Contains(view, "Default /*") || !strings.Contains(view, "report/*") || !strings.Contains(view, "character/*") {
+	if view := current.View().Content; !strings.Contains(view, "Default /*") || !strings.Contains(view, "report/*") || !strings.Contains(view, "character/*") ||
+		!strings.Contains(view, "routes-to") || !strings.Contains(view, "condition *") {
 		t.Fatalf("path-aware origins missing:\n%s", view)
 	}
 }

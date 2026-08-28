@@ -1448,7 +1448,7 @@ func filteredRelations(frame routeFrame) []ProjectionRelation {
 	}
 	filtered := make([]ProjectionRelation, 0, len(relations))
 	for _, relation := range relations {
-		searchable := stringsJoinNonEmpty(relation.Label, relation.Target, relation.Kind, relation.Reason, relation.Scope, relation.Operation)
+		searchable := stringsJoinNonEmpty(relation.Label, relation.Target, relation.Type, relation.Direction, relation.Condition, relation.Kind, relation.Reason, relation.Scope, relation.Operation)
 		if strings.Contains(strings.ToLower(searchable), query) {
 			filtered = append(filtered, relation)
 		}

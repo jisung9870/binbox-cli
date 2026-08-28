@@ -383,7 +383,8 @@ func TestIAMDocumentsAreDecodedToSafeValuesAndRelationsAreExactGlobal(t *testing
 	evidence := relations[0].(map[string]any)
 	source := evidence["source"].(awsbrowser.ResourceKey)
 	target := evidence["target"].(awsbrowser.ResourceKey)
-	if evidence["kind"] != string(awsbrowser.RelationAPIExact) || evidence["scope"] != awsbrowser.GlobalRegion ||
+	if evidence["relation_type"] != string(awsbrowser.RelationUses) || evidence["direction"] != string(awsbrowser.RelationOutgoing) || evidence["condition"] != "" ||
+		evidence["kind"] != string(awsbrowser.RelationAPIExact) || evidence["scope"] != awsbrowser.GlobalRegion ||
 		evidence["operation"] != awsbrowser.OperationGetInstanceProfile || evidence["reason"] != "instance-profile-role" ||
 		source != resources[0].Key || source.Type != "iam.instance-profile" || source.ID != "worker-profile" ||
 		target != resources[1].Key || target.Type != "iam.role" || target.ID != "worker" {
@@ -420,14 +421,15 @@ func TestIAMRolePolicyRelationsAreAPIExactAndGlobal(t *testing.T) {
 		targetType string
 		targetID   string
 		reason     string
+		condition  string
 	}{
 		{
 			key:        testIAMKey(t, awsbrowser.OperationListAttachedRolePolicies, map[string]string{"role-name": "worker"}),
-			targetType: "iam.managed-policy", targetID: policyARN, reason: "role-attached-policy",
+			targetType: "iam.managed-policy", targetID: policyARN, reason: "role-attached-policy", condition: "attached",
 		},
 		{
 			key:        testIAMKey(t, awsbrowser.OperationGetRolePolicy, map[string]string{"role-name": "worker", "policy-name": "inline"}),
-			targetType: "iam.inline-policy", targetID: "worker:inline", reason: "role-inline-policy",
+			targetType: "iam.inline-policy", targetID: "worker:inline", reason: "role-inline-policy", condition: "inline",
 		},
 	}
 	for _, query := range queries {
@@ -443,7 +445,8 @@ func TestIAMRolePolicyRelationsAreAPIExactAndGlobal(t *testing.T) {
 		relation := relations[0].(map[string]any)
 		source := relation["source"].(awsbrowser.ResourceKey)
 		target := relation["target"].(awsbrowser.ResourceKey)
-		if relation["kind"] != string(awsbrowser.RelationAPIExact) || relation["scope"] != awsbrowser.GlobalRegion ||
+		if relation["relation_type"] != string(awsbrowser.RelationUses) || relation["direction"] != string(awsbrowser.RelationOutgoing) || relation["condition"] != query.condition ||
+			relation["kind"] != string(awsbrowser.RelationAPIExact) || relation["scope"] != awsbrowser.GlobalRegion ||
 			relation["operation"] != query.key.Operation || relation["reason"] != query.reason ||
 			source.Type != "iam.role" || source.ID != "worker" || target.Type != query.targetType || target.ID != query.targetID ||
 			resource.Key != target {
@@ -491,6 +494,7 @@ func TestIAMPolicyVersionsUseDistinctGlobalKeysAndExactRelations(t *testing.T) {
 		source := relation["source"].(awsbrowser.ResourceKey)
 		target := relation["target"].(awsbrowser.ResourceKey)
 		if source.Type != "iam.managed-policy" || source.ID != policyARN || target != resource.Key ||
+			relation["relation_type"] != string(awsbrowser.RelationHasVersion) || relation["direction"] != string(awsbrowser.RelationOutgoing) || relation["condition"] != versionID ||
 			relation["kind"] != string(awsbrowser.RelationAPIExact) || relation["scope"] != awsbrowser.GlobalRegion ||
 			relation["operation"] != awsbrowser.OperationGetPolicyVersion || relation["reason"] != "managed-policy-version" {
 			t.Fatalf("relation=%#v", relation)

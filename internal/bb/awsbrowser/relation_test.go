@@ -20,18 +20,33 @@ func TestRelationEvidencePreservesKindReasonOperationAndTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	relation, err := NewRelation(source, target, correlated, exact)
+	semantics, err := NewRelationSemantics(RelationUses, RelationOutgoing, "primary network interface")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relation, err := NewRelation(source, target, semantics, correlated, exact)
 	if err != nil {
 		t.Fatal(err)
 	}
 	evidence := relation.Evidence()
-	if len(evidence) != 2 || evidence[0] != exact || evidence[1] != correlated ||
+	if relation.Semantics != semantics || len(evidence) != 2 || evidence[0] != exact || evidence[1] != correlated ||
 		evidence[0].Scope != "us-east-1" || evidence[1].Scope != GlobalRegion {
 		t.Fatalf("evidence was not preserved and ordered: %+v", evidence)
 	}
 	evidence[0].Reason = "caller mutation"
 	if relation.Evidence()[0].Reason != exact.Reason {
 		t.Fatal("relation exposed mutable evidence storage")
+	}
+}
+
+func TestRelationSemanticsRejectsUnknownTypeOrDirection(t *testing.T) {
+	for _, semantics := range []RelationSemantics{
+		{Type: "protected-by", Direction: RelationOutgoing},
+		{Type: RelationUses, Direction: "sideways"},
+	} {
+		if !errors.Is(semantics.Validate(), ErrInvalidRelationSemantics) {
+			t.Fatalf("invalid semantics accepted: %+v", semantics)
+		}
 	}
 }
 

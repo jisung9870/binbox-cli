@@ -5,7 +5,7 @@
 대상 환경   live AWS SDK provider와 선택적 snapshot graph
 최종 검토   2026-08-28
 다음 검토   Tier 1 첫 chain 구현 또는 snapshot PoC 완료 시
-상태        재기획 초안 — 전체 AWS 카탈로그가 아니라 검증 가능한 구현 계약
+상태        Tier 0 계약 적용 완료 — Tier 1 이후는 구현 전 계획
 
 관련 문서   [확장 설계](design-aws-tui-202608.md) · [기존 아키텍처](ARCHITECTURE.md) · [기존 UX](DESIGN.md)
 

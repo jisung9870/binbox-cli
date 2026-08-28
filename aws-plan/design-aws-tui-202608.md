@@ -218,9 +218,8 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 
 ### B1 — 관계 계약 정리와 현재 chain 강화
 
-- 기존 EC2→EBS/SG/VPC/Subnet/IAM, Route 53→CloudFront→S3 관계에 canonical evidence·confidence·condition을 적용한다.
-- reverse lookup을 만들기 전에 forward extractor와 fixture를 고정한다.
-- 완료 판정: [관계 계약](spec-aws-tui-relations-202608.md)의 Tier 0 chain이 live TUI와 query에서 같은 결과를 낸다.
+- 완료 상태: 2026-08-28 검증 완료. 기존 EC2→EBS/SG/VPC/Subnet/IAM, Route 53→CloudFront→S3 관계에 canonical relation type·outgoing direction·condition을 적용했고 기존 evidence/confidence를 유지했다.
+- 완료 판정: forward extractor fixture가 같은 target의 서로 다른 CloudFront path edge를 분리하고, live TUI projection과 JSON query가 같은 relation 필드를 보존한다. 증거는 [B1 관계 계약 기준선](B1-RELATION-CONTRACT.md)에 기록한다.
 
 ### B2 — domain에서 compute target까지 live chain 완성
 

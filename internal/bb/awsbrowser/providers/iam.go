@@ -514,7 +514,7 @@ func mapIAMInstanceProfile(key awsbrowser.QueryKey, profile iamtypes.InstancePro
 			return nil, err
 		}
 		roleKeys = append(roleKeys, resource.Key)
-		relation, err := exactIAMRelation(profileKey, resource.Key, key.Operation, "instance-profile-role", fetchedAt)
+		relation, err := exactIAMRelation(profileKey, resource.Key, awsbrowser.RelationUses, "", key.Operation, "instance-profile-role", fetchedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -548,7 +548,7 @@ func mapIAMAttachedPolicy(key awsbrowser.QueryKey, roleName string, policy iamty
 	if err != nil {
 		return awsbrowser.ObservedResource{}, awsbrowser.ErrQueryDecode
 	}
-	relation, err := exactIAMRelation(roleKey, policyKey, key.Operation, "role-attached-policy", fetchedAt)
+	relation, err := exactIAMRelation(roleKey, policyKey, awsbrowser.RelationUses, "attached", key.Operation, "role-attached-policy", fetchedAt)
 	if err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
@@ -576,7 +576,7 @@ func mapIAMInlinePolicy(key awsbrowser.QueryKey, roleName, policyName string, do
 	if err != nil {
 		return awsbrowser.ObservedResource{}, awsbrowser.ErrQueryDecode
 	}
-	relation, err := exactIAMRelation(roleKey, policyKey, key.Operation, "role-inline-policy", fetchedAt)
+	relation, err := exactIAMRelation(roleKey, policyKey, awsbrowser.RelationUses, "inline", key.Operation, "role-inline-policy", fetchedAt)
 	if err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
@@ -640,7 +640,7 @@ func mapIAMPolicyVersion(key awsbrowser.QueryKey, policyARN, versionID string, v
 	if err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
-	relation, err := exactIAMRelation(policyKey, versionKey, key.Operation, "managed-policy-version", fetchedAt)
+	relation, err := exactIAMRelation(policyKey, versionKey, awsbrowser.RelationHasVersion, versionID, key.Operation, "managed-policy-version", fetchedAt)
 	if err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
@@ -699,18 +699,23 @@ func mapIAMTags(tags []iamtypes.Tag) (map[string]string, error) {
 	return result, nil
 }
 
-func exactIAMRelation(source, target awsbrowser.ResourceKey, operation, reason string, observedAt time.Time) (map[string]any, error) {
+func exactIAMRelation(source, target awsbrowser.ResourceKey, relationType awsbrowser.RelationType, condition, operation, reason string, observedAt time.Time) (map[string]any, error) {
 	evidence, err := awsbrowser.NewRelationEvidence(awsbrowser.RelationAPIExact, reason, operation, awsbrowser.GlobalRegion, observedAt)
 	if err != nil {
 		return nil, err
 	}
-	relation, err := awsbrowser.NewRelation(source, target, evidence)
+	semantics, err := awsbrowser.NewRelationSemantics(relationType, awsbrowser.RelationOutgoing, condition)
+	if err != nil {
+		return nil, err
+	}
+	relation, err := awsbrowser.NewRelation(source, target, semantics, evidence)
 	if err != nil {
 		return nil, err
 	}
 	validated := relation.Evidence()[0]
 	return map[string]any{
-		"source": relation.Source, "target": relation.Target, "kind": string(validated.Kind),
+		"source": relation.Source, "target": relation.Target, "relation_type": string(relation.Semantics.Type),
+		"direction": string(relation.Semantics.Direction), "condition": relation.Semantics.Condition, "kind": string(validated.Kind),
 		"reason": validated.Reason, "operation": validated.Operation, "scope": validated.Scope, "observed_at": validated.ObservedAt,
 	}, nil
 }

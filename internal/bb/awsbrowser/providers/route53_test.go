@@ -294,7 +294,8 @@ func TestRoute53ExactRecordSearchUsesFullTupleAndUniqueRoutingKeys(t *testing.T)
 		t.Fatalf("alias fields=%v", alias)
 	}
 	relation := fields["alias_relation"].(map[string]any)
-	if relation["kind"] != string(awsbrowser.RelationAPIExact) || relation["scope"] != awsbrowser.GlobalRegion {
+	if relation["relation_type"] != string(awsbrowser.RelationAliasTo) || relation["direction"] != string(awsbrowser.RelationOutgoing) ||
+		relation["condition"] != "A alias" || relation["kind"] != string(awsbrowser.RelationAPIExact) || relation["scope"] != awsbrowser.GlobalRegion {
 		t.Fatalf("alias relation=%v", relation)
 	}
 	if _, navigable := relation["target"]; navigable {
@@ -323,7 +324,8 @@ func TestRoute53CloudFrontAliasBecomesNavigableExactTarget(t *testing.T) {
 		t.Fatalf("target=%+v relation=%v", target, relation)
 	}
 	projection := awsbrowser.ProjectResourceFields(resource.Key, resource.Observation.Fields())
-	if len(projection.Relations) != 2 || projection.Relations[0].Label != "Alias target" || projection.Relations[0].Target != "cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net" {
+	if len(projection.Relations) != 2 || projection.Relations[0].Label != "Alias target" || projection.Relations[0].Target != "cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net" ||
+		projection.Relations[0].Type != string(awsbrowser.RelationAliasTo) || projection.Relations[0].Direction != string(awsbrowser.RelationOutgoing) || projection.Relations[0].Condition != "A alias" {
 		t.Fatalf("projection=%+v", projection)
 	}
 }
@@ -361,6 +363,9 @@ func TestRoute53RecordKeyIsStableWhenMutableRoutingValuesChange(t *testing.T) {
 		t.Fatalf("routing fields first=%v second=%v", firstRouting, secondRouting)
 	}
 	zoneRelation := first.Observation.Fields()["zone_relation"].(map[string]any)
+	if zoneRelation["relation_type"] != string(awsbrowser.RelationMemberOf) || zoneRelation["direction"] != string(awsbrowser.RelationOutgoing) || zoneRelation["condition"] != "" {
+		t.Fatalf("zone relation semantics=%+v", zoneRelation)
+	}
 	if source, ok := zoneRelation["source"].(awsbrowser.ResourceKey); !ok || source != first.Key {
 		t.Fatalf("zone relation source=%+v resource=%+v", zoneRelation["source"], first.Key)
 	}

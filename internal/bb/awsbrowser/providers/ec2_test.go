@@ -111,7 +111,7 @@ func TestEC2ExecutorSelectsOperationBuildsInputAndMapsRelations(t *testing.T) {
 		return &ec2.DescribeInstancesOutput{Reservations: []types.Reservation{{Instances: []types.Instance{{
 			InstanceId: aws.String("i-1"), VpcId: aws.String("vpc-1"), SubnetId: aws.String("subnet-1"), InstanceType: types.InstanceTypeT3Micro,
 			State: &types.InstanceState{Name: types.InstanceStateNameRunning}, SecurityGroups: []types.GroupIdentifier{{GroupId: aws.String("sg-1")}},
-			BlockDeviceMappings: []types.InstanceBlockDeviceMapping{{Ebs: &types.EbsInstanceBlockDevice{VolumeId: aws.String("vol-1")}}},
+			BlockDeviceMappings: []types.InstanceBlockDeviceMapping{{DeviceName: aws.String("/dev/xvda"), Ebs: &types.EbsInstanceBlockDevice{VolumeId: aws.String("vol-1")}}},
 			IamInstanceProfile:  &types.IamInstanceProfile{Arn: aws.String("arn:aws:iam::123456789012:instance-profile/app/web-profile")},
 			Tags:                []types.Tag{{Key: aws.String("Name"), Value: aws.String("web")}},
 		}}}}}, nil
@@ -150,6 +150,16 @@ func TestEC2ExecutorSelectsOperationBuildsInputAndMapsRelations(t *testing.T) {
 	}
 	if gotTargets := exactRelationTargets(t, resource); !reflect.DeepEqual(gotTargets, wantTargets) {
 		t.Fatalf("relation targets=%+v want=%+v", gotTargets, wantTargets)
+	}
+	wantSemantics := map[string]string{
+		"ec2.vpc/vpc-1":                    "member-of|",
+		"ec2.subnet/subnet-1":              "member-of|",
+		"ec2.security-group/sg-1":          "uses|network interface",
+		"ec2.volume/vol-1":                 "attached-to|/dev/xvda",
+		"iam.instance-profile/web-profile": "uses|",
+	}
+	if gotSemantics := relationSemantics(t, resource); !reflect.DeepEqual(gotSemantics, wantSemantics) {
+		t.Fatalf("relation semantics=%+v want=%+v", gotSemantics, wantSemantics)
 	}
 	assertMappedOnly(t, fields)
 }
@@ -430,6 +440,20 @@ func exactRelationTargets(t *testing.T, resource awsbrowser.ObservedResource) ma
 		}
 		target := relation["target"].(awsbrowser.ResourceKey)
 		result[target.Type+"/"+target.ID] = relation["scope"].(string)
+	}
+	return result
+}
+
+func relationSemantics(t *testing.T, resource awsbrowser.ObservedResource) map[string]string {
+	t.Helper()
+	result := map[string]string{}
+	for _, raw := range resource.Observation.Fields()["relations"].([]any) {
+		relation := raw.(map[string]any)
+		if relation["direction"] != string(awsbrowser.RelationOutgoing) {
+			t.Fatalf("relation direction=%+v", relation)
+		}
+		target := relation["target"].(awsbrowser.ResourceKey)
+		result[target.Type+"/"+target.ID] = relation["relation_type"].(string) + "|" + relation["condition"].(string)
 	}
 	return result
 }

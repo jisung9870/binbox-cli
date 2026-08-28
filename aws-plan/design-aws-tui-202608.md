@@ -237,9 +237,11 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 
 ### B3 — SG reverse를 이용한 snapshot graph PoC
 
-- 명시적 sync, versioned run, coverage, resource observation, relation 저장을 SG referenced-by/attached-to chain에 구현한다.
-- PoC fixture는 2 profile × 2 region의 partial failure, duplicate observation, cross-account reference를 포함한다.
-- 완료 판정: 10만 node/50만 edge 합성 fixture에서 relation/reverse/path p95 200ms 이하라는 로컬 목표를 측정하고, binary size·retention·corruption recovery 결과로 SQLite ADR을 작성한다.
+- 완료 상태: 2026-08-28 PoC 검증 완료. 명시적 sync, versioned/atomic run, succeeded/failed/not-observed coverage, profile별 resource observation, indexed relation/reverse/bounded path 저장소를 구현했다.
+- fixture: 2 profile × 2 region partial failure, duplicate observation, cross-account SG reference, EC2-only attachment coverage를 검증한다.
+- 측정: Apple M3, Go 1.25.11, `CGO_ENABLED=0`에서 10만 resource/50만 relation의 relation/reverse/path p95가 각각 0.133/0.098/0.129ms였고 one-run store는 229.8MiB였다.
+- 결정: optional store는 `modernc.org/sqlite v1.57.0`을 채택하고 기본 retention은 complete run 2개로 둔다. live browser 기본 경로와 public sync/query는 변경하지 않는다.
+- 증거: [B3 PoC 결과](B3-SNAPSHOT-GRAPH-POC.md) · [ADR-002](ADR-002-SQLITE-SNAPSHOT-GRAPH.md)
 
 ### B4 — shortcut query와 diff
 
@@ -269,7 +271,7 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 
 ## 열린 결정
 
-- [ ] SQLite와 cgo-free driver 채택 여부 — B3 PoC 결과와 ADR에서 결정.
-- [ ] snapshot retention과 diff 보존 기간 — B4 전에 디스크 상한과 함께 결정.
-- [ ] B3 snapshot PoC에서 SG attachment coverage를 EC2 ENI까지만 제한할지 ELBv2 ENI까지 포함할지.
+- [x] SQLite와 cgo-free driver 채택 여부 — optional store에 `modernc.org/sqlite v1.57.0` 채택. ADR-002 참고.
+- [x] B3 retention 기본값 — complete run 2개. B4 diff 보존 기간은 1GiB 재검토 trigger 안에서 별도 결정.
+- [x] B3 SG attachment coverage — EC2 instance/ENI evidence만 포함하고 ELBv2 등 다른 service는 `not-observed/ec2-only`로 기록.
 - [ ] 기존 외부 boto3/Cytoscape 자산의 실제 존재·소유·스키마 — 저장소 밖 자산이므로 확인 전 통합 전제로 사용하지 않는다.

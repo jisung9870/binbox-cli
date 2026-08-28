@@ -116,11 +116,11 @@
 ## AWS live and snapshot graph decision
 
 - Live Browse remains the default source for Service→Resource→Summary→Detail and exact linked-resource verification. It continues to use the existing AWS SDK providers and in-memory session store.
-- A future explicit `sync` path may persist normalized, allowlisted resource and relationship fields for cross-account `rel`, `path`, `whois`, and `diff` queries. It does not store credentials or unbounded provider `raw_json` payloads.
+- The B3 PoC provides an explicit-only, versioned SQLite snapshot store for normalized resource identity, observation, relation, and succeeded/failed/not-observed coverage. Public `sync`, `refs`, `whois`, and `diff` commands remain B4 work. The store does not contain credentials or unbounded provider `raw_json` payloads.
 - Snapshot-backed screens must always show snapshot age plus successful, failed, and not-observed account/region coverage. A graph result is never presented as live data.
 - Opening a snapshot node transitions to an exact live read in that node's observed profile/account/region context when the current credentials can verify it.
 - Both paths share canonical `ResourceKey`, relationship confidence/evidence, provider normalization, and a Go query service. The TUI never shells out to a bb CLI command to obtain its own data.
-- SQLite or another persistent index is introduced only with the snapshot collector and schema/retention/security tests; it is not a prerequisite for the full-screen TUI navigation change.
+- `modernc.org/sqlite v1.57.0` is accepted for the optional snapshot store after the B3 100k-resource/500k-relation PoC, atomic-run, retention, and corruption-recovery tests. The package is not wired into the live TUI or release binary yet and is not a prerequisite for full-screen navigation. See `aws-plan/B3-SNAPSHOT-GRAPH-POC.md` and `aws-plan/ADR-002-SQLITE-SNAPSHOT-GRAPH.md`.
 
 ## Open questions
 

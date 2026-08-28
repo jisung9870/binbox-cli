@@ -4,8 +4,8 @@
 목적        현재 구현에서 출발해 관계의 정확성·근거·우선순위·완료 조건을 고정한다
 대상 환경   live AWS SDK provider와 선택적 snapshot graph
 최종 검토   2026-08-28
-다음 검토   Tier 1 첫 chain 구현 또는 snapshot PoC 완료 시
-상태        Tier 0 계약 적용 완료 — Tier 1 이후는 구현 전 계획
+다음 검토   B4 shortcut query 설계 시
+상태        Tier 0·Tier 1-A 완료, Tier 1-B storage PoC 완료 — live sync/public query는 B4 계획
 
 관련 문서   [확장 설계](design-aws-tui-202608.md) · [기존 아키텍처](ARCHITECTURE.md) · [기존 UX](DESIGN.md)
 
@@ -118,6 +118,8 @@ Security Group
 ```
 
 현재 EC2 provider에 ENI attachment coverage가 없으므로 `EC2 instances only`를 전체 attachment로 표현하지 않는다. ELB, RDS, Lambda, endpoint 등 서비스별 attachment가 추가될 때 coverage를 확장한다.
+
+2026-08-28 B3는 이 계약의 persistent storage, atomic run, reverse index, coverage와 2 profile × 2 region fixture를 완료했다. 기존 EC2 live extractor를 snapshot sync에 연결하고 full SG rule condition을 투영하는 작업은 B4 public `sync` 이전에 남아 있다. 근거는 [B3 PoC 결과](B3-SNAPSHOT-GRAPH-POC.md)와 [ADR-002](ADR-002-SQLITE-SNAPSHOT-GRAPH.md)다.
 
 완료 조건:
 

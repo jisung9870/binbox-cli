@@ -35,6 +35,9 @@
 - [B0-BASELINE.md](B0-BASELINE.md): B0 코드·문서 기준선과 2026-08-28 검증 증거.
 - [B1-RELATION-CONTRACT.md](B1-RELATION-CONTRACT.md): Tier 0 forward relation 의미·조건·증거 계약.
 - [B15-K9S-TABLE.md](B15-K9S-TABLE.md): k9s형 고밀도 table layout과 responsive 검증 기준선.
+- [B2-ELBV2-TRACE.md](B2-ELBV2-TRACE.md): Route 53 alias에서 ELBv2 target까지의 live ingress trace 기준선.
+- [B3-SNAPSHOT-GRAPH-POC.md](B3-SNAPSHOT-GRAPH-POC.md): SG reverse snapshot graph의 성능·coverage·retention·corruption PoC 결과.
+- [ADR-002-SQLITE-SNAPSHOT-GRAPH.md](ADR-002-SQLITE-SNAPSHOT-GRAPH.md): optional snapshot store의 cgo-free SQLite 채택 결정.
 
 ## 기존 작업과의 관계
 

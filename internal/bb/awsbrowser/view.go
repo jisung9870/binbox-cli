@@ -495,6 +495,8 @@ func renderSummary(m Model, route routeFrame) string {
 			action = "VIEW"
 		} else if category.Key == "tags" {
 			action = "VIEW"
+		} else if category.Key == "evidence" {
+			action = "EVIDENCE"
 		} else if directRelationGroup(category.Group) {
 			action = "LIST"
 			if category.Key == "policy-document" {
@@ -750,7 +752,11 @@ func renderRelationGroup(m Model, route routeFrame) string {
 	if m.height >= 16 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, fit(styles.footer.Render("type or / filter · ↑↓ move · →/enter open · ← back · : command · ^o/^i history"), inner))
+	openAction := "→/enter target"
+	if len(relations) != 0 && relations[route.relationSelected].Target == "" {
+		openAction = "→/enter evidence"
+	}
+	lines = append(lines, fit(styles.footer.Render("type or / filter · ↑↓ move · "+openAction+" · e evidence · ← back · : command · ^o/^i history"), inner))
 	return frameView(lines, m.width, m.height, styles)
 }
 
@@ -952,6 +958,9 @@ func relationTableLayout(inner int) ([]string, []int) {
 
 func relationTableCells(relation ProjectionRelation, headers []string) []string {
 	target := relation.Target
+	if target == "" {
+		target = relation.TargetRef
+	}
 	if target == "" {
 		target = relation.Label
 	}

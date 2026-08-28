@@ -65,6 +65,7 @@ type ProjectionField struct {
 type ProjectionRelation struct {
 	Label      string
 	Target     string
+	TargetRef  string
 	Type       string
 	Direction  string
 	Condition  string
@@ -524,16 +525,21 @@ func projectRelations(fields map[string]any) []ProjectionRelation {
 		values = append(values, relations...)
 	}
 	if relation, ok := fields["alias_relation"].(map[string]any); ok {
-		values = append(values, namedRelation{name: "Alias target", value: relation})
+		targetHint := ""
+		if alias, aliasOK := fields["alias"].(map[string]any); aliasOK {
+			targetHint = safeRelationString(alias["dns_name"])
+		}
+		values = append(values, namedRelation{name: "Alias target", value: relation, targetHint: targetHint})
 	}
 	if relation, ok := fields["zone_relation"].(map[string]any); ok {
 		values = append(values, namedRelation{name: "Hosted zone", value: relation})
 	}
 	result := make([]ProjectionRelation, 0, len(values))
 	for _, raw := range values {
-		label := ""
+		label, targetHint := "", ""
 		if named, ok := raw.(namedRelation); ok {
 			label, raw = named.name, named.value
+			targetHint = named.targetHint
 		}
 		relation, ok := raw.(map[string]any)
 		if !ok {
@@ -553,14 +559,18 @@ func projectRelations(fields map[string]any) []ProjectionRelation {
 			ObservedAt: relationTime(relation["observed_at"]),
 		}
 		if hasTarget && target.Validate() == nil {
+			item.TargetRef = target.Type + ":" + target.ID
 			if NavigableRelationTargetType(target.Type) {
-				item.Target = target.Type + ":" + target.ID
+				item.Target = item.TargetRef
 			}
 			if item.Label == "" {
 				item.Label = target.ID
 			}
 		} else if item.Label == "" {
 			item.Label = "External target"
+		}
+		if item.TargetRef == "" {
+			item.TargetRef = targetHint
 		}
 		if item.Reason == "" {
 			item.Reason = "relationship evidence available"
@@ -589,8 +599,9 @@ func NavigableRelationTargetType(resourceType string) bool {
 }
 
 type namedRelation struct {
-	name  string
-	value map[string]any
+	name       string
+	value      map[string]any
+	targetHint string
 }
 
 func safeRelationString(value any) string {

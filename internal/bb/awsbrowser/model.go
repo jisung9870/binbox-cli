@@ -387,6 +387,13 @@ func (m Model) updateKey(key string) (tea.Model, tea.Cmd) {
 			return m.openContext()
 		}
 		m.appendResourceFilter(frame, key)
+	case "e":
+		if frame != nil && frame.mode == routeRelations && !frame.filterActive && frame.filterValue == "" {
+			return m.openSelectedRelationEvidence()
+		}
+		if frame != nil && filterableRoute(frame.mode) {
+			m.appendResourceFilter(frame, key)
+		}
 	case "ctrl+o":
 		m.pop()
 	case "ctrl+i":
@@ -917,10 +924,52 @@ func (m Model) enterCurrent() (tea.Model, tea.Cmd) {
 	}
 	relation := relations[frame.relationSelected]
 	if relation.Target == "" {
-		frame.status = "Relation is evidence-only: " + safeIntentText(relation.Reason)
-		return m, nil
+		return m.openRelationEvidence(relation)
 	}
 	return m.pushAndDispatch(Intent{Kind: IntentOpen, Target: relation.Target}, relation.Label, frame.context)
+}
+
+func (m Model) openSelectedRelationEvidence() (tea.Model, tea.Cmd) {
+	frame := m.current()
+	if frame == nil || frame.mode != routeRelations {
+		return m, nil
+	}
+	relations := filteredRelations(*frame)
+	if len(relations) == 0 {
+		frame.status = "No relationship evidence to show."
+		return m, nil
+	}
+	return m.openRelationEvidence(relations[frame.relationSelected])
+}
+
+func (m Model) openRelationEvidence(relation ProjectionRelation) (tea.Model, tea.Cmd) {
+	target := relation.TargetRef
+	if target == "" {
+		target = "Unresolved target"
+	}
+	subtitle := "Relationship evidence"
+	navigation := "Available"
+	if relation.Target == "" {
+		subtitle += " · target navigation unavailable"
+		navigation = "Unavailable · no supported exact-read resolver"
+	}
+	fields := []ProjectionField{
+		{Label: "Target reference", Value: target},
+		{Label: "Target navigation", Value: navigation},
+		{Label: "Relation", Value: relation.Type},
+		{Label: "Direction", Value: relation.Direction},
+		{Label: "Condition", Value: relation.Condition},
+		{Label: "Confidence", Value: relation.Kind},
+		{Label: "Reason", Value: relation.Reason},
+		{Label: "Operation", Value: relation.Operation},
+		{Label: "Scope", Value: relation.Scope},
+		{Label: "Observed at", Value: relation.ObservedAt},
+	}
+	m.pushFrame(routeFrame{
+		mode: routeFields, target: relation.Target, label: "Relationship evidence", context: m.current().context,
+		detail: ResourceProjection{Title: relation.Label, Subtitle: subtitle, Fields: fields},
+	})
+	return m, nil
 }
 
 func hydrateListResource(target string) bool {
@@ -1472,7 +1521,7 @@ func filteredRelations(frame routeFrame) []ProjectionRelation {
 	}
 	filtered := make([]ProjectionRelation, 0, len(relations))
 	for _, relation := range relations {
-		searchable := stringsJoinNonEmpty(relation.Label, relation.Target, relation.Type, relation.Direction, relation.Condition, relation.Kind, relation.Reason, relation.Scope, relation.Operation)
+		searchable := stringsJoinNonEmpty(relation.Label, relation.Target, relation.TargetRef, relation.Type, relation.Direction, relation.Condition, relation.Kind, relation.Reason, relation.Scope, relation.Operation)
 		if strings.Contains(strings.ToLower(searchable), query) {
 			filtered = append(filtered, relation)
 		}

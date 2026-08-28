@@ -1664,8 +1664,58 @@ func TestProjectQueryUpdateKeepsUnmappedExactRelationsEvidenceOnly(t *testing.T)
 	commitOneResource(t, store, query, instance, observation, when)
 	snapshot, _ := store.Snapshot(query)
 	relation := ProjectQueryUpdate(QueryUpdate{Key: query, Snapshot: snapshot}).Resources[0].Relations[0]
-	if relation.Target != "" || relation.Label != "nat-001" || relation.Kind != "id-exact" || relation.Reason != "route target nat gateway id" {
+	if relation.Target != "" || relation.TargetRef != "ec2.nat-gateway:nat-001" || relation.Label != "nat-001" || relation.Kind != "id-exact" || relation.Reason != "route target nat gateway id" {
 		t.Fatalf("unmapped exact relation lost evidence or became navigable: %+v", relation)
+	}
+}
+
+func TestEvidenceOnlyRelationEnterAndEOpenEvidenceDetail(t *testing.T) {
+	relation := ProjectionRelation{
+		Label: "API alias", TargetRef: "api.example.execute-api.us-east-1.amazonaws.com.",
+		Type: "alias-to", Direction: "outgoing", Condition: "A alias", Kind: "api-exact",
+		Reason: "alias-target-returned-by-api", Operation: OperationListResourceRecordSets,
+		Scope: GlobalRegion, ObservedAt: "2026-08-28T08:00:00Z",
+	}
+	for _, keyName := range []string{"enter", "e"} {
+		t.Run(keyName, func(t *testing.T) {
+			m := NewModel(context.Background(), Config{NoColor: true}, new(recordingDispatcher))
+			m.history = []routeFrame{{
+				mode: routeRelations, label: "Relationship evidence", relationGroup: "evidence",
+				detail: ResourceProjection{Title: "api.example.com", Relations: []ProjectionRelation{relation}},
+			}}
+			if view := m.View().Content; !strings.Contains(view, "api.example") || !strings.Contains(view, "enter evidence") {
+				t.Fatalf("evidence target/footer missing:\n%s", view)
+			}
+			var model tea.Model
+			var command tea.Cmd
+			if keyName == "enter" {
+				model, command = m.Update(key(tea.KeyEnter))
+			} else {
+				model, command = m.Update(key('e'))
+			}
+			current := model.(Model)
+			frame := current.current()
+			if command != nil || frame.mode != routeFields || frame.detail.Subtitle != "Relationship evidence · target navigation unavailable" ||
+				len(frame.detail.Fields) == 0 || frame.detail.Fields[0].Value != relation.TargetRef {
+				t.Fatalf("frame=%+v command=%v", frame, command != nil)
+			}
+		})
+	}
+}
+
+func TestUnclassifiedRoute53AliasPreservesDNSReference(t *testing.T) {
+	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	recordKey, _ := NewGlobalResourceKey(awsContext, "resource-record-set", "api-record")
+	resource := ProjectResourceFields(recordKey, map[string]any{
+		"name":  "api.example.com.",
+		"alias": map[string]any{"dns_name": "api.execute-api.us-east-1.amazonaws.com."},
+		"alias_relation": map[string]any{
+			"relation_type": "alias-to", "direction": "outgoing", "condition": "A alias",
+			"kind": "api-exact", "reason": "alias-target-returned-by-api",
+		},
+	})
+	if len(resource.Relations) != 1 || resource.Relations[0].Target != "" || resource.Relations[0].TargetRef != "api.execute-api.us-east-1.amazonaws.com." {
+		t.Fatalf("relations=%+v", resource.Relations)
 	}
 }
 

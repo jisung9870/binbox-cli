@@ -3,10 +3,10 @@
 │ Profile dev  Account unresolved  Pr… │
 │ AWS > web-api > Summary              │
 │ running                              │
-│                                      │
 │ Categories (3)                       │
-│ > Security groups (1) · →/enter open │
-│   Detail · →/enter view              │
-│   Tags (0) · →/enter view            │
+│   CATEGORY            COUNT  ACTION  │
+│ > Security groups     1      OPEN    │
+│   Detail              2      VIEW    │
+│   Tags                0      VIEW    │
 │ ↑↓ category · →/enter open · ← back… │
 ╰──────────────────────────────────────╯

@@ -343,13 +343,13 @@ func TestModelProgressiveListDetailRelationAndHistory(t *testing.T) {
 		t.Fatalf("terminal stream was not released: cancels=%d", first.cancels)
 	}
 	model, _ = model.Update(key(tea.KeyEnter))
-	for _, want := range []string{"Private IP", "10.0.1.24", "Security groups (1)", "enter open"} {
+	for _, want := range []string{"FIELD", "Private IP", "10.0.1.24", "CATEGORY", "Security groups", "ACTION"} {
 		if !strings.Contains(model.View().Content, want) {
 			t.Fatalf("detail missing %q:\n%s", want, model.View().Content)
 		}
 	}
 	model, command := model.Update(key(tea.KeyEnter))
-	if command != nil || !strings.Contains(model.View().Content, "sg-web · enter open") {
+	if command != nil || !strings.Contains(model.View().Content, "ec2.security-group:sg-web") {
 		t.Fatalf("relation category did not open locally: command=%v view=%s", command != nil, model.View().Content)
 	}
 	model, wait = runModelCommand(t, model, key(tea.KeyEnter))
@@ -357,7 +357,7 @@ func TestModelProgressiveListDetailRelationAndHistory(t *testing.T) {
 		t.Fatalf("relation target=%q", got)
 	}
 	model, _ = model.Update(key(tea.KeyEscape))
-	if relation.cancels != 1 || !strings.Contains(model.View().Content, "Security groups (1)") || !strings.Contains(model.View().Content, "sg-web") {
+	if relation.cancels != 1 || !strings.Contains(model.View().Content, "Security groups") || !strings.Contains(model.View().Content, "sg-web") {
 		t.Fatalf("relation back did not cancel/restore category: cancels=%d view=%s", relation.cancels, model.View().Content)
 	}
 	model, _ = model.Update(key(tea.KeyEscape))
@@ -383,9 +383,12 @@ func TestDetailGroupsRelationsAndOpensEachCategoryLocally(t *testing.T) {
 	m := NewModel(context.Background(), Config{NoColor: true}, new(recordingDispatcher))
 	m.history = []routeFrame{{mode: routeDetail, detail: resource}}
 	view := m.View().Content
-	for _, want := range []string{"Security groups (2)", "Volumes (1)", "VPCs (1)"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("detail missing category %q:\n%s", want, view)
+	for _, want := range []struct {
+		label string
+		count string
+	}{{"Security groups", "2"}, {"Volumes", "1"}, {"VPCs", "1"}} {
+		if !viewLineContainsAll(view, want.label, want.count, "OPEN") {
+			t.Fatalf("detail missing category %q count %s:\n%s", want.label, want.count, view)
 		}
 	}
 	for _, hidden := range []string{"sg-web", "vol-data"} {
@@ -604,7 +607,7 @@ func TestIAMAndRoute53SummariesExposePolicyAndDNSCategories(t *testing.T) {
 	}
 	m := NewModel(context.Background(), Config{NoColor: true}, nil)
 	m.history = []routeFrame{{mode: routeDetail, detail: policy}}
-	if view := m.View().Content; !strings.Contains(view, "Policy document · →/enter view") {
+	if view := m.View().Content; !viewLineContainsAll(view, "Policy document", "VIEW") {
 		t.Fatalf("managed policy document action is unclear:\n%s", view)
 	}
 
@@ -618,7 +621,7 @@ func TestIAMAndRoute53SummariesExposePolicyAndDNSCategories(t *testing.T) {
 		t.Fatalf("hosted zone projection=%+v groups=%+v", zone, groups)
 	}
 	m.history = []routeFrame{{mode: routeDetail, detail: zone}}
-	if view := m.View().Content; !strings.Contains(view, "DNS records · →/enter list") {
+	if view := m.View().Content; !viewLineContainsAll(view, "DNS records", "LIST") {
 		t.Fatalf("hosted zone DNS action is unclear:\n%s", view)
 	}
 }
@@ -690,7 +693,7 @@ func TestRoute53CloudFrontS3TracePreservesPathCategories(t *testing.T) {
 	dispatcher := new(recordingDispatcher)
 	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
 	m.history = []routeFrame{{mode: routeDetail, detail: record, context: &awsContext}}
-	if view := m.View().Content; !strings.Contains(view, "Alias target · →/enter trace") {
+	if view := m.View().Content; !viewLineContainsAll(view, "Alias target", "TRACE") {
 		t.Fatalf("trace action missing:\n%s", view)
 	}
 	model, command := m.Update(key(tea.KeyRight))
@@ -724,8 +727,9 @@ func TestRoute53CloudFrontS3TracePreservesPathCategories(t *testing.T) {
 	if command != nil || current.current().mode != routeRelations || current.current().relationGroup != "origins" {
 		t.Fatalf("origins did not open locally: command=%v frame=%+v", command != nil, current.current())
 	}
-	if view := current.View().Content; !strings.Contains(view, "Default /*") || !strings.Contains(view, "report/*") || !strings.Contains(view, "character/*") ||
-		!strings.Contains(view, "routes-to") || !strings.Contains(view, "condition *") {
+	if view := current.View().Content; !strings.Contains(view, "RELATION") || !strings.Contains(view, "TARGET") || !strings.Contains(view, "CONDITION") ||
+		!strings.Contains(view, "report/*") || !strings.Contains(view, "character/*") || !strings.Contains(view, "routes-to") ||
+		!strings.Contains(view, "s3.bucket:udg-us-game-dump") || !strings.Contains(view, "condition *") {
 		t.Fatalf("path-aware origins missing:\n%s", view)
 	}
 }
@@ -869,7 +873,7 @@ func TestTagsCategoryOpensAndFiltersLocally(t *testing.T) {
 	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
 	m.history = []routeFrame{{mode: routeDetail, detail: resource}}
 	detail := m.View().Content
-	if !strings.Contains(detail, "Tags (2) · →/enter view") || strings.Contains(detail, "Owner=platform") {
+	if !viewLineContainsAll(detail, "Tags", "2", "VIEW") || strings.Contains(detail, "Owner=platform") {
 		t.Fatalf("detail tags category is wrong:\n%s", detail)
 	}
 
@@ -894,6 +898,22 @@ func TestTagsCategoryOpensAndFiltersLocally(t *testing.T) {
 	if currentModel.current().mode != routeDetail {
 		t.Fatalf("left did not return from Tags: %+v", currentModel.current())
 	}
+}
+
+func viewLineContainsAll(view string, values ...string) bool {
+	for _, line := range strings.Split(view, "\n") {
+		matched := true
+		for _, value := range values {
+			if !strings.Contains(line, value) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func TestModelBackCancelsDispatchBeforeStreamAcquisition(t *testing.T) {

@@ -33,6 +33,8 @@
 - [design-aws-tui-202608.md](design-aws-tui-202608.md): 현행 live browser에서 출발하는 관계 탐색·snapshot graph 확장 설계.
 - [spec-aws-tui-relations-202608.md](spec-aws-tui-relations-202608.md): 관계 Tier, evidence·coverage 계약, vertical-slice 완료 조건.
 - [B0-BASELINE.md](B0-BASELINE.md): B0 코드·문서 기준선과 2026-08-28 검증 증거.
+- [B1-RELATION-CONTRACT.md](B1-RELATION-CONTRACT.md): Tier 0 forward relation 의미·조건·증거 계약.
+- [B15-K9S-TABLE.md](B15-K9S-TABLE.md): k9s형 고밀도 table layout과 responsive 검증 기준선.
 
 ## 기존 작업과의 관계
 

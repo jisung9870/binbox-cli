@@ -6,12 +6,9 @@
 │ Search  type to filter loaded resources                                                                              │
 │                                                                                                                      │
 │ Resources (1) · rows 1-1                                                                                             │
-│ > web-api  running                                                                                                   │
+│   NAME                                TYPE                ID                  STATUS      ACCOUNT       REGION       │
+│ > web-api                             ec2.instance        web-api             running     -             -            │
 │                                                                                                                      │
-│ Preview · web-api                                                                                                    │
-│ Private IP         10.0.1.24                                                                                         │
-│ Long value         metadata-metadata-metadata-metadata-metadata-metadata-metadata-metadata-metadata-metadata-metadat │
-│                    a-metadata-                                                                                       │
 │                                                                                                                      │
 │ type or / filter  ↑↓ move  →/enter detail  ← back  : command  ^o/^i history                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

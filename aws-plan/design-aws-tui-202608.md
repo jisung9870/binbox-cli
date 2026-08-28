@@ -221,6 +221,13 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 - 완료 상태: 2026-08-28 검증 완료. 기존 EC2→EBS/SG/VPC/Subnet/IAM, Route 53→CloudFront→S3 관계에 canonical relation type·outgoing direction·condition을 적용했고 기존 evidence/confidence를 유지했다.
 - 완료 판정: forward extractor fixture가 같은 target의 서로 다른 CloudFront path edge를 분리하고, live TUI projection과 JSON query가 같은 relation 필드를 보존한다. 증거는 [B1 관계 계약 기준선](B1-RELATION-CONTRACT.md)에 기록한다.
 
+### B1.5 — k9s형 고밀도 테이블 UI
+
+- 완료 상태: 2026-08-28 검증 완료. Home, profile/context, coverage, resource list, Summary category/field, relation, Tags 화면을 uppercase column header와 full-row selection을 사용하는 고밀도 테이블로 통일했다.
+- responsive 계약: resource는 `NAME·TYPE·ID·STATUS·ACCOUNT·REGION`, relation은 `DIR·RELATION·TARGET·CONDITION·CONFIDENCE·SCOPE` 우선순위를 사용하고 terminal 폭에 따라 오른쪽 보조 column부터 숨긴다. 40열 relation에서도 condition은 유지한다.
+- Detail과 policy document는 구조화된 값을 읽는 scroll view이므로 한 행 table로 변경하지 않았다.
+- 완료 판정: 120x30, 80x24, 50x16, 40x12 golden과 관계/context/Tags column test, 전체 test·race·vet·stripped build가 통과했다. 증거는 [B1.5 테이블 기준선](B15-K9S-TABLE.md)에 기록한다.
+
 ### B2 — domain에서 compute target까지 live chain 완성
 
 - Route 53→ALB/NLB→listener/rule→target group→target을 existing live coordinator에 추가한다.

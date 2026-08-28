@@ -2,11 +2,11 @@
 │ AWS Browser · READ ONLY              │
 │ Profile dev  Account unresolved  Pr… │
 │ Services / tasks · LIST              │
-│ > EC2 Instances           Not loaded │
-│   Route 53 Hosted Zones   Not loade… │
-│   IAM Roles               Not loade… │
-│   VPC & Networking        Not loaded │
-│   Cross-profile search    Domain, r… │
-│ ↑↓ move · →/enter open · : command   │
+│   RESOURCE            STATUS         │
+│ > EC2 Instances       Not loaded     │
+│   Route 53 Hosted Z…  Not loaded · … │
+│   IAM Roles           Not loaded · … │
+│   VPC & Networking    Not loaded     │
+│   Cross-profile sea…  Domain, role … │
 │ c context · ctrl+g search · ? help   │
 ╰──────────────────────────────────────╯

@@ -159,6 +159,58 @@ func TestNarrowContextKeepsSearchRegionAndFooterVisible(t *testing.T) {
 	}
 }
 
+func TestK9sRelationTableAdaptsColumnsWithoutLosingConditions(t *testing.T) {
+	resource := ResourceProjection{Title: "distribution", Relations: []ProjectionRelation{{
+		Label: "report origin", Target: "s3.bucket:reports", Type: "routes-to", Direction: "outgoing",
+		Condition: "report/*", Kind: "inferred", Scope: GlobalRegion,
+	}}}
+	for _, test := range []struct {
+		name          string
+		width, height int
+		want          []string
+		hidden        []string
+	}{
+		{name: "120 columns", width: 120, height: 30, want: []string{"DIR", "RELATION", "TARGET", "CONDITION", "CONFIDENCE", "SCOPE"}},
+		{name: "80 columns", width: 80, height: 24, want: []string{"DIR", "RELATION", "TARGET", "CONDITION", "CONFIDENCE"}, hidden: []string{"SCOPE"}},
+		{name: "50 columns", width: 50, height: 16, want: []string{"DIR", "RELATION", "TARGET", "CONDITION"}, hidden: []string{"CONFIDENCE", "SCOPE"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := NewModel(context.Background(), Config{NoColor: true}, nil)
+			m.width, m.height = test.width, test.height
+			m.history = []routeFrame{{mode: routeRelations, label: "Origins", relationGroup: "origins", detail: resource}}
+			view := m.View().Content
+			if !viewLineContainsAll(view, test.want...) || !strings.Contains(view, "report/*") || !strings.Contains(view, "routes-to") {
+				t.Fatalf("relation columns or condition missing:\n%s", view)
+			}
+			for _, hidden := range test.hidden {
+				if viewLineContainsAll(view, hidden) {
+					t.Fatalf("secondary column %q should be hidden:\n%s", hidden, view)
+				}
+			}
+		})
+	}
+}
+
+func TestK9sContextAndTagsUseColumnHeaders(t *testing.T) {
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.width, m.height = 120, 30
+	m.history = []routeFrame{{mode: routeContext, contextChoices: []ContextChoice{{
+		Profile: "prod-readonly", Region: "ap-northeast-2", Group: "udg", Regions: []string{"ap-northeast-2", "us-east-1"},
+	}}, contextRegion: "ap-northeast-2"}}
+	contextView := m.View().Content
+	if !viewLineContainsAll(contextView, "PROFILE", "REGION", "GROUP", "SCOPE") ||
+		!viewLineContainsAll(contextView, "prod-readonly", "ap-northeast-2", "udg", "2 regions") {
+		t.Fatalf("context table is incomplete:\n%s", contextView)
+	}
+
+	m.width, m.height = 50, 16
+	m.history = []routeFrame{{mode: routeTags, detail: ResourceProjection{Title: "main-vpc", Tags: []ProjectionTag{{Key: "Owner", Value: "platform"}}}}}
+	tagsView := m.View().Content
+	if !viewLineContainsAll(tagsView, "KEY", "VALUE") || !viewLineContainsAll(tagsView, "Owner", "platform") {
+		t.Fatalf("tags table is incomplete:\n%s", tagsView)
+	}
+}
+
 func TestStartupContextWithManyProfilesKeepsFooterVisible(t *testing.T) {
 	choices := make([]ContextChoice, 14)
 	for index := range choices {
@@ -201,10 +253,13 @@ func TestSearchCoverageAndSelectedResourceProvenanceAreVisible(t *testing.T) {
 	m.width, m.height = 120, 30
 	m.history = []routeFrame{{mode: routeList, label: "Search results", status: searchCoverageStatus(coverage, 1, LoadReady), coverage: coverage, projection: IntentProjection{Resources: []ResourceProjection{resource}}}}
 	list := m.View().Content
-	for _, want := range []string{"Partial coverage", "Profile discovery · timed_out", "current audit", "locked", "forbidden"} {
+	for _, want := range []string{"Partial coverage", "Profile discovery · timed_out", "PROFILE", "locked", "forbidden"} {
 		if !strings.Contains(list, want) {
 			t.Fatalf("search list missing %q:\n%s", want, list)
 		}
+	}
+	if !viewLineContainsAll(list, "audit", "123456789012", "matched", "current", "1") {
+		t.Fatalf("current profile coverage row is incomplete:\n%s", list)
 	}
 	m.history = []routeFrame{{mode: routeFields, context: &audit, detail: resource}}
 	detail := m.View().Content

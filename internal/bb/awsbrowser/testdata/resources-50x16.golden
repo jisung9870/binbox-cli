@@ -6,8 +6,8 @@
 │ Search  type to filter loaded resources        │
 │                                                │
 │ Resources (1) · rows 1-1                       │
-│ > web-api  running                             │
-│                                                │
+│   NAME          TYPE            ID             │
+│ > web-api       ec2.instance    web-api        │
 │                                                │
 │                                                │
 │ type or / filter  ↑↓ move  →/enter detail  ← … │

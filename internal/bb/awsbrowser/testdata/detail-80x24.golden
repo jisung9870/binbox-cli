@@ -5,15 +5,15 @@
 │ running                                                                      │
 │                                                                              │
 │ Categories (3)                                                               │
-│ > Security groups (1) · →/enter open                                         │
-│   Detail · →/enter view                                                      │
-│   Tags (0) · →/enter view                                                    │
+│   CATEGORY                                                    COUNT  ACTION  │
+│ > Security groups                                             1      OPEN    │
+│   Detail                                                      2      VIEW    │
+│   Tags                                                        0      VIEW    │
 │                                                                              │
 │ Summary                                                                      │
-│ Private IP         10.0.1.24                                                 │
-│ Long value         metadata-metadata-metadata-metadata-metadata-metadata-met │
-│                    adata-metadata-metadata-metadata-metadata-metadata-       │
-│                                                                              │
+│   FIELD               VALUE                                                  │
+│   Private IP          10.0.1.24                                              │
+│   Long value          metadata-metadata-metadata-metadata-metadata-metadata… │
 │                                                                              │
 │                                                                              │
 │                                                                              │

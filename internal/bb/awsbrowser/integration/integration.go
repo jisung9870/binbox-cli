@@ -117,6 +117,7 @@ type Core struct {
 	registry    *awsbrowser.ContextRegistry
 	coordinator *awsbrowser.QueryCoordinator
 	contexts    contextResolver
+	profiles    awsbrowser.ProfileLister
 }
 
 // NewProduction constructs the production core without resolving a context.
@@ -132,12 +133,16 @@ func NewProduction(options ProductionOptions) (*Core, error) {
 	if err != nil {
 		return nil, ErrInvalidOptions
 	}
-	return NewWithRuntimeFactory(factory, env, options.Clock, options.Concurrency)
+	return newCore(factory, env, options.Clock, options.Concurrency, awsbrowser.NewExecCLI(options.AWSCLIPath))
 }
 
 // NewWithRuntimeFactory is the dependency-injection seam for controlled
 // runtimes. RuntimeFactory exposes only verified identity and narrowed reads.
 func NewWithRuntimeFactory(factory awsbrowser.RuntimeFactory, env []string, clock func() time.Time, concurrency int) (*Core, error) {
+	return newCore(factory, env, clock, concurrency, nil)
+}
+
+func newCore(factory awsbrowser.RuntimeFactory, env []string, clock func() time.Time, concurrency int, profiles awsbrowser.ProfileLister) (*Core, error) {
 	if nilInterface(factory) || clock == nil || concurrency < 1 {
 		return nil, ErrInvalidOptions
 	}
@@ -147,7 +152,36 @@ func NewWithRuntimeFactory(factory awsbrowser.RuntimeFactory, env []string, cloc
 	if err != nil {
 		return nil, ErrInvalidOptions
 	}
-	return &Core{registry: registry, coordinator: coordinator, contexts: newContextResolver(env)}, nil
+	return &Core{registry: registry, coordinator: coordinator, contexts: newContextResolver(env), profiles: profiles}, nil
+}
+
+// ListContexts discovers configured profile names and their non-secret region
+// defaults without resolving credentials, accounts, or principals.
+func (core *Core) ListContexts(ctx context.Context) ([]awsbrowser.ContextChoice, error) {
+	if core == nil || ctx == nil || nilInterface(core.profiles) {
+		return nil, ErrInvalidRequest
+	}
+	profiles, err := core.profiles.ListProfiles(ctx, core.contexts.env)
+	if err != nil {
+		return nil, err
+	}
+	choices := make([]awsbrowser.ContextChoice, 0, len(profiles))
+	seen := make(map[string]bool, len(profiles))
+	for _, profile := range profiles {
+		if seen[profile] || awsbrowser.ValidateContextSelection(profile, "") != nil {
+			continue
+		}
+		seen[profile] = true
+		region, err := core.contexts.sharedConfigRegion(ctx, profile)
+		if err != nil {
+			return nil, err
+		}
+		if region != "" && awsbrowser.ValidateContextSelection("", region) != nil {
+			region = ""
+		}
+		choices = append(choices, awsbrowser.ContextChoice{Profile: profile, Region: region})
+	}
+	return choices, nil
 }
 
 // Resolve explicitly resolves and identity-verifies one context. Like Query,
@@ -302,6 +336,18 @@ func (multiplexer *runtimeMultiplexer) Execute(ctx context.Context, key awsbrows
 			break
 		}
 		executor, err = providers.NewRoute53(client, multiplexer.clock)
+	case awsbrowser.ProviderCloudFront:
+		client := runtime.CloudFront()
+		if nilInterface(client) {
+			break
+		}
+		executor, err = providers.NewCloudFront(client, multiplexer.clock)
+	case awsbrowser.ProviderS3:
+		client := runtime.S3()
+		if nilInterface(client) {
+			break
+		}
+		executor, err = providers.NewS3(client, multiplexer.clock)
 	default:
 		return awsbrowser.NewProviderError(awsbrowser.ProviderUnsupported, key.Provider, key.Operation, "InvalidProvider", "")
 	}
@@ -375,7 +421,11 @@ func bridgeSubscription(ctx context.Context, key awsbrowser.QueryKey, raw *awsbr
 
 func immediateFailure(failure Failure) *Subscription {
 	updates := make(chan Update, 1)
-	updates <- Update{Failure: &failure}
+	updates <- Update{
+		Snapshot: awsbrowser.QuerySnapshot{State: failure.State},
+		Coverage: Coverage{Completed: true},
+		Failure:  &failure,
+	}
 	close(updates)
 	return &Subscription{updates: updates, stop: func() {}}
 }

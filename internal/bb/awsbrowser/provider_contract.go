@@ -11,9 +11,11 @@ var ErrInvalidProviderOperation = errors.New("invalid provider operation")
 // shared by the EC2, IAM, and Route 53 lanes. Operation values intentionally
 // match AWS SDK method names.
 const (
-	ProviderEC2     = "ec2"
-	ProviderIAM     = "iam"
-	ProviderRoute53 = "route53"
+	ProviderEC2        = "ec2"
+	ProviderIAM        = "iam"
+	ProviderRoute53    = "route53"
+	ProviderCloudFront = "cloudfront"
+	ProviderS3         = "s3"
 
 	OperationDescribeInstances          = "DescribeInstances"
 	OperationDescribeVolumes            = "DescribeVolumes"
@@ -35,6 +37,9 @@ const (
 	OperationListHostedZones        = "ListHostedZones"
 	OperationListHostedZonesByName  = "ListHostedZonesByName"
 	OperationListResourceRecordSets = "ListResourceRecordSets"
+
+	OperationListDistributions = "ListDistributions"
+	OperationGetBucketLocation = "GetBucketLocation"
 )
 
 var providerOperations = map[string]map[string]struct{}{
@@ -51,6 +56,8 @@ var providerOperations = map[string]map[string]struct{}{
 	ProviderRoute53: operationSet(
 		OperationListHostedZones, OperationListHostedZonesByName, OperationListResourceRecordSets,
 	),
+	ProviderCloudFront: operationSet(OperationListDistributions),
+	ProviderS3:         operationSet(OperationGetBucketLocation),
 }
 
 // ValidateProviderOperation rejects unknown and cross-service combinations.

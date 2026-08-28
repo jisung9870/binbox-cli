@@ -8,9 +8,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -25,6 +27,8 @@ type sdkRuntime struct {
 	ec2              rawEC2API
 	iam              rawIAMAPI
 	route53          rawRoute53API
+	cloudfront       rawCloudFrontAPI
+	s3               rawS3API
 }
 
 func newSDKRuntime(ctx context.Context, region string, provider *CredentialProvider, load configLoader) (*sdkRuntime, error) {
@@ -80,6 +84,18 @@ func newSDKRuntime(ctx context.Context, region string, provider *CredentialProvi
 		route53: route53.NewFromConfig(cfg, func(options *route53.Options) {
 			options.BaseEndpoint = nil
 			options.EndpointResolverV2 = route53.NewDefaultEndpointResolverV2()
+			options.RetryMaxAttempts = 0
+			options.Retryer = newStandardRetryer()
+		}),
+		cloudfront: cloudfront.NewFromConfig(cfg, func(options *cloudfront.Options) {
+			options.BaseEndpoint = nil
+			options.EndpointResolverV2 = cloudfront.NewDefaultEndpointResolverV2()
+			options.RetryMaxAttempts = 0
+			options.Retryer = newStandardRetryer()
+		}),
+		s3: s3.NewFromConfig(cfg, func(options *s3.Options) {
+			options.BaseEndpoint = nil
+			options.EndpointResolverV2 = s3.NewDefaultEndpointResolverV2()
 			options.RetryMaxAttempts = 0
 			options.Retryer = newStandardRetryer()
 		}),

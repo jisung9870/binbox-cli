@@ -30,10 +30,84 @@ func TestPlainStartupAndQuitAreZeroCall(t *testing.T) {
 	if len(dispatcher.intents) != 0 {
 		t.Fatalf("startup intents=%+v", dispatcher.intents)
 	}
-	for _, want := range []string{"AWS Browser · READ ONLY", "1  EC2 Instances", "2  Route 53", "3  IAM Roles", "4  Cross-profile search", "open <n>|back|refresh|quit"} {
+	for _, want := range []string{"AWS Browser · READ ONLY", "Account unresolved", "1  EC2 Instances", "2  Route 53", "3  IAM Roles", "4  VPC & Networking", "5  Cross-profile search", "open <n>|context|back|refresh|quit"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("plain missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestPlainSelectsVerifiedContextBeforeOpeningResource(t *testing.T) {
+	verified := testStoreContext(t, "prod", "999999999999", "ap-southeast-1", 2)
+	stream := newTestIntentStream()
+	stream.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadEmpty, FetchedAt: time.Now()}}, Done: true}
+	dispatcher := &contextRecordingDispatcher{
+		recordingDispatcher: recordingDispatcher{streams: []*testIntentStream{stream}},
+		choices: []ContextChoice{
+			{Profile: "dev", Region: "us-east-1"},
+			{Profile: "prod", Region: "ap-northeast-2"},
+		},
+		resolution: ContextResolution{Context: &verified},
+	}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(
+		context.Background(),
+		Terminal{In: strings.NewReader("context\nselect 2 ap-southeast-1\nopen 1\nquit\n"), Err: &out},
+		Config{Profile: "dev", Region: "us-east-1"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Select AWS context", "Verified account 999999999999", "Profile prod", "Account 999999999999"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("plain context missing %q:\n%s", want, out.String())
+		}
+	}
+	if dispatcher.resolvedProfile != "prod" || dispatcher.resolvedRegion != "ap-southeast-1" ||
+		len(dispatcher.intents) != 1 || dispatcher.intents[0].Profile != "prod" || dispatcher.intents[0].Region != "ap-southeast-1" {
+		t.Fatalf("resolved=%s/%s intents=%+v", dispatcher.resolvedProfile, dispatcher.resolvedRegion, dispatcher.intents)
+	}
+}
+
+func TestPlainSelectsConfiguredAllRegionScope(t *testing.T) {
+	verified := testStoreContext(t, "lg-udg-ops", "123456789012", "ap-northeast-2", 1)
+	stream := newTestIntentStream()
+	stream.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadEmpty, FetchedAt: time.Now()}}, Done: true}
+	dispatcher := &contextRecordingDispatcher{
+		recordingDispatcher: recordingDispatcher{streams: []*testIntentStream{stream}},
+		choices: []ContextChoice{{
+			Profile: "lg-udg-ops", Region: "ap-northeast-2", Group: "UDG",
+			Regions: []string{"ap-northeast-2", "ap-southeast-1", "us-east-1", "eu-central-1"},
+		}},
+		resolution: ContextResolution{Context: &verified},
+	}
+	var out bytes.Buffer
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{
+		In: strings.NewReader("context\nselect 1 all\nopen 1\nquit\n"), Err: &out,
+	}, Config{Profile: "dev", Region: "us-east-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRegions := "ap-northeast-2,ap-southeast-1,us-east-1,eu-central-1"
+	if !strings.Contains(out.String(), "UDG · 4 regions") || !strings.Contains(out.String(), "scope all") ||
+		len(dispatcher.intents) != 1 || dispatcher.intents[0].Regions != wantRegions {
+		t.Fatalf("output=%q intents=%+v", out.String(), dispatcher.intents)
+	}
+}
+
+func TestPlainStartsWithContextSelectionWhenProfileIsOmitted(t *testing.T) {
+	verified := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	dispatcher := &contextRecordingDispatcher{
+		choices:    []ContextChoice{{Profile: "dev", Region: "us-east-1"}},
+		resolution: ContextResolution{Context: &verified},
+	}
+	var out strings.Builder
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{
+		In: strings.NewReader("select 1\nquit\n"), Err: &out,
+	}, Config{})
+	if err != nil || dispatcher.listCalls != 1 || dispatcher.resolvedProfile != "dev" ||
+		!strings.Contains(out.String(), "Select AWS context") || !strings.Contains(out.String(), "Profile dev") {
+		t.Fatalf("err=%v calls=%d profile=%q output=%q", err, dispatcher.listCalls, dispatcher.resolvedProfile, out.String())
 	}
 }
 
@@ -136,7 +210,7 @@ func TestPlainSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) 
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
 	var out bytes.Buffer
 	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{
-		In: strings.NewReader("open 4\nsearch role all reader\nrefresh\nquit\n"), Err: &out,
+		In: strings.NewReader("open 5\nsearch role all reader\nrefresh\nquit\n"), Err: &out,
 	}, Config{Profile: "dev", Region: "us-east-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +244,7 @@ func TestPlainSearchUsesIntentStreamAndSanitizesFailure(t *testing.T) {
 	stream.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadForbidden}, Failure: &ProviderFailure{State: LoadForbidden, Service: "iam\x1b[31m", Operation: "GetRole"}}, Done: true}
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nsearch domain all api.example.com\nquit\n"), Err: &out}, Config{Profile: "dev"})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 5\nsearch domain all api.example.com\nquit\n"), Err: &out}, Config{Profile: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +256,7 @@ func TestPlainSearchUsesIntentStreamAndSanitizesFailure(t *testing.T) {
 func TestPlainSearchOpenAndEditingAreZeroCallUntilSubmit(t *testing.T) {
 	dispatcher := new(recordingDispatcher)
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nback\nquit\n"), Err: &out}, Config{})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 5\nback\nquit\n"), Err: &out}, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +281,7 @@ func TestPlainSearchRelationUsesSelectedResourceContext(t *testing.T) {
 	relation.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadEmpty, FetchedAt: time.Now()}}, Done: true}
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{search, relation}}
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nsearch domain all api.example.com\nopen 2\nopen 1\nquit\n"), Err: &out}, Config{Profile: "dev", Region: "us-east-1"})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 5\nsearch domain all api.example.com\nopen 2\nopen 1\nquit\n"), Err: &out}, Config{Profile: "dev", Region: "us-east-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +311,7 @@ func TestPlainSearchRendersCoverageAndSelectedResourceProvenance(t *testing.T) {
 	}
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 4\nsearch domain all api.example.com\nopen 1\nback\nquit\n"), Err: &out}, Config{})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 5\nsearch domain all api.example.com\nopen 1\nback\nquit\n"), Err: &out}, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

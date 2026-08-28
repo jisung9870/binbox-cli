@@ -10,6 +10,8 @@
 
 관련 문서   [설계](DESIGN.md) · [동작 시나리오](SCENARIOS.md) · [아키텍처](ARCHITECTURE.md) · [ADR-001](ADR-001-HYBRID-AWS-ACCESS.md) · [구현 작업 방식](IMPLEMENTATION-WORKFLOW.md) · [검토 기록](REVIEW.md) · [인덱스](README.md)
 
+이 문서의 persistent DB 비목표는 live browser 기본 경로에 적용한다. 멀티계정 reverse/path/diff를 위한 optional snapshot graph는 [관계 탐색 확장 설계](design-aws-tui-202608.md)가 별도로 소유한다.
+
 `bb aws browse`는 AWS Console의 서비스별 탐색 방식을 터미널에 맞게 줄인 전용 inspector다. 첫 화면은 네트워크 호출 없이 서비스 카탈로그를 즉시 보여주고, 사용자가 연 카테고리와 관계만 lazy load한다. 계정을 모르는 도메인·role 검색은 검색 확정 시 여러 profile을 자동으로 병렬 조회해 콘솔과 계정을 다시 여는 과정을 없앤다.
 
 ## 해결할 문제는 “목록 조회”가 아니라 탐색 문맥의 손실이다

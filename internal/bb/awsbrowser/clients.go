@@ -3,9 +3,11 @@ package awsbrowser
 import (
 	"context"
 
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -49,6 +51,14 @@ type Route53API interface {
 	ListResourceRecordSets(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error)
 }
 
+type CloudFrontAPI interface {
+	ListDistributions(context.Context, *cloudfront.ListDistributionsInput) (*cloudfront.ListDistributionsOutput, error)
+}
+
+type S3API interface {
+	GetBucketLocation(context.Context, *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error)
+}
+
 // The raw SDK call contracts stay private so callers cannot supply operation
 // options or assert a RuntimeContext client back to a concrete SDK client.
 type rawSTSAPI interface {
@@ -82,9 +92,19 @@ type rawRoute53API interface {
 	ListResourceRecordSets(context.Context, *route53.ListResourceRecordSetsInput, ...func(*route53.Options)) (*route53.ListResourceRecordSetsOutput, error)
 }
 
+type rawCloudFrontAPI interface {
+	ListDistributions(context.Context, *cloudfront.ListDistributionsInput, ...func(*cloudfront.Options)) (*cloudfront.ListDistributionsOutput, error)
+}
+
+type rawS3API interface {
+	GetBucketLocation(context.Context, *s3.GetBucketLocationInput, ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
+}
+
 var (
-	_ rawSTSAPI     = (*sts.Client)(nil)
-	_ rawEC2API     = (*ec2.Client)(nil)
-	_ rawIAMAPI     = (*iam.Client)(nil)
-	_ rawRoute53API = (*route53.Client)(nil)
+	_ rawSTSAPI        = (*sts.Client)(nil)
+	_ rawEC2API        = (*ec2.Client)(nil)
+	_ rawIAMAPI        = (*iam.Client)(nil)
+	_ rawRoute53API    = (*route53.Client)(nil)
+	_ rawCloudFrontAPI = (*cloudfront.Client)(nil)
+	_ rawS3API         = (*s3.Client)(nil)
 )

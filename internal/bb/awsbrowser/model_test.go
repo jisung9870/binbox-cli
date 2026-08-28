@@ -3,6 +3,7 @@ package awsbrowser
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,27 @@ type recordingDispatcher struct {
 	intents []Intent
 	streams []*testIntentStream
 	err     error
+}
+
+type contextRecordingDispatcher struct {
+	recordingDispatcher
+	choices         []ContextChoice
+	resolution      ContextResolution
+	listErr         error
+	resolveErr      error
+	listCalls       int
+	resolvedProfile string
+	resolvedRegion  string
+}
+
+func (dispatcher *contextRecordingDispatcher) ListContexts(context.Context) ([]ContextChoice, error) {
+	dispatcher.listCalls++
+	return append([]ContextChoice(nil), dispatcher.choices...), dispatcher.listErr
+}
+
+func (dispatcher *contextRecordingDispatcher) ResolveContext(_ context.Context, profile, region string) (ContextResolution, error) {
+	dispatcher.resolvedProfile, dispatcher.resolvedRegion = profile, region
+	return dispatcher.resolution, dispatcher.resolveErr
 }
 
 func (dispatcher *recordingDispatcher) Dispatch(_ context.Context, intent Intent) (IntentStream, error) {
@@ -58,8 +80,8 @@ func key(code rune) tea.KeyPressMsg  { return tea.KeyPressMsg{Code: code} }
 func ctrl(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code, Mod: tea.ModCtrl} }
 
 func TestModelStartupAndLocalNavigationAreZeroCall(t *testing.T) {
-	dispatcher := new(recordingDispatcher)
-	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2"}, dispatcher)
+	dispatcher := new(contextRecordingDispatcher)
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher)
 	if cmd := m.Init(); cmd != nil {
 		t.Fatalf("Init command=%v", cmd)
 	}
@@ -72,15 +94,241 @@ func TestModelStartupAndLocalNavigationAreZeroCall(t *testing.T) {
 	for _, msg := range []tea.Msg{tea.WindowSizeMsg{Width: 120, Height: 30}, key('j'), key('k'), key(tea.KeyPgDown), key(tea.KeyPgUp), key('?'), key('?')} {
 		model, _ = model.Update(msg)
 	}
-	if len(dispatcher.intents) != 0 {
-		t.Fatalf("local navigation dispatched %+v", dispatcher.intents)
+	if len(dispatcher.intents) != 0 || dispatcher.listCalls != 0 {
+		t.Fatalf("local navigation dispatched intents=%+v context_lists=%d", dispatcher.intents, dispatcher.listCalls)
+	}
+}
+
+func TestModelK9sCommandJumpsToResourceAndRejectsUnknownAlias(t *testing.T) {
+	dispatcher := new(recordingDispatcher)
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher)
+	model := tea.Model(m)
+	for _, character := range ":ec2" {
+		model, _ = model.Update(key(character))
+	}
+	if !strings.Contains(model.View().Content, ":ec2") {
+		t.Fatalf("command line is not visible:\n%s", model.View().Content)
+	}
+	model, command := model.Update(key(tea.KeyEnter))
+	commandModel := model.(Model)
+	current := commandModel.current()
+	if command == nil || current == nil || current.target != "ec2-instances" {
+		t.Fatalf("ec2 alias did not open catalog: command=%v frame=%+v", command != nil, current)
+	}
+	_ = command()
+	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Target != "ec2-instances" {
+		t.Fatalf("ec2 alias intent=%+v", dispatcher.intents)
+	}
+
+	unknown := NewModel(context.Background(), Config{NoColor: true}, nil)
+	unknownModel := tea.Model(unknown)
+	for _, character := range ":wat" {
+		unknownModel, _ = unknownModel.Update(key(character))
+	}
+	unknownModel, _ = unknownModel.Update(key(tea.KeyEnter))
+	if !strings.Contains(unknownModel.View().Content, "Unknown command: wat") {
+		t.Fatalf("unknown command feedback is missing:\n%s", unknownModel.View().Content)
+	}
+}
+
+func TestModelK9sFilterAndBrowserHistory(t *testing.T) {
+	resource := resourceProjection("web-api", "running")
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.history = []routeFrame{
+		{mode: routeList, label: "EC2 Instances", projection: IntentProjection{Resources: []ResourceProjection{resource}}},
+		{mode: routeDetail, label: "web-api", detail: resource},
+	}
+
+	model, _ := m.Update(ctrl('o'))
+	back := model.(Model)
+	if back.current() == nil || back.current().mode != routeList || len(back.forwardHistory) != 1 {
+		t.Fatalf("ctrl+o did not move back: frame=%+v forward=%d", back.current(), len(back.forwardHistory))
+	}
+	model, _ = back.Update(ctrl('i'))
+	forward := model.(Model)
+	if forward.current() == nil || forward.current().mode != routeDetail || len(forward.forwardHistory) != 0 {
+		t.Fatalf("ctrl+i did not move forward: frame=%+v forward=%d", forward.current(), len(forward.forwardHistory))
+	}
+
+	model, _ = back.Update(key('/'))
+	filtered := model.(Model)
+	if !filtered.current().filterActive || !strings.Contains(filtered.View().Content, "/  type to filter loaded resources") {
+		t.Fatalf("slash did not focus local filter:\n%s", filtered.View().Content)
+	}
+	model, _ = filtered.Update(key(tea.KeyEscape))
+	cleared := model.(Model)
+	if cleared.current().filterActive {
+		t.Fatalf("escape did not leave explicit filter mode: %+v", cleared.current())
+	}
+}
+
+func TestModelStartsWithProfileSelectorWhenProfileIsOmitted(t *testing.T) {
+	dispatcher := &contextRecordingDispatcher{choices: []ContextChoice{
+		{Profile: "dev", Region: "us-east-1"},
+		{Profile: "prod", Region: "ap-northeast-2"},
+	}}
+	m := NewModel(context.Background(), Config{Region: "us-west-2", NoColor: true}, dispatcher)
+	if frame := m.current(); frame == nil || !frame.contextStartup || frame.mode != routeContext || !strings.Contains(m.View().Content, "Loading configured profiles") {
+		t.Fatalf("profile-less browse did not start at context selector:\n%s", m.View().Content)
+	}
+	command := m.Init()
+	if command == nil {
+		t.Fatal("startup profile discovery command is nil")
+	}
+	model, _ := m.Update(command())
+	loaded := model.(Model)
+	frame := loaded.current()
+	if dispatcher.listCalls != 1 || frame == nil || len(frame.contextChoices) != 2 || frame.contextRegion != "us-west-2" {
+		t.Fatalf("startup profiles were not loaded with explicit region: calls=%d frame=%+v", dispatcher.listCalls, frame)
+	}
+	model, _ = loaded.Update(key(tea.KeyEscape))
+	if !strings.Contains(model.View().Content, "Profile ambient") || strings.Contains(model.View().Content, "Select AWS context") {
+		t.Fatalf("startup escape did not continue to ambient Home:\n%s", model.View().Content)
+	}
+}
+
+func TestModelSelectsAndVerifiesContextBeforeApplyingIt(t *testing.T) {
+	verified := testStoreContext(t, "prod", "999999999999", "us-west-2", 2)
+	dispatcher := &contextRecordingDispatcher{
+		choices: []ContextChoice{
+			{Profile: "dev", Region: "us-east-1"},
+			{Profile: "prod", Region: "ap-northeast-2"},
+		},
+		resolution: ContextResolution{Context: &verified},
+	}
+	model := tea.Model(NewModel(context.Background(), Config{Profile: "dev", Region: "us-east-1", NoColor: true}, dispatcher))
+
+	model, _ = runModelCommand(t, model, key('c'))
+	if dispatcher.listCalls != 1 || !strings.Contains(model.View().Content, "Select AWS context") ||
+		!strings.Contains(model.View().Content, "Account follows verified profile credentials") {
+		t.Fatalf("context selector did not load choices:\n%s", model.View().Content)
+	}
+	model, _ = model.Update(key(tea.KeyDown))
+	if !strings.Contains(model.View().Content, "prod") || !strings.Contains(model.View().Content, "ap-northeast-2") {
+		t.Fatalf("context choice did not update:\n%s", model.View().Content)
+	}
+	model, _ = model.Update(key(tea.KeyTab))
+	model, _ = model.Update(ctrl('u'))
+	for _, character := range "us-west-2" {
+		model, _ = model.Update(key(character))
+	}
+	model, _ = runModelCommand(t, model, key(tea.KeyEnter))
+	if dispatcher.resolvedProfile != "prod" || dispatcher.resolvedRegion != "us-west-2" ||
+		!strings.Contains(model.View().Content, "999999999999") || !strings.Contains(model.View().Content, "enter apply") {
+		t.Fatalf("context was not verified before apply: profile=%q region=%q\n%s", dispatcher.resolvedProfile, dispatcher.resolvedRegion, model.View().Content)
+	}
+	model, _ = model.Update(key(tea.KeyEnter))
+	if !strings.Contains(model.View().Content, "Profile prod") || !strings.Contains(model.View().Content, "Account 999999999999") {
+		t.Fatalf("verified context was not applied:\n%s", model.View().Content)
+	}
+
+	_, command := model.Update(key(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("resource open did not dispatch after context apply")
+	}
+	_ = command()
+	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Profile != "prod" || dispatcher.intents[0].Region != "us-west-2" {
+		t.Fatalf("resource intent=%+v", dispatcher.intents)
+	}
+}
+
+func TestModelAppliesConfiguredAllRegionScopeAndPinsResourceRegion(t *testing.T) {
+	verified := testStoreContext(t, "lg-udg-ops", "123456789012", "ap-northeast-2", 1)
+	dispatcher := &contextRecordingDispatcher{
+		choices: []ContextChoice{{
+			Profile: "lg-udg-ops", Region: "ap-northeast-2", Group: "UDG",
+			Regions: []string{"ap-northeast-2", "ap-southeast-1", "us-east-1", "eu-central-1"},
+		}},
+		resolution: ContextResolution{Context: &verified},
+	}
+	model := tea.Model(NewModel(context.Background(), Config{Profile: "lg-udg-ops", Region: "ap-northeast-2", NoColor: true}, dispatcher))
+	model, _ = runModelCommand(t, model, key('c'))
+	model, _ = model.Update(key(tea.KeyTab))
+	model, _ = model.Update(key(tea.KeyTab))
+	model, _ = model.Update(key(tea.KeyRight))
+	if !strings.Contains(model.View().Content, "All UDG regions (4)") {
+		t.Fatalf("all-region scope not rendered:\n%s", model.View().Content)
+	}
+	model, _ = runModelCommand(t, model, key(tea.KeyEnter))
+	model, _ = model.Update(key(tea.KeyEnter))
+	model, command := model.Update(key(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("EC2 open command is nil")
+	}
+	_ = command()
+	wantRegions := "ap-northeast-2,ap-southeast-1,us-east-1,eu-central-1"
+	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Regions != wantRegions {
+		t.Fatalf("catalog intent=%+v", dispatcher.intents)
+	}
+
+	resourceContext := testStoreContext(t, "lg-udg-ops", "123456789012", "eu-central-1", 1)
+	pinned := NewModel(context.Background(), Config{Profile: "lg-udg-ops", Region: "ap-northeast-2", Regions: wantRegions}, dispatcher)
+	pinned.history = []routeFrame{{
+		mode: routeList, label: "EC2 Instances", projection: IntentProjection{Resources: []ResourceProjection{{
+			Target: "iam.role:reader", Title: "reader", Context: &resourceContext,
+		}}},
+	}}
+	_, command = pinned.Update(key(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("resource open command is nil")
+	}
+	_ = command()
+	last := dispatcher.intents[len(dispatcher.intents)-1]
+	if last.Region != "eu-central-1" || last.Regions != "" {
+		t.Fatalf("resource intent was not pinned: %+v", last)
+	}
+}
+
+func TestModelContextFailurePreservesPreviousContext(t *testing.T) {
+	dispatcher := &contextRecordingDispatcher{
+		choices: []ContextChoice{{Profile: "prod", Region: "ap-northeast-2"}},
+		resolution: ContextResolution{Failure: &ProviderFailure{
+			State: LoadAuthRequired, Kind: ProviderAuthRequired,
+		}},
+	}
+	model := tea.Model(NewModel(context.Background(), Config{Profile: "dev", Region: "us-east-1"}, dispatcher))
+	model, _ = runModelCommand(t, model, key('c'))
+	model, _ = runModelCommand(t, model, key(tea.KeyEnter))
+	if !strings.Contains(model.View().Content, "login required") {
+		t.Fatalf("context failure not rendered:\n%s", model.View().Content)
+	}
+	model, _ = model.Update(key(tea.KeyEscape))
+	if !strings.Contains(model.View().Content, "Profile dev") || strings.Contains(model.View().Content, "Profile prod") {
+		t.Fatalf("failed context replaced previous selection:\n%s", model.View().Content)
+	}
+}
+
+func TestModelFiltersContextProfilesLocallyAndEscapeClearsFirst(t *testing.T) {
+	dispatcher := &contextRecordingDispatcher{choices: []ContextChoice{
+		{Profile: "dev", Region: "us-east-1"},
+		{Profile: "prod-readonly", Region: "ap-northeast-2"},
+	}}
+	model := tea.Model(NewModel(context.Background(), Config{Profile: "dev", Region: "us-east-1", NoColor: true}, dispatcher))
+	model, _ = runModelCommand(t, model, key('c'))
+	for _, character := range "prod" {
+		model, _ = model.Update(key(character))
+	}
+	view := model.View().Content
+	if !strings.Contains(view, "Search  prod") || !strings.Contains(view, "prod-readonly") || strings.Contains(view, "> dev") {
+		t.Fatalf("profile filter did not narrow locally:\n%s", view)
+	}
+	if dispatcher.resolvedProfile != "" || len(dispatcher.intents) != 0 {
+		t.Fatalf("profile filtering performed AWS work: resolve=%q intents=%+v", dispatcher.resolvedProfile, dispatcher.intents)
+	}
+	model, _ = model.Update(key(tea.KeyEscape))
+	if !strings.Contains(model.View().Content, "Select AWS context") || !strings.Contains(model.View().Content, "Search  type to filter profiles") {
+		t.Fatalf("first escape did not clear profile query:\n%s", model.View().Content)
+	}
+	model, _ = model.Update(key(tea.KeyEscape))
+	if strings.Contains(model.View().Content, "Select AWS context") {
+		t.Fatalf("second escape did not leave context selector:\n%s", model.View().Content)
 	}
 }
 
 func TestModelProgressiveListDetailRelationAndHistory(t *testing.T) {
 	first, relation := newTestIntentStream(), newTestIntentStream()
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{first, relation}}
-	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2"}, dispatcher)
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher)
 
 	model, wait := runModelCommand(t, m, key(tea.KeyEnter))
 	resource := resourceProjection("web-api", "running")
@@ -95,22 +343,554 @@ func TestModelProgressiveListDetailRelationAndHistory(t *testing.T) {
 		t.Fatalf("terminal stream was not released: cancels=%d", first.cancels)
 	}
 	model, _ = model.Update(key(tea.KeyEnter))
-	for _, want := range []string{"Private IP", "10.0.1.24", "sg-web", "enter open"} {
+	for _, want := range []string{"Private IP", "10.0.1.24", "Security groups (1)", "enter open"} {
 		if !strings.Contains(model.View().Content, want) {
 			t.Fatalf("detail missing %q:\n%s", want, model.View().Content)
 		}
+	}
+	model, command := model.Update(key(tea.KeyEnter))
+	if command != nil || !strings.Contains(model.View().Content, "sg-web · enter open") {
+		t.Fatalf("relation category did not open locally: command=%v view=%s", command != nil, model.View().Content)
 	}
 	model, wait = runModelCommand(t, model, key(tea.KeyEnter))
 	if got := dispatcher.intents[len(dispatcher.intents)-1].Target; got != "ec2.security-group:sg-web" {
 		t.Fatalf("relation target=%q", got)
 	}
 	model, _ = model.Update(key(tea.KeyEscape))
-	if relation.cancels != 1 || !strings.Contains(model.View().Content, "web-api") || !strings.Contains(model.View().Content, "Private IP") {
-		t.Fatalf("relation back did not cancel/restore detail: cancels=%d view=%s", relation.cancels, model.View().Content)
+	if relation.cancels != 1 || !strings.Contains(model.View().Content, "Security groups (1)") || !strings.Contains(model.View().Content, "sg-web") {
+		t.Fatalf("relation back did not cancel/restore category: cancels=%d view=%s", relation.cancels, model.View().Content)
+	}
+	model, _ = model.Update(key(tea.KeyEscape))
+	if !strings.Contains(model.View().Content, "web-api") || !strings.Contains(model.View().Content, "Private IP") {
+		t.Fatalf("category back did not restore detail: %s", model.View().Content)
 	}
 	model, _ = model.Update(key(tea.KeyEscape))
 	if !strings.Contains(model.View().Content, "Resources (1)") {
 		t.Fatalf("detail back did not restore list: %s", model.View().Content)
+	}
+}
+
+func TestDetailGroupsRelationsAndOpensEachCategoryLocally(t *testing.T) {
+	resource := ResourceProjection{
+		Target: "ec2.instance:i-001", Title: "web-api",
+		Relations: []ProjectionRelation{
+			{Label: "sg-web", Target: "ec2.security-group:sg-web"},
+			{Label: "vol-data", Target: "ec2.volume:vol-data"},
+			{Label: "sg-ops", Target: "ec2.security-group:sg-ops"},
+			{Label: "vpc-main", Target: "ec2.vpc:vpc-main"},
+		},
+	}
+	m := NewModel(context.Background(), Config{NoColor: true}, new(recordingDispatcher))
+	m.history = []routeFrame{{mode: routeDetail, detail: resource}}
+	view := m.View().Content
+	for _, want := range []string{"Security groups (2)", "Volumes (1)", "VPCs (1)"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("detail missing category %q:\n%s", want, view)
+		}
+	}
+	for _, hidden := range []string{"sg-web", "vol-data"} {
+		if strings.Contains(view, hidden) {
+			t.Fatalf("detail leaked relation %q before its category opened:\n%s", hidden, view)
+		}
+	}
+
+	model, command := m.Update(key(tea.KeyEnter))
+	if command != nil {
+		t.Fatal("opening a relation category dispatched an AWS request")
+	}
+	view = model.View().Content
+	if !strings.Contains(view, "sg-web") || !strings.Contains(view, "sg-ops") || strings.Contains(view, "vol-data") {
+		t.Fatalf("security-group category contents are wrong:\n%s", view)
+	}
+	for _, character := range "ops" {
+		model, _ = model.Update(key(character))
+	}
+	view = model.View().Content
+	if !strings.Contains(view, "/  ops") || !strings.Contains(view, "sg-ops") || strings.Contains(view, "sg-web") {
+		t.Fatalf("relation filter did not narrow locally:\n%s", view)
+	}
+
+	model, _ = model.Update(key(tea.KeyEscape))
+	if !strings.Contains(model.View().Content, "Security groups (2)") {
+		t.Fatalf("first escape did not clear relation filter:\n%s", model.View().Content)
+	}
+	model, _ = model.Update(key(tea.KeyEscape))
+	model, _ = model.Update(key(tea.KeyDown))
+	model, command = model.Update(key(tea.KeyEnter))
+	if command != nil {
+		t.Fatal("opening the volume category dispatched an AWS request")
+	}
+	view = model.View().Content
+	if !strings.Contains(view, "vol-data") || strings.Contains(view, "sg-web") {
+		t.Fatalf("volume category contents are wrong:\n%s", view)
+	}
+}
+
+func TestHorizontalArrowsOpenAndReturnOneBrowserScreen(t *testing.T) {
+	resource := resourceProjection("web-api", "running")
+	m := NewModel(context.Background(), Config{NoColor: true}, new(recordingDispatcher))
+	m.history = []routeFrame{{mode: routeList, label: "EC2 Instances", projection: IntentProjection{Resources: []ResourceProjection{resource}}}}
+
+	model, command := m.Update(key(tea.KeyRight))
+	currentModel := model.(Model)
+	if command != nil || currentModel.current().mode != routeDetail {
+		t.Fatalf("right did not open detail locally: command=%v frame=%+v", command != nil, currentModel.current())
+	}
+	model, command = model.Update(key(tea.KeyLeft))
+	currentModel = model.(Model)
+	if command != nil || currentModel.current().mode != routeList {
+		t.Fatalf("left did not return one screen: command=%v frame=%+v", command != nil, currentModel.current())
+	}
+}
+
+func TestExactLinkedSingletonOpensSummaryWithoutResourceDetour(t *testing.T) {
+	stream := newTestIntentStream()
+	resource := ResourceProjection{
+		Target: "ec2.security-group:sg-001", Title: "web-sg", Subtitle: "sg-001 · web access",
+		Fields: []ProjectionField{{Label: "Description", Value: "web access"}},
+	}
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.history = []routeFrame{
+		{mode: routeRelations, label: "Security groups"},
+		{
+			mode: routeList, generation: 1, stream: stream,
+			intent: Intent{Kind: IntentOpen, Target: "ec2.security-group:sg-001"},
+		},
+	}
+	model, _ := m.Update(intentStreamMsg{generation: 1, open: true, update: IntentUpdate{
+		Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+		Projection: IntentProjection{Resources: []ResourceProjection{resource}}, Done: true,
+	}})
+	current := model.(Model)
+	if current.current().mode != routeDetail || !strings.Contains(current.View().Content, "AWS > web-sg > Summary") || strings.Contains(current.View().Content, "Resources (1)") {
+		t.Fatalf("singleton did not open Summary directly: frame=%+v\n%s", current.current(), current.View().Content)
+	}
+	if stream.cancels != 1 {
+		t.Fatalf("terminal singleton stream was not released: cancels=%d", stream.cancels)
+	}
+	back, _ := current.Update(key(tea.KeyLeft))
+	backModel := back.(Model)
+	if backModel.current().mode != routeRelations {
+		t.Fatalf("left did not return directly to relation list: %+v", backModel.current())
+	}
+}
+
+func TestSingletonPromotionRetainsTrueCollectionsAndAmbiguousResults(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		target    string
+		resources []ResourceProjection
+	}{
+		{name: "multiple exact results", target: "ec2.vpc:vpc-001", resources: []ResourceProjection{{Title: "one"}, {Title: "two"}}},
+		{name: "security group inbound rules", target: "ec2.security-group-rules-inbound:sg-001", resources: []ResourceProjection{{Title: "https"}}},
+		{name: "hosted zone record collection", target: "hosted-zone:Z001", resources: []ResourceProjection{{Title: "api.example.com"}}},
+		{name: "DNS record collection", target: "route53.records:Z001", resources: []ResourceProjection{{Title: "api.example.com"}}},
+		{name: "attached policy collection", target: "iam.role-attached-policies:reader", resources: []ResourceProjection{{Title: "ReadOnly"}}},
+		{name: "inline policy collection", target: "iam.role-inline-policies:reader", resources: []ResourceProjection{{Title: "inline"}}},
+		{name: "top level catalog", target: "ec2-instances", resources: []ResourceProjection{{Title: "web-api"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stream := newTestIntentStream()
+			m := NewModel(context.Background(), Config{NoColor: true}, nil)
+			m.history = []routeFrame{{
+				mode: routeList, generation: 1, stream: stream,
+				intent: Intent{Kind: IntentOpen, Target: test.target},
+			}}
+			model, _ := m.Update(intentStreamMsg{generation: 1, open: true, update: IntentUpdate{
+				Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+				Projection: IntentProjection{Resources: test.resources}, Done: true,
+			}})
+			current := model.(Model)
+			if got := current.current().mode; got != routeList {
+				t.Fatalf("collection was promoted to mode %d", got)
+			}
+		})
+	}
+}
+
+func TestSummaryOpensFullDetailLocally(t *testing.T) {
+	resource := ResourceProjection{
+		Target: "ec2.instance:i-001", Title: "web-api", Subtitle: "i-001 · running",
+		Fields: []ProjectionField{
+			{Label: "State", Value: "running"},
+			{Label: "Private IP", Value: "10.0.1.24"},
+			{Label: "Alpha", Value: "one"},
+			{Label: "Bravo", Value: "two"},
+			{Label: "Charlie", Value: "three"},
+			{Label: "Delta", Value: "four"},
+			{Label: "Full Only", Value: "visible in full detail"},
+		},
+	}
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.history = []routeFrame{{mode: routeList, projection: IntentProjection{Resources: []ResourceProjection{resource}}}}
+	model, command := m.Update(key(tea.KeyRight))
+	current := model.(Model)
+	if command != nil || current.current().mode != routeDetail || !strings.Contains(current.View().Content, "AWS > web-api > Summary") || strings.Contains(current.View().Content, "visible in full detail") {
+		t.Fatalf("resource did not open compact Summary: command=%v\n%s", command != nil, current.View().Content)
+	}
+	model, command = current.Update(key(tea.KeyRight))
+	current = model.(Model)
+	if command != nil || current.current().mode != routeFields || !strings.Contains(current.View().Content, "AWS > web-api > Detail") || !strings.Contains(current.View().Content, "visible in full detail") {
+		t.Fatalf("Detail did not open locally with all fields: command=%v\n%s", command != nil, current.View().Content)
+	}
+	model, _ = current.Update(key(tea.KeyLeft))
+	current = model.(Model)
+	if current.current().mode != routeDetail {
+		t.Fatalf("left did not return to Summary: %+v", current.current())
+	}
+}
+
+func TestSecurityGroupDetailOpensDirectionalRuleLists(t *testing.T) {
+	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	resourceKey, err := NewRegionalResourceKey(awsContext, "ec2.security-group", "sg-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := ProjectResourceFields(resourceKey, map[string]any{
+		"name": "web-sg", "description": "web access", "rules": []any{map[string]any{"direction": "ingress"}},
+	})
+	groups := relationGroups(resource)
+	if len(groups) < 2 || groups[0].Label != "Inbound rules" || groups[1].Label != "Outbound rules" {
+		t.Fatalf("security-group categories=%+v", groups)
+	}
+	for _, field := range resource.Fields {
+		if field.Label == "Rules" {
+			t.Fatalf("embedded rules blob remained in SG detail: %+v", resource.Fields)
+		}
+	}
+
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "us-east-1", NoColor: true}, new(recordingDispatcher))
+	m.history = []routeFrame{{mode: routeDetail, detail: resource, context: &awsContext}}
+	model, command := m.Update(key(tea.KeyRight))
+	currentModel := model.(Model)
+	if command == nil || currentModel.current().intent.Target != "ec2.security-group-rules-inbound:sg-001" {
+		t.Fatalf("inbound route=%+v command=%v", currentModel.current(), command != nil)
+	}
+	model, _ = model.Update(key(tea.KeyLeft))
+	model, _ = model.Update(key(tea.KeyDown))
+	model, command = model.Update(key(tea.KeyRight))
+	currentModel = model.(Model)
+	if command == nil || currentModel.current().intent.Target != "ec2.security-group-rules-outbound:sg-001" {
+		t.Fatalf("outbound route=%+v command=%v", currentModel.current(), command != nil)
+	}
+}
+
+func TestIAMAndRoute53SummariesExposePolicyAndDNSCategories(t *testing.T) {
+	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	roleKey, err := NewGlobalResourceKey(awsContext, "iam.role", "reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	role := ProjectResourceFields(roleKey, map[string]any{"role_name": "reader", "role_id": "ARO123"})
+	groups := relationGroups(role)
+	if len(groups) < 2 || groups[0].Label != "Attached policies" || groups[1].Label != "Inline policies" ||
+		groups[0].Relations[0].Target != "iam.role-attached-policies:reader" || groups[1].Relations[0].Target != "iam.role-inline-policies:reader" {
+		t.Fatalf("IAM role categories=%+v", groups)
+	}
+
+	policyARN := "arn:aws:iam::123456789012:policy/ReadOnly"
+	policyKey, err := NewGlobalResourceKey(awsContext, "iam.managed-policy", policyARN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := ProjectResourceFields(policyKey, map[string]any{
+		"policy_name": "ReadOnly", "default_version_id": "v3",
+		"relations": []any{map[string]any{"target": policyKey, "kind": "api-exact", "reason": "role-attached-policy"}},
+	})
+	groups = relationGroups(policy)
+	if policy.Title != "ReadOnly" || len(groups) != 1 || groups[0].Label != "Policy document" ||
+		groups[0].Relations[0].Target != "iam.managed-policy-version:"+policyARN+":v3" {
+		t.Fatalf("managed policy projection=%+v groups=%+v", policy, groups)
+	}
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.history = []routeFrame{{mode: routeDetail, detail: policy}}
+	if view := m.View().Content; !strings.Contains(view, "Policy document · →/enter view") {
+		t.Fatalf("managed policy document action is unclear:\n%s", view)
+	}
+
+	zoneKey, err := NewGlobalResourceKey(awsContext, "hosted-zone", "Z001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	zone := ProjectResourceFields(zoneKey, map[string]any{"name": "example.com.", "record_count": int64(12), "private": false})
+	groups = relationGroups(zone)
+	if zone.Title != "example.com." || len(groups) != 1 || groups[0].Label != "DNS records" || groups[0].Relations[0].Target != "route53.records:Z001" {
+		t.Fatalf("hosted zone projection=%+v groups=%+v", zone, groups)
+	}
+	m.history = []routeFrame{{mode: routeDetail, detail: zone}}
+	if view := m.View().Content; !strings.Contains(view, "DNS records · →/enter list") {
+		t.Fatalf("hosted zone DNS action is unclear:\n%s", view)
+	}
+}
+
+func TestIAMAndRoute53SummaryCategoriesDispatchDirectly(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		resource   ResourceProjection
+		selection  int
+		wantTarget string
+	}{
+		{
+			name: "attached policies",
+			resource: ResourceProjection{Title: "reader", Relations: []ProjectionRelation{
+				{Label: "Attached policies", Target: "iam.role-attached-policies:reader"},
+				{Label: "Inline policies", Target: "iam.role-inline-policies:reader"},
+			}},
+			wantTarget: "iam.role-attached-policies:reader",
+		},
+		{
+			name: "inline policies",
+			resource: ResourceProjection{Title: "reader", Relations: []ProjectionRelation{
+				{Label: "Attached policies", Target: "iam.role-attached-policies:reader"},
+				{Label: "Inline policies", Target: "iam.role-inline-policies:reader"},
+			}},
+			selection: 1, wantTarget: "iam.role-inline-policies:reader",
+		},
+		{
+			name: "DNS records",
+			resource: ResourceProjection{Title: "example.com.", Relations: []ProjectionRelation{
+				{Label: "DNS records", Target: "route53.records:Z001"},
+			}},
+			wantTarget: "route53.records:Z001",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dispatcher := new(recordingDispatcher)
+			m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
+			m.history = []routeFrame{{mode: routeDetail, detail: test.resource, relationSelected: test.selection}}
+			model, command := m.Update(key(tea.KeyRight))
+			current := model.(Model)
+			if command == nil || current.current().intent.Target != test.wantTarget || len(current.history) != 2 {
+				t.Fatalf("category did not dispatch directly: command=%v frame=%+v", command != nil, current.current())
+			}
+		})
+	}
+}
+
+func TestRoute53CloudFrontS3TracePreservesPathCategories(t *testing.T) {
+	awsContext := testStoreContext(t, "lg-udg-ops", "123456789012", "ap-northeast-2", 1)
+	recordKey, err := NewGlobalResourceKey(awsContext, "resource-record-set", "binary-record")
+	if err != nil {
+		t.Fatal(err)
+	}
+	distributionTarget, err := NewGlobalResourceKey(awsContext, "cloudfront.distribution-domain", "d24odq2ocbsmjd.cloudfront.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := ProjectResourceFields(recordKey, map[string]any{
+		"name": "binary.udg.line.games.",
+		"alias_relation": map[string]any{
+			"target": distributionTarget, "kind": "api-exact", "reason": "alias-target-returned-by-api",
+		},
+	})
+	groups := relationGroups(record)
+	if len(groups) != 1 || groups[0].Key != "alias-targets" || !directRelationGroup(groups[0]) {
+		t.Fatalf("record groups=%+v", groups)
+	}
+	dispatcher := new(recordingDispatcher)
+	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
+	m.history = []routeFrame{{mode: routeDetail, detail: record, context: &awsContext}}
+	if view := m.View().Content; !strings.Contains(view, "Alias target · →/enter trace") {
+		t.Fatalf("trace action missing:\n%s", view)
+	}
+	model, command := m.Update(key(tea.KeyRight))
+	aliasModel := model.(Model)
+	if command == nil || aliasModel.current().intent.Target != "cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net" {
+		t.Fatalf("alias target did not dispatch: frame=%+v", aliasModel.current())
+	}
+
+	distributionKey, err := NewGlobalResourceKey(awsContext, "cloudfront.distribution", "E3M80I51D1TQ9P")
+	if err != nil {
+		t.Fatal(err)
+	}
+	krBucket, _ := NewGlobalResourceKey(awsContext, "s3.bucket", "udg-kr-game-binary")
+	usBucket, _ := NewGlobalResourceKey(awsContext, "s3.bucket", "udg-us-game-dump")
+	distribution := ProjectResourceFields(distributionKey, map[string]any{
+		"domain_name": "d24odq2ocbsmjd.cloudfront.net",
+		"relations": []any{
+			map[string]any{"label": "Default /* → kr origin", "target": krBucket, "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
+			map[string]any{"label": "report/* → us origin", "target": usBucket, "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
+			map[string]any{"label": "character/* → us origin", "target": usBucket, "kind": "inferred", "reason": "cloudfront-s3-origin-domain"},
+		},
+	})
+	groups = relationGroups(distribution)
+	if distribution.Title != "d24odq2ocbsmjd.cloudfront.net" || len(groups) != 1 || groups[0].Key != "origins" || len(groups[0].Relations) != 3 || groups[0].Relations[1].Label != "report/* → us origin" {
+		t.Fatalf("distribution=%+v groups=%+v", distribution, groups)
+	}
+	m.history = []routeFrame{{mode: routeDetail, detail: distribution, context: &awsContext}}
+	model, command = m.Update(key(tea.KeyRight))
+	current := model.(Model)
+	if command != nil || current.current().mode != routeRelations || current.current().relationGroup != "origins" {
+		t.Fatalf("origins did not open locally: command=%v frame=%+v", command != nil, current.current())
+	}
+	if view := current.View().Content; !strings.Contains(view, "Default /*") || !strings.Contains(view, "report/*") || !strings.Contains(view, "character/*") {
+		t.Fatalf("path-aware origins missing:\n%s", view)
+	}
+}
+
+func TestCloudFrontAndS3ExactTargetsPromoteToSummary(t *testing.T) {
+	for _, target := range []string{"cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net", "s3.bucket:udg-kr-game-binary"} {
+		t.Run(target, func(t *testing.T) {
+			m := NewModel(context.Background(), Config{NoColor: true}, nil)
+			m.history = []routeFrame{{mode: routeList, generation: 1, intent: Intent{Kind: IntentOpen, Target: target}}}
+			model, _ := m.Update(intentStreamMsg{generation: 1, open: true, update: IntentUpdate{
+				Query:      QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}},
+				Projection: IntentProjection{Resources: []ResourceProjection{{Target: target, Title: target}}}, Done: true,
+			}})
+			currentModel := model.(Model)
+			if current := currentModel.current(); current.mode != routeDetail {
+				t.Fatalf("target did not promote: %+v", current)
+			}
+		})
+	}
+}
+
+func TestIAMListRowsHydrateBeforeSummary(t *testing.T) {
+	for _, target := range []string{
+		"iam.role:reader",
+		"iam.managed-policy:arn:aws:iam::123456789012:policy/ReadOnly",
+		"iam.inline-policy:reader:inline",
+	} {
+		t.Run(target, func(t *testing.T) {
+			dispatcher := new(recordingDispatcher)
+			m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
+			m.history = []routeFrame{{mode: routeList, projection: IntentProjection{Resources: []ResourceProjection{{Target: target, Title: "result"}}}}}
+			model, command := m.Update(key(tea.KeyRight))
+			current := model.(Model)
+			if command == nil || current.current().mode != routeList || current.current().intent.Target != target || len(dispatcher.intents) != 0 {
+				t.Fatalf("IAM row was not prepared for exact hydration: command=%v frame=%+v intents=%+v", command != nil, current.current(), dispatcher.intents)
+			}
+			_ = command()
+			if len(dispatcher.intents) != 1 || dispatcher.intents[0].Target != target {
+				t.Fatalf("IAM hydration intent=%+v", dispatcher.intents)
+			}
+		})
+	}
+}
+
+func TestSecurityGroupRuleProjectionUsesReadableListIdentity(t *testing.T) {
+	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	resourceKey, err := NewRegionalResourceKey(awsContext, "ec2.security-group-rule", "sgr-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := ProjectResourceFields(resourceKey, map[string]any{
+		"protocol": "tcp", "from_port": int32(443), "to_port": int32(443),
+		"cidr_ipv4": "0.0.0.0/0", "description": "public https",
+	})
+	if resource.Title != "TCP 443 · 0.0.0.0/0" || resource.Subtitle != "sgr-001 · public https" {
+		t.Fatalf("security-group rule projection=%+v", resource)
+	}
+}
+
+func TestModelFiltersLoadedResourcesLocallyAndOpensVisibleMatch(t *testing.T) {
+	dispatcher := new(recordingDispatcher)
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher)
+	m.history = []routeFrame{{mode: routeList, label: "EC2 Instances", projection: IntentProjection{Resources: []ResourceProjection{
+		{Target: "ec2.instance:i-dev", Title: "dev-api", Subtitle: "i-dev · running"},
+		{Target: "ec2.instance:i-prod", Title: "prod-api", Subtitle: "i-prod · stopped"},
+	}}}}
+	model := tea.Model(m)
+	for _, character := range "i-prod" {
+		model, _ = model.Update(key(character))
+	}
+	view := model.View().Content
+	if !strings.Contains(view, "/  i-prod") || !strings.Contains(view, "prod-api") || strings.Contains(view, "dev-api") || !strings.Contains(view, "Resources (1/2)") {
+		t.Fatalf("resource filter did not narrow loaded projection:\n%s", view)
+	}
+	if len(dispatcher.intents) != 0 {
+		t.Fatalf("resource filtering dispatched AWS intent: %+v", dispatcher.intents)
+	}
+	model, _ = model.Update(key(tea.KeyEnter))
+	currentModel := model.(Model)
+	current := currentModel.current()
+	if current == nil || current.mode != routeDetail || current.detail.Target != "ec2.instance:i-prod" {
+		t.Fatalf("filtered selection opened wrong resource: %+v", current)
+	}
+}
+
+func TestProjectResourceFieldsPrefersEC2NameAndFallsBackToInstanceID(t *testing.T) {
+	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	key, err := NewRegionalResourceKey(awsContext, "ec2.instance", "i-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := ProjectResourceFields(key, map[string]any{"name": "web-api", "state": "running"})
+	if named.Title != "web-api" || named.Subtitle != "i-001 · running" {
+		t.Fatalf("named projection=%+v", named)
+	}
+	unnamed := ProjectResourceFields(key, map[string]any{"name": "  ", "state": "stopped"})
+	if unnamed.Title != "i-001" || unnamed.Subtitle != "stopped" {
+		t.Fatalf("unnamed projection=%+v", unnamed)
+	}
+}
+
+func TestProjectResourceFieldsPrefersNameTagThenNativeNameThenID(t *testing.T) {
+	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	vpcKey, err := NewRegionalResourceKey(awsContext, "ec2.vpc", "vpc-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := ProjectResourceFields(vpcKey, map[string]any{
+		"state": "available", "tags": map[string]string{"Owner": "platform", "Name": "main-vpc"},
+	})
+	if named.Title != "main-vpc" || named.Subtitle != "vpc-001 · available" ||
+		!reflect.DeepEqual(named.Tags, []ProjectionTag{{Key: "Name", Value: "main-vpc"}, {Key: "Owner", Value: "platform"}}) {
+		t.Fatalf("Name-tag projection=%+v", named)
+	}
+	for _, field := range named.Fields {
+		if field.Label == "Tags" {
+			t.Fatalf("tags remained in detail fields: %+v", named.Fields)
+		}
+	}
+
+	securityGroupKey, err := NewRegionalResourceKey(awsContext, "ec2.security-group", "sg-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := ProjectResourceFields(securityGroupKey, map[string]any{"name": "web-sg", "description": "web access"})
+	if native.Title != "web-sg" || native.Subtitle != "sg-001 · web access" {
+		t.Fatalf("native-name projection=%+v", native)
+	}
+	unnamed := ProjectResourceFields(vpcKey, map[string]any{"state": "available", "tags": map[string]string{"Owner": "platform"}})
+	if unnamed.Title != "vpc-001" || unnamed.Subtitle != "available" {
+		t.Fatalf("ID fallback projection=%+v", unnamed)
+	}
+}
+
+func TestTagsCategoryOpensAndFiltersLocally(t *testing.T) {
+	resource := ResourceProjection{
+		Target: "ec2.vpc:vpc-001", Title: "main-vpc", Subtitle: "vpc-001 · available",
+		Tags: []ProjectionTag{{Key: "Name", Value: "main-vpc"}, {Key: "Owner", Value: "platform"}},
+	}
+	dispatcher := new(recordingDispatcher)
+	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
+	m.history = []routeFrame{{mode: routeDetail, detail: resource}}
+	detail := m.View().Content
+	if !strings.Contains(detail, "Tags (2) · →/enter view") || strings.Contains(detail, "Owner=platform") {
+		t.Fatalf("detail tags category is wrong:\n%s", detail)
+	}
+
+	model, _ := m.Update(key(tea.KeyDown))
+	model, command := model.Update(key(tea.KeyRight))
+	if command != nil || len(dispatcher.intents) != 0 {
+		t.Fatal("opening Tags dispatched an AWS request")
+	}
+	view := model.View().Content
+	if !strings.Contains(view, "AWS > main-vpc > Tags") || !strings.Contains(view, "Owner") || !strings.Contains(view, "platform") {
+		t.Fatalf("tags screen is incomplete:\n%s", view)
+	}
+	for _, character := range "owner" {
+		model, _ = model.Update(key(character))
+	}
+	view = model.View().Content
+	if !strings.Contains(view, "Tags (1/2)") || strings.Contains(view, "> Name") || !strings.Contains(view, "> Owner") {
+		t.Fatalf("tag filtering is wrong:\n%s", view)
+	}
+	model, _ = model.Update(key(tea.KeyLeft))
+	currentModel := model.(Model)
+	if currentModel.current().mode != routeDetail {
+		t.Fatalf("left did not return from Tags: %+v", currentModel.current())
 	}
 }
 
@@ -234,7 +1014,7 @@ func TestSearchEditorIsLocalUntilExplicitSubmit(t *testing.T) {
 	}
 }
 
-func TestModelQQuitsRootHelpListDetailAndSearchControls(t *testing.T) {
+func TestModelQQuitsRootHelpDetailAndSearchControls(t *testing.T) {
 	tests := []struct {
 		name  string
 		model Model
@@ -245,7 +1025,6 @@ func TestModelQQuitsRootHelpListDetailAndSearchControls(t *testing.T) {
 			model.help = true
 			return model
 		}()},
-		{name: "list", model: Model{history: []routeFrame{{mode: routeList, stream: newTestIntentStream()}}}},
 		{name: "detail", model: Model{history: []routeFrame{{mode: routeDetail, stream: newTestIntentStream()}}}},
 		{name: "search kind", model: Model{history: []routeFrame{{mode: routeSearch, searchFocus: 0, stream: newTestIntentStream()}}}},
 		{name: "search scope", model: Model{history: []routeFrame{{mode: routeSearch, searchFocus: 2, stream: newTestIntentStream()}}}},
@@ -277,21 +1056,36 @@ func TestModelQQuitsRootHelpListDetailAndSearchControls(t *testing.T) {
 	}
 }
 
-func TestModelQQuitsAndCancelsDispatchBeforeStreamAcquisition(t *testing.T) {
+func TestModelQFiltersResourceAndContextLists(t *testing.T) {
+	resourceModel := Model{history: []routeFrame{{mode: routeList, projection: IntentProjection{Resources: []ResourceProjection{{Title: "qa-api"}}}}}}
+	updated, command := resourceModel.Update(key('q'))
+	updatedResourceModel := updated.(Model)
+	if command != nil || updatedResourceModel.current().filterValue != "q" {
+		t.Fatalf("q did not filter resource list: model=%+v command=%v", updated, command)
+	}
+	contextModel := Model{history: []routeFrame{{mode: routeContext, contextChoices: []ContextChoice{{Profile: "qa"}}}}}
+	updated, command = contextModel.Update(key('q'))
+	updatedContextModel := updated.(Model)
+	if command != nil || updatedContextModel.current().contextQuery != "q" {
+		t.Fatalf("q did not filter context list: model=%+v command=%v", updated, command)
+	}
+}
+
+func TestModelCtrlCQuitsAndCancelsDispatchBeforeStreamAcquisition(t *testing.T) {
 	dispatcher := &blockingDispatcher{started: make(chan struct{}), done: make(chan struct{})}
 	model, dispatch := NewModel(context.Background(), Config{}, dispatcher).Update(key(tea.KeyEnter))
 	result := make(chan tea.Msg, 1)
 	go func() { result <- dispatch() }()
 	<-dispatcher.started
 
-	model, quit := model.Update(key('q'))
+	model, quit := model.Update(ctrl('c'))
 	if quit == nil || quit() != tea.Quit() {
-		t.Fatalf("q did not request tea.Quit: %v", quit)
+		t.Fatalf("ctrl+c did not request tea.Quit: %v", quit)
 	}
 	select {
 	case <-dispatcher.done:
 	case <-time.After(time.Second):
-		t.Fatal("q did not cancel the in-flight Dispatch context")
+		t.Fatal("ctrl+c did not cancel the in-flight Dispatch context")
 	}
 	<-result
 }
@@ -299,7 +1093,7 @@ func TestModelQQuitsAndCancelsDispatchBeforeStreamAcquisition(t *testing.T) {
 func TestModelRefreshPreservesOldProjectionAndRejectsLateStream(t *testing.T) {
 	initial, refresh := newTestIntentStream(), newTestIntentStream()
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
-	m := NewModel(context.Background(), Config{}, dispatcher)
+	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
 	model, wait := runModelCommand(t, m, key(tea.KeyEnter))
 	old := resourceProjection("old-instance", "running")
 	initial.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadReady, FetchedAt: time.Now()}}, Projection: IntentProjection{Resources: []ResourceProjection{old}}, Done: true}
@@ -629,7 +1423,7 @@ func TestModelSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) 
 func TestModelTypedStaleAndPartialFailuresAreSafe(t *testing.T) {
 	stream := newTestIntentStream()
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
-	m := NewModel(context.Background(), Config{}, dispatcher)
+	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
 	model, wait := runModelCommand(t, m, key(tea.KeyEnter))
 	when := time.Now()
 	stream.updates <- IntentUpdate{Query: QueryUpdate{
@@ -673,7 +1467,7 @@ func TestModelResizePreservesRouteAndSelection(t *testing.T) {
 
 func TestIntentDispatchErrorIsSanitized(t *testing.T) {
 	dispatcher := &recordingDispatcher{err: errors.New("not\x1b[31m integrated")}
-	m := NewModel(context.Background(), Config{}, dispatcher)
+	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
 	model, _ := runModelCommand(t, m, key(tea.KeyEnter))
 	if strings.Contains(model.View().Content, "\x1b") || !strings.Contains(model.View().Content, "! ec2-instances: not [31m integrated") {
 		t.Fatalf("view=%s", model.View().Content)
@@ -732,6 +1526,7 @@ func TestSearchResultRelationDispatchUsesSelectedResourceContext(t *testing.T) {
 	m := NewModel(context.Background(), Config{Profile: "dev", Region: "us-east-1"}, dispatcher)
 	m.history = []routeFrame{{mode: routeList, label: "Search results", projection: IntentProjection{Resources: []ResourceProjection{resource}}}}
 	model, _ := m.Update(key(tea.KeyEnter))
+	model, _ = model.Update(key(tea.KeyEnter))
 	model, command := model.Update(key(tea.KeyEnter))
 	if command == nil {
 		t.Fatal("supported relation did not dispatch")

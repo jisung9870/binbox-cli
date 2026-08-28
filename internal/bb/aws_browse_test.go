@@ -47,7 +47,7 @@ func TestAWSBrowseHelpIsZeroCall(t *testing.T) {
 	if err := a.Run([]string{"aws", "browse", "--help"}); err != nil {
 		t.Fatal(err)
 	}
-	if terminalCalls != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "Home screen is local-only") {
+	if terminalCalls != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "profile selection opens first") {
 		t.Fatalf("terminalCalls=%d stdout=%q stderr=%q", terminalCalls, stdout.String(), stderr.String())
 	}
 }
@@ -82,7 +82,7 @@ func TestAWSBrowseInteractiveIgnoresStdoutTTY(t *testing.T) {
 	a.awsBrowserTerminal = func() awsbrowser.Terminal {
 		return awsbrowser.Terminal{In: strings.NewReader("quit\n"), Err: stderr, StdinTTY: true, StderrTTY: true, Width: 80, Height: 24}
 	}
-	if err := a.Run([]string{"aws", "browse"}); err != nil {
+	if err := a.Run([]string{"aws", "browse", "--profile", "dev"}); err != nil {
 		t.Fatal(err)
 	}
 	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "AWS Browser · READ ONLY") {

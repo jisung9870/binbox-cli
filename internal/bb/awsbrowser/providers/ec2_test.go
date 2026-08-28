@@ -135,6 +135,9 @@ func TestEC2ExecutorSelectsOperationBuildsInputAndMapsRelations(t *testing.T) {
 	if fields["tags"].(map[string]string)["Name"] != "web" {
 		t.Fatalf("fields=%+v", fields)
 	}
+	if fields["name"] != "web" {
+		t.Fatalf("instance Name tag was not promoted for display: fields=%+v", fields)
+	}
 	if fields["instance_profile_arn"] != "arn:aws:iam::123456789012:instance-profile/app/web-profile" || fields["instance_profile_name"] != "web-profile" {
 		t.Fatalf("profile fields=%+v", fields)
 	}
@@ -188,6 +191,43 @@ func TestEC2ExecutorSelectivelyCallsAllFrozenOperations(t *testing.T) {
 			}
 			if sink.completed != 1 || len(sink.pages) != 1 || sink.pages[0].Number != 0 || len(sink.pages[0].Resources()) != 1 || sink.pages[0].Resources()[0].Key.Type != test.wantType {
 				t.Fatalf("sink=%+v", sink)
+			}
+		})
+	}
+}
+
+func TestEC2SecurityGroupRulesDirectionIsFilteredLocally(t *testing.T) {
+	for _, test := range []struct {
+		name, direction string
+		wantEgress      bool
+		wantID          string
+	}{
+		{name: "inbound", direction: "ingress", wantID: "sgr-in"},
+		{name: "outbound", direction: "egress", wantEgress: true, wantID: "sgr-out"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeEC2{rules: func(_ context.Context, input *ec2.DescribeSecurityGroupRulesInput) (*ec2.DescribeSecurityGroupRulesOutput, error) {
+				if len(input.Filters) != 1 || aws.ToString(input.Filters[0].Name) != "group-id" || !reflect.DeepEqual(input.Filters[0].Values, []string{"sg-1"}) {
+					t.Fatalf("AWS input leaked synthetic direction or lost group scope: %+v", input.Filters)
+				}
+				return &ec2.DescribeSecurityGroupRulesOutput{SecurityGroupRules: []types.SecurityGroupRule{
+					{SecurityGroupRuleId: aws.String("sgr-in"), GroupId: aws.String("sg-1"), IsEgress: aws.Bool(false), IpProtocol: aws.String("tcp"), FromPort: aws.Int32(443), ToPort: aws.Int32(443)},
+					{SecurityGroupRuleId: aws.String("sgr-out"), GroupId: aws.String("sg-1"), IsEgress: aws.Bool(true), IpProtocol: aws.String("-1")},
+				}}, nil
+			}}
+			executor, _ := NewEC2QueryExecutor(client, fixedClock())
+			sink := &captureSink{}
+			if err := executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeSecurityGroupRules, map[string]string{
+				"group-id": "sg-1", "direction": test.direction,
+			}), sink); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.pages) != 1 || len(sink.pages[0].Resources()) != 1 {
+				t.Fatalf("direction result pages=%+v", sink.pages)
+			}
+			resource := sink.pages[0].Resources()[0]
+			if resource.Key.ID != test.wantID || resource.Observation.Fields()["is_egress"] != test.wantEgress {
+				t.Fatalf("direction result=%+v fields=%+v", resource.Key, resource.Observation.Fields())
 			}
 		})
 	}

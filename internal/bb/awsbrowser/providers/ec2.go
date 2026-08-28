@@ -86,8 +86,9 @@ func (executor *EC2QueryExecutor) Execute(ctx context.Context, key awsbrowser.Qu
 }
 
 type ec2Params struct {
-	ids     []string
-	filters []types.Filter
+	ids       []string
+	filters   []types.Filter
+	direction string
 }
 
 var ec2Selectors = map[string]string{
@@ -136,6 +137,14 @@ func decodeEC2Params(key awsbrowser.QueryKey) (ec2Params, error) {
 		}
 		if name == selector {
 			result.ids = items
+			continue
+		}
+		if name == "direction" {
+			if key.Operation != awsbrowser.OperationDescribeSecurityGroupRules || len(items) != 1 ||
+				(items[0] != "ingress" && items[0] != "egress") {
+				return ec2Params{}, errInvalidEC2Query
+			}
+			result.direction = items[0]
 			continue
 		}
 		filterName := strings.TrimPrefix(name, "filter.")
@@ -386,6 +395,9 @@ func (executor *EC2QueryExecutor) securityGroupRules(ctx context.Context, key aw
 		for _, v := range out.SecurityGroupRules {
 			if e := ctx.Err(); e != nil {
 				return providerFailure(e, key.Operation)
+			}
+			if (params.direction == "ingress" && b(v.IsEgress)) || (params.direction == "egress" && !b(v.IsEgress)) {
+				continue
 			}
 			r, m := mapSecurityGroupRule(key.Context, key.Operation, executor.now(), v)
 			if m != nil || !targetMatch(params.ids, r.Key.ID, found) {
@@ -696,7 +708,7 @@ func mapInstance(c awsbrowser.AWSContext, op string, at time.Time, v types.Insta
 	if profileRelation != nil {
 		rel = append(rel, profileRelation)
 	}
-	fields := map[string]any{"image_id": s(v.ImageId), "instance_type": string(v.InstanceType), "state": "", "availability_zone": "", "private_ip_address": s(v.PrivateIpAddress), "public_ip_address": s(v.PublicIpAddress), "private_dns_name": s(v.PrivateDnsName), "public_dns_name": s(v.PublicDnsName), "vpc_id": s(v.VpcId), "subnet_id": s(v.SubnetId), "instance_profile_arn": profileARN, "instance_profile_name": profileName, "security_groups": groups, "volumes": volumes, "tags": mappedTags, "relations": rel}
+	fields := map[string]any{"name": mappedTags["Name"], "image_id": s(v.ImageId), "instance_type": string(v.InstanceType), "state": "", "availability_zone": "", "private_ip_address": s(v.PrivateIpAddress), "public_ip_address": s(v.PublicIpAddress), "private_dns_name": s(v.PrivateDnsName), "public_dns_name": s(v.PublicDnsName), "vpc_id": s(v.VpcId), "subnet_id": s(v.SubnetId), "instance_profile_arn": profileARN, "instance_profile_name": profileName, "security_groups": groups, "volumes": volumes, "tags": mappedTags, "relations": rel}
 	if v.State != nil {
 		fields["state"] = string(v.State.Name)
 	}

@@ -13,6 +13,8 @@ func TestProviderOperationContractAcceptsOnlyOwnedOperations(t *testing.T) {
 		{ProviderIAM, OperationGetPolicyVersion},
 		{ProviderRoute53, OperationListHostedZones},
 		{ProviderRoute53, OperationListResourceRecordSets},
+		{ProviderCloudFront, OperationListDistributions},
+		{ProviderS3, OperationGetBucketLocation},
 	} {
 		if err := ValidateProviderOperation(pair[0], pair[1]); err != nil {
 			t.Fatalf("valid provider operation rejected: %q %q: %v", pair[0], pair[1], err)
@@ -22,6 +24,8 @@ func TestProviderOperationContractAcceptsOnlyOwnedOperations(t *testing.T) {
 		{"", OperationDescribeInstances},
 		{ProviderIAM, OperationDescribeInstances},
 		{ProviderRoute53, OperationListRoles},
+		{ProviderCloudFront, OperationGetBucketLocation},
+		{ProviderS3, OperationListDistributions},
 		{ProviderEC2, "describe-instances"},
 		{"unknown", "Unknown"},
 	} {

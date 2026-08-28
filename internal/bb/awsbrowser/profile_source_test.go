@@ -170,7 +170,7 @@ func TestClassifyProfileSourceRejectsRelevantControlCharacterValues(t *testing.T
 }
 
 func TestProfileNamePolicyIsConsistent(t *testing.T) {
-	valid := []string{"default", "dev-1", "prod_2", "team.example"}
+	valid := []string{"default", "dev-1", "prod_2", "team.example", "LG-PAK/common-ops-policy"}
 	invalid := []string{"", ".hidden", "-flag", "_private", "contains space", "line\nbreak"}
 	for _, profile := range valid {
 		if !validProfileName(profile) || !profileNameRE.MatchString(profile) {

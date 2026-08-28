@@ -1,4 +1,4 @@
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ AWS Browser · READ ONLY                                                                                              │
 │ Profile dev  Account unresolved  Principal unresolved  ap-northeast-2                                                │
 │ Services / tasks · LIST                                                                                              │
@@ -7,7 +7,6 @@
 │   IAM Roles                                                                           Not loaded · AWS global        │
 │   VPC & Networking                                                                    Not loaded                     │
 │   Cross-profile search                                                                Domain, role · scope on open   │
-│ ↑↓ move  enter open  ctrl+g cross-profile  ? help  ctrl+c quit                                                       │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
@@ -27,4 +26,5 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+│ ↑↓ move  →/enter open  : command  c context  ctrl+g search  ? help                                                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

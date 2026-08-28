@@ -5,9 +5,11 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
 )
@@ -322,9 +324,33 @@ func (c guardedRoute53) ListResourceRecordSets(ctx context.Context, input *route
 	})
 }
 
+type guardedCloudFront struct {
+	guard  *readGuard
+	client rawCloudFrontAPI
+}
+
+func (c guardedCloudFront) ListDistributions(ctx context.Context, input *cloudfront.ListDistributionsInput) (*cloudfront.ListDistributionsOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*cloudfront.ListDistributionsOutput, error) {
+		return c.client.ListDistributions(ctx, input)
+	})
+}
+
+type guardedS3 struct {
+	guard  *readGuard
+	client rawS3API
+}
+
+func (c guardedS3) GetBucketLocation(ctx context.Context, input *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*s3.GetBucketLocationOutput, error) {
+		return c.client.GetBucketLocation(ctx, input)
+	})
+}
+
 var (
-	_ STSAPI     = guardedSTS{}
-	_ EC2API     = guardedEC2{}
-	_ IAMAPI     = guardedIAM{}
-	_ Route53API = guardedRoute53{}
+	_ STSAPI        = guardedSTS{}
+	_ EC2API        = guardedEC2{}
+	_ IAMAPI        = guardedIAM{}
+	_ Route53API    = guardedRoute53{}
+	_ CloudFrontAPI = guardedCloudFront{}
+	_ S3API         = guardedS3{}
 )

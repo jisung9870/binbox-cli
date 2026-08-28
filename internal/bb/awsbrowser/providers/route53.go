@@ -17,6 +17,7 @@ import (
 const (
 	hostedZoneType    = "hosted-zone"
 	recordSetType     = "resource-record-set"
+	cloudFrontZoneID  = "Z2FDTNDATAQYW2"
 	zonePageSize      = int32(100)
 	recordSetPageSize = int32(300)
 )
@@ -474,11 +475,17 @@ func mapRecordSets(ctx context.Context, key awsbrowser.QueryKey, zoneID string, 
 				"hosted_zone_id":         aliasZoneID,
 				"evaluate_target_health": set.AliasTarget.EvaluateTargetHealth,
 			}
-			// The API names the alias destination, but does not prove that it is
-			// an account-owned record set. Keep it as API-exact metadata only.
 			aliasRelation, err := relationFields(awsbrowser.RelationAPIExact, "alias-target-returned-by-api", key.Operation, fetchedAt)
 			if err != nil {
 				return nil, false, err
+			}
+			aliasRelation["source"] = resourceKey
+			if key.Context.Partition == "aws" && aliasZoneID == cloudFrontZoneID && strings.HasSuffix(aliasName, ".cloudfront.net.") {
+				target, err := awsbrowser.NewGlobalResourceKey(key.Context, "cloudfront.distribution-domain", strings.TrimSuffix(aliasName, "."))
+				if err != nil {
+					return nil, false, err
+				}
+				aliasRelation["target"] = target
 			}
 			fields["alias_relation"] = aliasRelation
 		}

@@ -17,9 +17,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -72,10 +74,12 @@ func TestSDKRuntimeIgnoresConfiguredEndpoints(t *testing.T) {
 		{
 			name: "service environment endpoints",
 			environment: map[string]string{
-				"AWS_ENDPOINT_URL_STS":      "{POISON}",
-				"AWS_ENDPOINT_URL_EC2":      "{POISON}",
-				"AWS_ENDPOINT_URL_IAM":      "{POISON}",
-				"AWS_ENDPOINT_URL_ROUTE_53": "{POISON}",
+				"AWS_ENDPOINT_URL_STS":        "{POISON}",
+				"AWS_ENDPOINT_URL_EC2":        "{POISON}",
+				"AWS_ENDPOINT_URL_IAM":        "{POISON}",
+				"AWS_ENDPOINT_URL_ROUTE_53":   "{POISON}",
+				"AWS_ENDPOINT_URL_CLOUDFRONT": "{POISON}",
+				"AWS_ENDPOINT_URL_S3":         "{POISON}",
 			},
 		},
 		{
@@ -92,7 +96,9 @@ func TestSDKRuntimeIgnoresConfiguredEndpoints(t *testing.T) {
 					"sts =\n  endpoint_url = " + endpoint + "\n" +
 					"ec2 =\n  endpoint_url = " + endpoint + "\n" +
 					"iam =\n  endpoint_url = " + endpoint + "\n" +
-					"route_53 =\n  endpoint_url = " + endpoint + "\n"
+					"route_53 =\n  endpoint_url = " + endpoint + "\n" +
+					"cloudfront =\n  endpoint_url = " + endpoint + "\n" +
+					"s3 =\n  endpoint_url = " + endpoint + "\n"
 			},
 		},
 	}
@@ -151,6 +157,8 @@ func configureEndpointEnvironment(t *testing.T, environment map[string]string, e
 		"AWS_ENDPOINT_URL_EC2",
 		"AWS_ENDPOINT_URL_IAM",
 		"AWS_ENDPOINT_URL_ROUTE_53",
+		"AWS_ENDPOINT_URL_CLOUDFRONT",
+		"AWS_ENDPOINT_URL_S3",
 	} {
 		t.Setenv(name, "")
 	}
@@ -191,10 +199,12 @@ func assertPoisonFixtureActive(t *testing.T, provider *CredentialProvider, load 
 		t.Fatal(err)
 	}
 	raw := &sdkRuntime{
-		sts:     sts.NewFromConfig(cfg),
-		ec2:     ec2.NewFromConfig(cfg),
-		iam:     iam.NewFromConfig(cfg),
-		route53: route53.NewFromConfig(cfg),
+		sts:        sts.NewFromConfig(cfg),
+		ec2:        ec2.NewFromConfig(cfg),
+		iam:        iam.NewFromConfig(cfg),
+		route53:    route53.NewFromConfig(cfg),
+		cloudfront: cloudfront.NewFromConfig(cfg),
+		s3:         s3.NewFromConfig(cfg),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -244,16 +254,26 @@ func serviceInvocations(ctx context.Context, runtime *sdkRuntime) []serviceInvoc
 			_, err := runtime.route53.ListHostedZones(ctx, &route53.ListHostedZonesInput{})
 			return err
 		}},
+		{name: "CloudFront", call: func() error {
+			_, err := runtime.cloudfront.ListDistributions(ctx, &cloudfront.ListDistributionsInput{})
+			return err
+		}},
+		{name: "S3", call: func() error {
+			_, err := runtime.s3.GetBucketLocation(ctx, &s3.GetBucketLocationInput{Bucket: aws.String("bb-endpoint-test")})
+			return err
+		}},
 	}
 }
 
 func assertExpectedAWSServiceHosts(t *testing.T, urls []string) {
 	t.Helper()
 	want := map[string]bool{
-		"sts.us-east-1.amazonaws.com": false,
-		"ec2.us-east-1.amazonaws.com": false,
-		"iam.amazonaws.com":           false,
-		"route53.amazonaws.com":       false,
+		"sts.us-east-1.amazonaws.com":                 false,
+		"ec2.us-east-1.amazonaws.com":                 false,
+		"iam.amazonaws.com":                           false,
+		"route53.amazonaws.com":                       false,
+		"cloudfront.amazonaws.com":                    false,
+		"bb-endpoint-test.s3.us-east-1.amazonaws.com": false,
 	}
 	for _, rawURL := range urls {
 		seenURL, err := url.Parse(rawURL)

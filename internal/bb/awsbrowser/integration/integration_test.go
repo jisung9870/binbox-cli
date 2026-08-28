@@ -6,17 +6,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
+	cloudfronttypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/jisung9870/binbox-cli/internal/bb/awsbrowser"
 )
@@ -28,6 +33,16 @@ type fakeFactory struct {
 	calls   int
 	runtime awsbrowser.RuntimeContext
 	err     error
+}
+
+type fakeProfileLister struct {
+	profiles []string
+	calls    int
+}
+
+func (lister *fakeProfileLister) ListProfiles(context.Context, []string) ([]string, error) {
+	lister.calls++
+	return append([]string(nil), lister.profiles...), nil
 }
 
 func (factory *fakeFactory) Resolve(ctx context.Context, _ awsbrowser.ContextSpec) (awsbrowser.RuntimeContext, error) {
@@ -47,12 +62,14 @@ func (factory *fakeFactory) count() int {
 }
 
 type fakeRuntime struct {
-	mu       sync.RWMutex
-	identity awsbrowser.VerifiedIdentity
-	sts      awsbrowser.STSAPI
-	ec2      awsbrowser.EC2API
-	iam      awsbrowser.IAMAPI
-	route53  awsbrowser.Route53API
+	mu         sync.RWMutex
+	identity   awsbrowser.VerifiedIdentity
+	sts        awsbrowser.STSAPI
+	ec2        awsbrowser.EC2API
+	iam        awsbrowser.IAMAPI
+	route53    awsbrowser.Route53API
+	cloudfront awsbrowser.CloudFrontAPI
+	s3         awsbrowser.S3API
 }
 
 func (runtime *fakeRuntime) Identity() awsbrowser.VerifiedIdentity {
@@ -65,10 +82,12 @@ func (runtime *fakeRuntime) setIdentity(identity awsbrowser.VerifiedIdentity) {
 	runtime.identity = identity
 	runtime.mu.Unlock()
 }
-func (runtime *fakeRuntime) STS() awsbrowser.STSAPI         { return runtime.sts }
-func (runtime *fakeRuntime) EC2() awsbrowser.EC2API         { return runtime.ec2 }
-func (runtime *fakeRuntime) IAM() awsbrowser.IAMAPI         { return runtime.iam }
-func (runtime *fakeRuntime) Route53() awsbrowser.Route53API { return runtime.route53 }
+func (runtime *fakeRuntime) STS() awsbrowser.STSAPI               { return runtime.sts }
+func (runtime *fakeRuntime) EC2() awsbrowser.EC2API               { return runtime.ec2 }
+func (runtime *fakeRuntime) IAM() awsbrowser.IAMAPI               { return runtime.iam }
+func (runtime *fakeRuntime) Route53() awsbrowser.Route53API       { return runtime.route53 }
+func (runtime *fakeRuntime) CloudFront() awsbrowser.CloudFrontAPI { return runtime.cloudfront }
+func (runtime *fakeRuntime) S3() awsbrowser.S3API                 { return runtime.s3 }
 
 type fakeSTS struct{ awsbrowser.STSAPI }
 
@@ -103,6 +122,30 @@ func (client *fakeIAM) ListRoles(ctx context.Context, input *iam.ListRolesInput)
 type fakeRoute53 struct {
 	awsbrowser.Route53API
 	listHostedZones func(context.Context, *route53.ListHostedZonesInput) (*route53.ListHostedZonesOutput, error)
+}
+
+type fakeCloudFront struct {
+	awsbrowser.CloudFrontAPI
+	listDistributions func(context.Context, *cloudfront.ListDistributionsInput) (*cloudfront.ListDistributionsOutput, error)
+}
+
+func (client *fakeCloudFront) ListDistributions(ctx context.Context, input *cloudfront.ListDistributionsInput) (*cloudfront.ListDistributionsOutput, error) {
+	if client.listDistributions == nil {
+		panic("unexpected CloudFront call")
+	}
+	return client.listDistributions(ctx, input)
+}
+
+type fakeS3 struct {
+	awsbrowser.S3API
+	getBucketLocation func(context.Context, *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error)
+}
+
+func (client *fakeS3) GetBucketLocation(ctx context.Context, input *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error) {
+	if client.getBucketLocation == nil {
+		panic("unexpected S3 call")
+	}
+	return client.getBucketLocation(ctx, input)
 }
 
 func (client *fakeRoute53) ListHostedZones(ctx context.Context, input *route53.ListHostedZonesInput) (*route53.ListHostedZonesOutput, error) {
@@ -149,6 +192,34 @@ func TestProductionConstructionIsZeroCall(t *testing.T) {
 	}
 	if factory.count() != 0 {
 		t.Fatalf("construction resolved runtime %d times", factory.count())
+	}
+}
+
+func TestContextChoicesReadConfiguredProfilesAndRegionsWithoutResolvingAccounts(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config")
+	if err := os.WriteFile(configPath, []byte("[profile dev]\nregion = us-east-1\n[profile prod]\nregion = ap-northeast-2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	factory := &fakeFactory{runtime: completeRuntime(testIdentity(1), nil, nil, nil)}
+	lister := &fakeProfileLister{profiles: []string{"dev", "prod"}}
+	core, err := newCore(
+		factory,
+		[]string{"AWS_CONFIG_FILE=" + configPath},
+		func() time.Time { return fixedNow },
+		2,
+		lister,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	choices, err := core.ListContexts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []awsbrowser.ContextChoice{{Profile: "dev", Region: "us-east-1"}, {Profile: "prod", Region: "ap-northeast-2"}}
+	if !reflect.DeepEqual(choices, want) || lister.calls != 1 || factory.count() != 0 {
+		t.Fatalf("choices=%+v calls=%d runtime_calls=%d", choices, lister.calls, factory.count())
 	}
 }
 
@@ -204,6 +275,20 @@ func TestTypedNilNarrowedClientsBecomeSanitizedFailures(t *testing.T) {
 				return &fakeRuntime{identity: testIdentity(1), sts: fakeSTS{}, ec2: &fakeEC2{}, iam: &fakeIAM{}, route53: client}
 			},
 		},
+		{
+			name: "CloudFront", provider: awsbrowser.ProviderCloudFront, operation: awsbrowser.OperationListDistributions,
+			runtime: func() awsbrowser.RuntimeContext {
+				var client *fakeCloudFront
+				return &fakeRuntime{identity: testIdentity(1), sts: fakeSTS{}, cloudfront: client}
+			},
+		},
+		{
+			name: "S3", provider: awsbrowser.ProviderS3, operation: awsbrowser.OperationGetBucketLocation,
+			runtime: func() awsbrowser.RuntimeContext {
+				var client *fakeS3
+				return &fakeRuntime{identity: testIdentity(1), sts: fakeSTS{}, s3: client}
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -211,8 +296,14 @@ func TestTypedNilNarrowedClientsBecomeSanitizedFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			params := map[string]string(nil)
+			if test.provider == awsbrowser.ProviderCloudFront {
+				params = map[string]string{"distribution-domain": "example.cloudfront.net"}
+			} else if test.provider == awsbrowser.ProviderS3 {
+				params = map[string]string{"bucket": "valid-bucket"}
+			}
 			result, queryErr := core.Query(context.Background(), Request{
-				Region: "us-east-1", Provider: test.provider, Operation: test.operation,
+				Region: "us-east-1", Provider: test.provider, Operation: test.operation, Params: params,
 			})
 			if queryErr == nil || result.Update.Failure == nil || result.Update.Failure.Kind != awsbrowser.ProviderUnsupported {
 				t.Fatalf("result=%+v error=%v", result, queryErr)
@@ -223,7 +314,7 @@ func TestTypedNilNarrowedClientsBecomeSanitizedFailures(t *testing.T) {
 
 func TestInvalidExplicitContextInputMakesNoRuntimeCalls(t *testing.T) {
 	for _, request := range []ContextRequest{
-		{Profile: "bad/profile", Region: "us-east-1"},
+		{Profile: "bad profile", Region: "us-east-1"},
 		{Profile: "dev", Region: "--region"},
 	} {
 		t.Run(request.Profile+request.Region, func(t *testing.T) {
@@ -278,6 +369,45 @@ func TestQuerySelectsOnlyRequestedProvider(t *testing.T) {
 	}
 	if factory.count() != 1 {
 		t.Fatalf("registry did not memoize runtime: resolves=%d", factory.count())
+	}
+}
+
+func TestCloudFrontAndS3QueriesReachNarrowedProviders(t *testing.T) {
+	cloudFrontCalls, s3Calls := 0, 0
+	runtime := completeRuntime(testIdentity(1), nil, nil, nil)
+	runtime.cloudfront = &fakeCloudFront{listDistributions: func(_ context.Context, input *cloudfront.ListDistributionsInput) (*cloudfront.ListDistributionsOutput, error) {
+		cloudFrontCalls++
+		if aws.ToInt32(input.MaxItems) != 100 {
+			t.Fatalf("CloudFront input=%#v", input)
+		}
+		return &cloudfront.ListDistributionsOutput{DistributionList: &cloudfronttypes.DistributionList{
+			IsTruncated: aws.Bool(false), Marker: aws.String(""), MaxItems: aws.Int32(100), Quantity: aws.Int32(0),
+		}}, nil
+	}}
+	runtime.s3 = &fakeS3{getBucketLocation: func(_ context.Context, input *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error) {
+		s3Calls++
+		if aws.ToString(input.Bucket) != "udg-kr-game-binary" {
+			t.Fatalf("S3 input=%#v", input)
+		}
+		return &s3.GetBucketLocationOutput{LocationConstraint: s3types.BucketLocationConstraintApNortheast2}, nil
+	}}
+	core, err := NewWithRuntimeFactory(&fakeFactory{runtime: runtime}, nil, func() time.Time { return fixedNow }, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloudFrontResult, err := core.Query(context.Background(), Request{
+		Region: "ap-northeast-2", Provider: awsbrowser.ProviderCloudFront, Operation: awsbrowser.OperationListDistributions,
+		Params: map[string]string{"distribution-domain": "d24odq2ocbsmjd.cloudfront.net"},
+	})
+	if err != nil || !cloudFrontResult.Update.Coverage.Completed || cloudFrontResult.Update.Snapshot.ResourceCount() != 0 {
+		t.Fatalf("CloudFront result=%+v error=%v", cloudFrontResult, err)
+	}
+	s3Result, err := core.Query(context.Background(), Request{
+		Region: "ap-northeast-2", Provider: awsbrowser.ProviderS3, Operation: awsbrowser.OperationGetBucketLocation,
+		Params: map[string]string{"bucket": "udg-kr-game-binary"},
+	})
+	if err != nil || !s3Result.Update.Coverage.Completed || s3Result.Update.Snapshot.ResourceCount() != 1 || cloudFrontCalls != 1 || s3Calls != 1 {
+		t.Fatalf("S3 result=%+v error=%v calls=%d/%d", s3Result, err, cloudFrontCalls, s3Calls)
 	}
 }
 
@@ -489,6 +619,28 @@ func TestRuntimeFailureRetainsNoRawErrorOrSecret(t *testing.T) {
 	}
 	if result.Update.Failure.Kind != awsbrowser.ProviderUnknown || result.Update.Coverage.ContextResolved {
 		t.Fatalf("failure=%+v coverage=%+v", result.Update.Failure, result.Update.Coverage)
+	}
+}
+
+func TestImmediateFailurePublishesTerminalSnapshot(t *testing.T) {
+	failure := Failure{
+		State:     awsbrowser.LoadUnsupported,
+		Kind:      awsbrowser.ProviderUnsupported,
+		Provider:  awsbrowser.ProviderEC2,
+		Operation: awsbrowser.OperationDescribeInstances,
+	}
+	subscription := immediateFailure(failure)
+
+	var updates []Update
+	for update := range subscription.Updates() {
+		updates = append(updates, update)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("updates=%d want=1", len(updates))
+	}
+	update := updates[0]
+	if update.Failure == nil || update.Snapshot.State != awsbrowser.LoadUnsupported || !update.Coverage.Completed {
+		t.Fatalf("update=%+v", update)
 	}
 }
 

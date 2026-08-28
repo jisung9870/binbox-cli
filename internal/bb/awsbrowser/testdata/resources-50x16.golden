@@ -1,16 +1,14 @@
-┌────────────────────────────────────────────────┐
+╭────────────────────────────────────────────────╮
 │ AWS Browser · READ ONLY                        │
 │ Profile dev  Account unresolved  Principal un… │
 │ AWS > EC2 Instances                            │
 │ Ready · 1 resources · fetched 14:32:08         │
+│ Search  type to filter loaded resources        │
 │                                                │
 │ Resources (1) · rows 1-1                       │
 │ > web-api  running                             │
 │                                                │
-│ ↑↓ move  enter detail  esc back  ctrl+r refre… │
 │                                                │
 │                                                │
-│                                                │
-│                                                │
-│                                                │
-└────────────────────────────────────────────────┘
+│ type or / filter  ↑↓ move  →/enter detail  ← … │
+╰────────────────────────────────────────────────╯

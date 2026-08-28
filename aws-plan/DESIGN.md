@@ -10,6 +10,8 @@
 - Evidence reviewed: `internal/bb/aws_browse.go`, `internal/bb/aws_query.go`, `internal/bb/awsbrowser/*`, `internal/bb/awsbrowser/providers/*`, `internal/bb/awsbrowser/integration/*`, root `DESIGN.md`, `docs/product-aws-resource-browser-202608.md`, `docs/design-aws-resource-browser-202608.md`, AWS SDK for Go v2·AWS CLI·Route 53·EC2·IAM 공식 문서, 독립 UX·아키텍처·dependency·코드 감사
 - Supersedes for the AWS surface: root `DESIGN.md`의 preloaded graph, one-list staged selector, 50열 미만 metadata 숨김 계약
 
+현행 화면 계약은 루트 [DESIGN.md](../DESIGN.md)와 [관계 탐색 확장 설계](design-aws-tui-202608.md)가 우선한다. 아래의 3-pane·tab mockup은 초기 설계 기록이며, 구현된 full-viewport single-route stack의 규범이 아니다.
+
 ## Brand
 
 - Personality: AWS Console보다 빠르고, AWS CLI 원문보다 연결 관계가 명확한 운영자용 inspector.

@@ -6,9 +6,11 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -44,6 +46,22 @@ type mutatingRoute53 interface {
 	ChangeResourceRecordSets(context.Context, *route53.ChangeResourceRecordSetsInput, ...func(*route53.Options)) (*route53.ChangeResourceRecordSetsOutput, error)
 }
 
+type optionBearingCloudFront interface {
+	ListDistributions(context.Context, *cloudfront.ListDistributionsInput, ...func(*cloudfront.Options)) (*cloudfront.ListDistributionsOutput, error)
+}
+
+type mutatingCloudFront interface {
+	CreateDistribution(context.Context, *cloudfront.CreateDistributionInput, ...func(*cloudfront.Options)) (*cloudfront.CreateDistributionOutput, error)
+}
+
+type optionBearingS3 interface {
+	GetBucketLocation(context.Context, *s3.GetBucketLocationInput, ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
+}
+
+type mutatingS3 interface {
+	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+}
+
 func TestSDKRuntimeHasNoPublicEscapeHatches(t *testing.T) {
 	typeOf := reflect.TypeOf(sdkRuntime{})
 	if reflect.PointerTo(typeOf).Implements(reflect.TypeOf((*RuntimeContext)(nil)).Elem()) {
@@ -57,11 +75,13 @@ func TestSDKRuntimeHasNoPublicEscapeHatches(t *testing.T) {
 	}
 
 	approved := map[string]bool{
-		"EC2":      true,
-		"IAM":      true,
-		"Identity": true,
-		"Route53":  true,
-		"STS":      true,
+		"EC2":        true,
+		"CloudFront": true,
+		"IAM":        true,
+		"Identity":   true,
+		"Route53":    true,
+		"S3":         true,
+		"STS":        true,
 	}
 	runtimeContract := reflect.TypeOf((*RuntimeContext)(nil)).Elem()
 	for i := 0; i < runtimeContract.NumMethod(); i++ {
@@ -124,6 +144,22 @@ func TestRuntimeContextReturnsOnlyNarrowPrivateAdapters(t *testing.T) {
 			contract:      reflect.TypeOf((*Route53API)(nil)).Elem(),
 			optionBearing: func(value any) bool { _, ok := value.(optionBearingRoute53); return ok },
 			mutating:      func(value any) bool { _, ok := value.(mutatingRoute53); return ok },
+		},
+		{
+			name:          "CloudFront",
+			value:         runtime.CloudFront(),
+			concrete:      reflect.TypeOf((*cloudfront.Client)(nil)),
+			contract:      reflect.TypeOf((*CloudFrontAPI)(nil)).Elem(),
+			optionBearing: func(value any) bool { _, ok := value.(optionBearingCloudFront); return ok },
+			mutating:      func(value any) bool { _, ok := value.(mutatingCloudFront); return ok },
+		},
+		{
+			name:          "S3",
+			value:         runtime.S3(),
+			concrete:      reflect.TypeOf((*s3.Client)(nil)),
+			contract:      reflect.TypeOf((*S3API)(nil)).Elem(),
+			optionBearing: func(value any) bool { _, ok := value.(optionBearingS3); return ok },
+			mutating:      func(value any) bool { _, ok := value.(mutatingS3); return ok },
 		},
 	}
 

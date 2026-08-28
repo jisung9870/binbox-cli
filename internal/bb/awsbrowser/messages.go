@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	contextProfileRE           = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	contextProfileRE           = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 	contextRegionRE            = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+-[0-9]+$`)
 	errInvalidContextSelection = errors.New("invalid AWS context selection")
 )
@@ -46,6 +46,7 @@ type Intent struct {
 	Target     string
 	Profile    string
 	Region     string
+	Regions    string
 	SearchKind string
 	Query      string
 	Scope      string
@@ -70,12 +71,18 @@ type ProjectionRelation struct {
 	ObservedAt string
 }
 
+type ProjectionTag struct {
+	Key   string
+	Value string
+}
+
 type ResourceProjection struct {
 	Target    string
 	Title     string
 	Subtitle  string
 	Fields    []ProjectionField
 	Relations []ProjectionRelation
+	Tags      []ProjectionTag
 	// Context is the exact credential-free execution context that produced this
 	// resource. It is per-resource because cross-profile results may span
 	// accounts; callers must not promote it to one list-wide context.
@@ -153,6 +160,31 @@ type IntentDispatcher interface {
 	Dispatch(context.Context, Intent) (IntentStream, error)
 }
 
+// ContextChoice is one credential-free configured profile candidate. Region is
+// a non-secret default read from shared AWS configuration and remains editable
+// before verification.
+type ContextChoice struct {
+	Profile string
+	Region  string
+	Group   string
+	Regions []string
+}
+
+// ContextResolution contains only verified identity metadata or one sanitized
+// typed failure. Account and principal are always derived from the selected
+// profile's credentials; callers never supply either value.
+type ContextResolution struct {
+	Context *AWSContext
+	Failure *ProviderFailure
+}
+
+// ContextCatalog is an optional browser capability. Listing is local-only;
+// resolving is an explicit credential and STS identity operation.
+type ContextCatalog interface {
+	ListContexts(context.Context) ([]ContextChoice, error)
+	ResolveContext(context.Context, string, string) (ContextResolution, error)
+}
+
 // IntentResultMsg is emitted by the first async command. Subsequent stream
 // items are wrapped internally by Model so late messages can be generation
 // fenced after Back, refresh, or route replacement.
@@ -196,19 +228,166 @@ func ProjectQueryUpdate(update QueryUpdate) IntentProjection {
 // ProjectResourceFields applies the same sanitized, provider-independent
 // projection boundary to canonical search resources and streamed query pages.
 func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProjection {
+	title := projectionTitle(key, fields)
+	detail := projectionSubtitle(fields)
+	subtitle := detail
+	if title != safeIntentText(key.ID) {
+		subtitle = safeIntentText(key.ID)
+		if detail != "" {
+			subtitle += " · " + detail
+		}
+	}
+	projectedFields := projectFields(fields)
+	relations := withoutSelfRelations(key, projectRelations(fields))
+	tags := projectTags(fields)
+	switch key.Type {
+	case "ec2.security-group":
+		projectedFields = withoutProjectionField(projectedFields, "Rules")
+		relations = append(relations,
+			ProjectionRelation{
+				Label: "Inbound rules", Target: "ec2.security-group-rules-inbound:" + key.ID,
+				Kind: "scoped-query", Reason: "security group inbound rules", Scope: key.Region,
+			},
+			ProjectionRelation{
+				Label: "Outbound rules", Target: "ec2.security-group-rules-outbound:" + key.ID,
+				Kind: "scoped-query", Reason: "security group outbound rules", Scope: key.Region,
+			},
+		)
+	case "ec2.security-group-rule":
+		title = securityGroupRuleTitle(fields)
+		subtitle = safeIntentText(key.ID)
+		if description, ok := fields["description"].(string); ok && strings.TrimSpace(description) != "" {
+			subtitle += " · " + safeIntentText(description)
+		}
+	case "iam.role":
+		relations = append(relations,
+			ProjectionRelation{
+				Label: "Attached policies", Target: "iam.role-attached-policies:" + key.ID,
+				Kind: "scoped-query", Reason: "managed policies attached to role", Scope: GlobalRegion,
+			},
+			ProjectionRelation{
+				Label: "Inline policies", Target: "iam.role-inline-policies:" + key.ID,
+				Kind: "scoped-query", Reason: "inline policies embedded in role", Scope: GlobalRegion,
+			},
+		)
+	case "iam.managed-policy":
+		if versionID, ok := fields["default_version_id"].(string); ok && strings.TrimSpace(versionID) != "" {
+			relations = append(relations, ProjectionRelation{
+				Label: "Default policy document", Target: "iam.managed-policy-version:" + key.ID + ":" + versionID,
+				Kind: "scoped-query", Reason: "managed policy default version document", Scope: GlobalRegion,
+			})
+		}
+	case "iam.managed-policy-version":
+		policyARN, _ := fields["policy_arn"].(string)
+		versionID, _ := fields["version_id"].(string)
+		policyName := policyARN
+		if index := strings.LastIndex(policyARN, "/"); index >= 0 && index < len(policyARN)-1 {
+			policyName = policyARN[index+1:]
+		}
+		if strings.TrimSpace(policyName) != "" && strings.TrimSpace(versionID) != "" {
+			title = safeIntentText(policyName + " · " + versionID)
+			subtitle = safeIntentText(policyARN)
+		}
+	case "hosted-zone":
+		relations = append(relations, ProjectionRelation{
+			Label: "DNS records", Target: "route53.records:" + key.ID,
+			Kind: "scoped-query", Reason: "record sets in hosted zone", Scope: GlobalRegion,
+		})
+	}
 	return ResourceProjection{
-		Target: key.Type + ":" + key.ID, Title: projectionTitle(key, fields), Subtitle: projectionSubtitle(fields),
-		Fields: projectFields(fields), Relations: projectRelations(fields),
+		Target: key.Type + ":" + key.ID, Title: title, Subtitle: subtitle,
+		Fields: projectedFields, Relations: relations, Tags: tags,
 	}
 }
 
-func projectionTitle(key ResourceKey, fields map[string]any) string {
-	for _, name := range []string{"name", "role_name", "dns_name", "record_name"} {
+func withoutSelfRelations(key ResourceKey, relations []ProjectionRelation) []ProjectionRelation {
+	target := key.Type + ":" + key.ID
+	result := make([]ProjectionRelation, 0, len(relations))
+	for _, relation := range relations {
+		if relation.Target != target {
+			result = append(result, relation)
+		}
+	}
+	return result
+}
+
+func withoutProjectionField(fields []ProjectionField, label string) []ProjectionField {
+	result := make([]ProjectionField, 0, len(fields))
+	for _, field := range fields {
+		if field.Label != label {
+			result = append(result, field)
+		}
+	}
+	return result
+}
+
+func securityGroupRuleTitle(fields map[string]any) string {
+	protocol, _ := fields["protocol"].(string)
+	protocol = strings.ToUpper(strings.TrimSpace(protocol))
+	if protocol == "" {
+		protocol = "Rule"
+	} else if protocol == "-1" {
+		protocol = "All traffic"
+	}
+	from, fromOK := fields["from_port"].(int32)
+	to, toOK := fields["to_port"].(int32)
+	if protocol != "All traffic" && fromOK && toOK {
+		if from == to {
+			protocol += fmt.Sprintf(" %d", from)
+		} else {
+			protocol += fmt.Sprintf(" %d–%d", from, to)
+		}
+	}
+	peer := firstProjectionString(fields, "cidr_ipv4", "cidr_ipv6", "prefix_list_id")
+	if peer == "" {
+		if reference, ok := fields["referenced_group"].(map[string]any); ok {
+			peer, _ = reference["group_id"].(string)
+		}
+	}
+	if strings.TrimSpace(peer) != "" {
+		return protocol + " · " + safeIntentText(peer)
+	}
+	return protocol
+}
+
+func firstProjectionString(fields map[string]any, names ...string) string {
+	for _, name := range names {
 		if value, ok := fields[name].(string); ok && strings.TrimSpace(value) != "" {
-			return safeIntentText(value) + " · " + safeIntentText(key.ID)
+			return value
+		}
+	}
+	return ""
+}
+
+func projectionTitle(key ResourceKey, fields map[string]any) string {
+	if tags, ok := fields["tags"].(map[string]string); ok {
+		if value := strings.TrimSpace(tags["Name"]); value != "" {
+			return safeIntentText(value)
+		}
+	}
+	for _, name := range []string{"name", "role_name", "instance_profile_name", "policy_name", "dns_name", "record_name", "domain_name", "bucket_name", "distribution_id"} {
+		if value, ok := fields[name].(string); ok && strings.TrimSpace(value) != "" {
+			return safeIntentText(value)
 		}
 	}
 	return safeIntentText(key.ID)
+}
+
+func projectTags(fields map[string]any) []ProjectionTag {
+	tags, ok := fields["tags"].(map[string]string)
+	if !ok || len(tags) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(tags))
+	for key := range tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]ProjectionTag, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, ProjectionTag{Key: safeIntentText(key), Value: safeIntentText(tags[key])})
+	}
+	return result
 }
 
 func projectionSubtitle(fields map[string]any) string {
@@ -223,7 +402,7 @@ func projectionSubtitle(fields map[string]any) string {
 func projectFields(fields map[string]any) []ProjectionField {
 	names := make([]string, 0, len(fields))
 	for name := range fields {
-		if name != "relations" && name != "alias_relation" && name != "zone_relation" {
+		if name != "relations" && name != "alias_relation" && name != "zone_relation" && name != "tags" {
 			names = append(names, name)
 		}
 	}
@@ -326,6 +505,9 @@ func projectRelations(fields map[string]any) []ProjectionRelation {
 		if !ok {
 			continue
 		}
+		if label == "" {
+			label, _ = relation["label"].(string)
+		}
 		target, hasTarget := relation["target"].(ResourceKey)
 		kind, _ := relation["kind"].(string)
 		reason, _ := relation["reason"].(string)
@@ -358,8 +540,11 @@ func projectRelations(fields map[string]any) []ProjectionRelation {
 func NavigableRelationTargetType(resourceType string) bool {
 	switch resourceType {
 	case "ec2.instance", "ec2.volume", "ec2.security-group", "ec2.security-group-rule",
+		"ec2.security-group-rules-inbound", "ec2.security-group-rules-outbound",
 		"ec2.vpc", "ec2.subnet", "ec2.route-table", "iam.role", "iam.instance-profile",
-		"iam.managed-policy", "iam.inline-policy", "iam.managed-policy-version", "hosted-zone":
+		"iam.role-attached-policies", "iam.role-inline-policies", "iam.managed-policy", "iam.inline-policy",
+		"iam.managed-policy-version", "hosted-zone", "route53.records",
+		"cloudfront.distribution-domain", "s3.bucket":
 		return true
 	default:
 		return false

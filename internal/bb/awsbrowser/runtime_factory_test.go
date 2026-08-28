@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
 )
@@ -163,6 +165,18 @@ func (route53Stub) ListResourceRecordSets(context.Context, *route53.ListResource
 	return &route53.ListResourceRecordSetsOutput{}, nil
 }
 
+type cloudFrontStub struct{}
+
+func (cloudFrontStub) ListDistributions(context.Context, *cloudfront.ListDistributionsInput, ...func(*cloudfront.Options)) (*cloudfront.ListDistributionsOutput, error) {
+	return &cloudfront.ListDistributionsOutput{}, nil
+}
+
+type s3Stub struct{}
+
+func (s3Stub) GetBucketLocation(context.Context, *s3.GetBucketLocationInput, ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
+	return &s3.GetBucketLocationOutput{}, nil
+}
+
 func fakeSDKRuntime(provider *CredentialProvider, identity func(int) *sts.GetCallerIdentityOutput, ec2Client rawEC2API) (*sdkRuntime, *credentialSTS) {
 	cache := aws.NewCredentialsCache(provider)
 	stsClient := &credentialSTS{cache: cache, identity: identity}
@@ -176,6 +190,8 @@ func fakeSDKRuntime(provider *CredentialProvider, identity func(int) *sts.GetCal
 		ec2:              ec2Client,
 		iam:              iamStub{},
 		route53:          route53Stub{},
+		cloudfront:       cloudFrontStub{},
+		s3:               s3Stub{},
 	}, stsClient
 }
 

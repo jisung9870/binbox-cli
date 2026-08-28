@@ -127,7 +127,7 @@ func TestExecCLIParsesProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"default", "dev-1", "prod_2"}; !reflect.DeepEqual(profiles, want) {
+	if want := []string{"default", "dev-1", "prod_2", "LG-PAK/common-ops-policy"}; !reflect.DeepEqual(profiles, want) {
 		t.Fatalf("profiles=%q want=%q", profiles, want)
 	}
 }
@@ -254,7 +254,7 @@ func runCLIHelperProcess(mode string, extra []string) {
 	switch mode {
 	case "success":
 	case "list-profiles":
-		_, _ = os.Stdout.WriteString("default\r\ndev-1\nprod_2\n")
+		_, _ = os.Stdout.WriteString("default\r\ndev-1\nprod_2\nLG-PAK/common-ops-policy\n")
 	case "invalid-profiles":
 		_, _ = os.Stdout.WriteString("default\nunsafe\x1bprofile\n")
 	case "stdout-overflow":

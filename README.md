@@ -44,7 +44,9 @@ bb aws sso corp
 bb aws assume dev
 bb aws assume current
 bb aws assume exec dev -- aws sts get-caller-identity
-# Open the local-first progressive browser; AWS calls begin only after intent.
+# Open the local-first progressive browser; press c to select a configured
+# profile, region, and current/all configured-region scope, then verify the
+# account through STS and apply it.
 bb aws browse --profile dev --region ap-northeast-2
 # Scoped automation uses stdout and supports exact cross-profile searches.
 bb aws query ec2 instances --profile dev --region ap-northeast-2 --json
@@ -134,9 +136,44 @@ successful `bb wenv <preset>` output in the current shell. It has no checkout,
 `BB_ROOT`, or libexec dependency.
 
 The AWS resource browser is a dedicated progressive TUI rather than the shared
-staged selector. Its Home screen is local-only; explicit category/relation
-opens use narrowed AWS SDK for Go v2 EC2, IAM, and Route 53 read providers after
+staged selector. Without `--profile`, it begins with local configured-profile
+selection; an explicit profile begins at Home. Escape from the initial selector
+continues to ambient Home. Both startup paths remain local-only; category/relation
+opens use narrowed AWS SDK for Go v2 EC2, IAM, Route 53, CloudFront, and S3 read providers after
 AWS CLI profile discovery/credential export and SDK STS identity verification.
+Typing in a loaded resource list or the `c` profile selector filters locally
+without an AWS request. AWS resource rows prefer a non-blank `Name` tag, then a
+native resource name such as an SG group name, and finally the stable resource
+ID; when a name is used, the ID remains visible as secondary identity. Opening
+a resource lands on a compact Summary with identity/status fields and relation,
+Detail, and Tags categories. Detail shows the full projected field set only when
+requested. Relationships are grouped into categories such as Security groups
+and Volumes; opening a category is local-only and shows its related resources
+in a dedicated list before any linked-resource request runs. If that linked
+exact lookup returns one resource, the browser skips `Resources (1)` and opens
+its Summary directly; actual collections and multiple results keep their list.
+Related-resource lists also filter locally as the operator types. PageUp/PageDown
+scroll long detail fields independently of category selection. In browser
+screens, Right or Enter opens the selection and Left returns one screen. A
+Security Group detail exposes direct Inbound rules and Outbound rules lists;
+each row summarizes protocol, ports, peer, rule ID, and description instead of
+showing one embedded rules JSON value. Resource tags are removed from inline
+details and exposed through a locally searchable `Tags` category.
+IAM Role summaries similarly expose Attached policies and Inline policies;
+managed policies link to their default policy document. Route 53 Hosted Zone
+summaries expose DNS records. Policy documents and record routing/alias values
+are expanded as readable multi-line JSON in Detail. A CloudFront Route 53 Alias
+can be traced to its same-account distribution, then through an Origins category
+whose rows retain `Default /*` and cache-behavior path patterns, and finally to
+an S3 bucket Summary with its API-verified region. Unknown alias/custom origins
+remain relationship evidence rather than being guessed as owned resources.
+The browser uses the full terminal as a k9s-style workspace with adaptive
+status/selection colors; additional height shows more rows instead of adding
+outer whitespace. `:` opens resource/action commands (`ec2`, `vpc`, `route53`,
+`iam`, `context`, `search`, `home`, `refresh`), `/` explicitly focuses the
+current local filter, and `Ctrl-o`/`Ctrl-i` move backward/forward through browser
+history. Direct typing still filters without requiring `/`. `NO_COLOR=1` keeps
+the same hierarchy without ANSI styling.
 Cross-profile domain/role search runs only after submit, with bounded concurrency
 and per-profile coverage. `bb aws browse` is interactive and has no `--json`;
 automation uses `bb aws query`. Automated Linux PTY process checks and the
@@ -145,6 +182,22 @@ release-size targets) pass and are committed. Optional direct tmux/interactive
 resize observation and owner-approved 12-profile real AWS latency, identity,
 and CloudTrail evidence remain manual/external acceptance, so this branch is
 not yet a released AWS browser.
+
+Optional AWS context groups live at `$XDG_CONFIG_HOME/bb/aws-contexts.json`, or
+the OS user-config directory when `XDG_CONFIG_HOME` is unset (`~/.config/bb` on WSL/Linux).
+They contain only profile and region names. In the `c` selector, choose a grouped
+profile, select the current region, then switch Scope to `All <group> regions`.
+EC2 and VPC catalog reads merge those regions with per-region coverage; IAM,
+Route 53, and CloudFront remain one global read, and opening a resource pins its
+observed region for every subsequent detail request.
+
+For the UDG group on WSL/Linux:
+
+```sh
+mkdir -p ~/.config/bb
+cp docs/examples/aws-contexts.udg.json ~/.config/bb/aws-contexts.json
+chmod 600 ~/.config/bb/aws-contexts.json
+```
 
 bb-owned structured reads are formatted as human-readable labels and tables by
 default. Add `--json` for automation and the stable schema-v1 envelope:

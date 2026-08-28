@@ -7,7 +7,7 @@
 다음 검토   선택적 tmux/interactive resize 관찰 및 실계정 gate 승인 시
 상태        구현·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 
-`bb aws browse`는 시작할 때 전체 AWS inventory를 만들지 않는다. 로컬 정보로 서비스 카탈로그를 즉시 열고, EC2·Route 53·IAM 같은 카테고리에 들어가거나 연결 리소스를 선택할 때 필요한 조회만 실행한다. 도메인·IAM role처럼 소유 계정을 모를 수 있는 검색은 사용자가 검색을 확정한 뒤 여러 AWS profile을 제한된 동시성으로 자동 조회한다.
+`bb aws browse`는 시작할 때 전체 AWS inventory를 만들지 않는다. 로컬 정보로 서비스 카탈로그를 즉시 열고, EC2·Route 53·IAM 같은 카테고리에 들어가거나 연결 리소스를 선택할 때 필요한 조회만 실행한다. 도메인·IAM role처럼 소유 계정을 모를 수 있는 검색은 사용자가 검색을 확정한 뒤 여러 AWS profile을 제한된 동시성으로 자동 조회한다. 멀티계정 역방향·경로·diff는 이 live 경로를 교체하지 않고 선택적 snapshot graph로 확장한다.
 
 ## 이번 기획에서 바뀌는 결론
 
@@ -18,6 +18,8 @@
 - EC2 → EBS/SG/instance profile → IAM role → policy 이동을 같은 탐색 stack 안에서 처리한다.
 - 도메인·role cross-profile 검색은 모든 키 입력마다 실행하지 않고, 검색 확정 시 선택 범위의 profile을 자동 fan-out 한다.
 - AWS 변경 API는 계속 금지한다. Browser runtime에서 AWS CLI는 profile discovery와 ambient/named credential export만 맡고, AWS SDK for Go v2가 STS·EC2·IAM·Route 53 read operation을 실행한다. 기존 SSO login/assume 명령은 별도 호환 surface다.
+- AWS TUI는 전체 viewport를 사용하는 k9s-inspired workspace다. `:` command, `/` local filter, `Ctrl-o`/`Ctrl-i` history를 제공하지만 k9s의 mutation과 cluster 문맥은 가져오지 않는다.
+- 멀티계정 관계 확장은 live exact read와 optional snapshot graph를 분리하고 ResourceKey·RelationEvidence·query service를 공유한다.
 
 ## 문서 지도
 
@@ -28,6 +30,8 @@
 - [ADR-001-HYBRID-AWS-ACCESS.md](ADR-001-HYBRID-AWS-ACCESS.md): SDK data-plane과 CLI credential/control-plane 채택 결정.
 - [IMPLEMENTATION-WORKFLOW.md](IMPLEMENTATION-WORKFLOW.md): 역할·모델, wave, 파일 소유권, 단계별 gate와 rollback 방식.
 - [REVIEW.md](REVIEW.md): 반복 독립 검토 결과, 반영 여부, 구현 영향 범위.
+- [design-aws-tui-202608.md](design-aws-tui-202608.md): 현행 live browser에서 출발하는 관계 탐색·snapshot graph 확장 설계.
+- [spec-aws-tui-relations-202608.md](spec-aws-tui-relations-202608.md): 관계 Tier, evidence·coverage 계약, vertical-slice 완료 조건.
 
 ## 기존 작업과의 관계
 
@@ -37,6 +41,6 @@
 
 - exact domain/role cross-profile 검색은 AWS CLI가 인식하는 모든 profile을 기본 범위로 사용한다. 현재 context를 먼저 검색하고 사용자는 제출 전에 범위를 줄일 수 있다.
 - AWS resource 조회는 SDK만 사용한다. CLI resource-operation fallback은 만들지 않는다.
-- P0의 EC2/VPC 탐색은 선택한 region 하나만 조회한다. multi-region fan-out은 P1이다.
-- 40x12까지 single-pane card layout을 제공한다. 시작 terminal이 더 작으면 plain command loop를 열고, 실행 중 resize로 작아지면 resize 또는 plain 재실행 안내를 표시한다.
+- EC2 instances와 VPC catalog는 configured context group의 current/all-region scope를 지원하고 current region부터 동시성 2로 조회한다. Global service는 region fan-out하지 않는다.
+- 40x12 이상은 전체 viewport를 사용한다. 시작 terminal이 더 작으면 plain command loop를 열고, 실행 중 resize로 작아지면 resize 또는 plain 재실행 안내를 표시한다.
 - unreleased v1 `aws_browse.go`는 별도 호환 layer 없이 교체한다. 이전 코드는 Git history에 남는다.

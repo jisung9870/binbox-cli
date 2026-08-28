@@ -45,4 +45,6 @@ type RuntimeContext interface {
 	EC2() EC2API
 	IAM() IAMAPI
 	Route53() Route53API
+	CloudFront() CloudFrontAPI
+	S3() S3API
 }

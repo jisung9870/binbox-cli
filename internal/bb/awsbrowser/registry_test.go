@@ -44,10 +44,12 @@ func (runtime *registryRuntimeFake) setGeneration(generation uint64) {
 	runtime.mu.Unlock()
 }
 
-func (*registryRuntimeFake) STS() STSAPI         { return nil }
-func (*registryRuntimeFake) EC2() EC2API         { return nil }
-func (*registryRuntimeFake) IAM() IAMAPI         { return nil }
-func (*registryRuntimeFake) Route53() Route53API { return nil }
+func (*registryRuntimeFake) STS() STSAPI               { return nil }
+func (*registryRuntimeFake) EC2() EC2API               { return nil }
+func (*registryRuntimeFake) IAM() IAMAPI               { return nil }
+func (*registryRuntimeFake) Route53() Route53API       { return nil }
+func (*registryRuntimeFake) CloudFront() CloudFrontAPI { return nil }
+func (*registryRuntimeFake) S3() S3API                 { return nil }
 
 func TestContextRegistryIsLazyAndMemoized(t *testing.T) {
 	spec := ContextSpec{Mode: ContextModeNamedProfile, Profile: "dev", Region: "us-east-1"}

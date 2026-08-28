@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "name": "UDG",
+      "profiles": [
+        "lg-udg-ops",
+        "lg-udg-adm",
+        "lg-udg-qa-ops"
+      ],
+      "regions": [
+        "ap-northeast-2",
+        "ap-southeast-1",
+        "us-east-1",
+        "eu-central-1"
+      ],
+      "default_profile": "lg-udg-ops",
+      "default_region": "ap-northeast-2"
+    }
+  ]
+}

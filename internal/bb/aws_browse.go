@@ -57,8 +57,9 @@ func (a *App) awsBrowse(args []string) error {
 		_, err := fmt.Fprint(a.out, `Usage:
   bb aws browse [--profile NAME] [--region REGION]
 
-Opens the read-only interactive AWS browser. The Home screen is local-only;
-AWS access starts only after an explicit resource or search intent.
+Opens the read-only interactive AWS browser. Without --profile, configured
+profile selection opens first and remains local-only until explicit verification.
+With --profile, the Home screen opens first without AWS access.
 For automation, use a scoped "bb aws query ... --json" command.
 `)
 		return err

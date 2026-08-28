@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -17,6 +19,8 @@ var errUnsupportedAWSIntent = errors.New("unsupported AWS browser target")
 
 type awsIntentCore interface {
 	Subscribe(context.Context, awsintegration.Request) (*awsintegration.Subscription, error)
+	Resolve(context.Context, awsintegration.ContextRequest) (awsintegration.ContextResult, error)
+	ListContexts(context.Context) ([]awsbrowser.ContextChoice, error)
 }
 
 type awsIntentSearch interface {
@@ -33,10 +37,13 @@ type awsRuntime struct {
 // Runner, or the browser Home screen performs no PATH lookup, CLI invocation,
 // profile resolution, credential resolution, or SDK call.
 type lazyAWSRuntime struct {
-	app     *App
-	once    sync.Once
-	runtime *awsRuntime
-	err     error
+	app        *App
+	once       sync.Once
+	runtime    *awsRuntime
+	err        error
+	groupsOnce sync.Once
+	groups     []awsbrowser.ContextGroup
+	groupsErr  error
 }
 
 func newLazyAWSRuntime(app *App) *lazyAWSRuntime { return &lazyAWSRuntime{app: app} }
@@ -80,6 +87,42 @@ func (runtime *lazyAWSRuntime) Dispatch(ctx context.Context, intent awsbrowser.I
 	return (&awsIntentDispatcher{core: binding.core, search: binding.search}).Dispatch(ctx, intent)
 }
 
+func (runtime *lazyAWSRuntime) ListContexts(ctx context.Context) ([]awsbrowser.ContextChoice, error) {
+	binding, err := runtime.initialize()
+	if err != nil {
+		return nil, err
+	}
+	choices, err := (&awsIntentDispatcher{core: binding.core, search: binding.search}).ListContexts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	groups, err := runtime.contextGroups()
+	if err != nil {
+		return nil, err
+	}
+	return awsbrowser.ApplyContextGroups(choices, groups), nil
+}
+
+func (runtime *lazyAWSRuntime) contextGroups() ([]awsbrowser.ContextGroup, error) {
+	runtime.groupsOnce.Do(func() {
+		configRoot, _, err := runtime.app.paths()
+		if err != nil {
+			runtime.groupsErr = awsbrowser.ErrInvalidContextGroups
+			return
+		}
+		runtime.groups, runtime.groupsErr = awsbrowser.LoadContextGroups(filepath.Join(configRoot, awsbrowser.AWSContextGroupsFilename))
+	})
+	return runtime.groups, runtime.groupsErr
+}
+
+func (runtime *lazyAWSRuntime) ResolveContext(ctx context.Context, profile, region string) (awsbrowser.ContextResolution, error) {
+	binding, err := runtime.initialize()
+	if err != nil {
+		return awsbrowser.ContextResolution{}, err
+	}
+	return (&awsIntentDispatcher{core: binding.core, search: binding.search}).ResolveContext(ctx, profile, region)
+}
+
 func (runtime *lazyAWSRuntime) QueryService() (awsQueryService, error) {
 	binding, err := runtime.initialize()
 	if err != nil {
@@ -93,6 +136,36 @@ type awsIntentDispatcher struct {
 	search awsIntentSearch
 }
 
+func (dispatcher *awsIntentDispatcher) ListContexts(ctx context.Context) ([]awsbrowser.ContextChoice, error) {
+	if dispatcher == nil || dispatcher.core == nil || ctx == nil {
+		return nil, errUnsupportedAWSIntent
+	}
+	choices, err := dispatcher.core.ListContexts(ctx)
+	if err != nil {
+		return nil, errUnsupportedAWSIntent
+	}
+	return choices, nil
+}
+
+func (dispatcher *awsIntentDispatcher) ResolveContext(ctx context.Context, profile, region string) (awsbrowser.ContextResolution, error) {
+	if dispatcher == nil || dispatcher.core == nil || ctx == nil || awsbrowser.ValidateContextSelection(profile, region) != nil || profile == "" || region == "" {
+		return awsbrowser.ContextResolution{}, errUnsupportedAWSIntent
+	}
+	result, err := dispatcher.core.Resolve(ctx, awsintegration.ContextRequest{Profile: profile, Region: region})
+	if result.Failure != nil {
+		failure := &awsbrowser.ProviderFailure{
+			State: result.Failure.State, Kind: result.Failure.Kind, Service: result.Failure.Provider,
+			Operation: result.Failure.Operation, Code: result.Failure.Code, RequestID: result.Failure.RequestID,
+		}
+		return awsbrowser.ContextResolution{Failure: failure}, nil
+	}
+	if err != nil || result.Context == nil || result.Context.Validate() != nil || result.Context.Profile != profile || result.Context.Region != region {
+		return awsbrowser.ContextResolution{}, errUnsupportedAWSIntent
+	}
+	contextCopy := *result.Context
+	return awsbrowser.ContextResolution{Context: &contextCopy}, nil
+}
+
 func (dispatcher *awsIntentDispatcher) Dispatch(ctx context.Context, intent awsbrowser.Intent) (awsbrowser.IntentStream, error) {
 	if dispatcher == nil || ctx == nil {
 		return nil, errUnsupportedAWSIntent
@@ -104,6 +177,11 @@ func (dispatcher *awsIntentDispatcher) Dispatch(ctx context.Context, intent awsb
 			return nil, errUnsupportedAWSIntent
 		}
 		request.Refresh = intent.Kind == awsbrowser.IntentRefresh
+		if regions, err := multiRegionIntentRegions(intent); err != nil {
+			return nil, errUnsupportedAWSIntent
+		} else if len(regions) > 1 {
+			return dispatcher.dispatchMultiRegion(ctx, request, regions), nil
+		}
 		return dispatcher.dispatchQuery(ctx, request)
 	case awsbrowser.IntentSearch:
 		request, ok := awsSearchRequestForIntent(intent)
@@ -113,6 +191,22 @@ func (dispatcher *awsIntentDispatcher) Dispatch(ctx context.Context, intent awsb
 		return dispatcher.dispatchSearch(ctx, request), nil
 	default:
 		return nil, errUnsupportedAWSIntent
+	}
+}
+
+func multiRegionIntentRegions(intent awsbrowser.Intent) ([]string, error) {
+	regions, err := awsbrowser.ParseRegionSet(intent.Regions, intent.Region)
+	if err != nil {
+		return nil, err
+	}
+	if len(regions) < 2 {
+		return nil, nil
+	}
+	switch intent.Target {
+	case "ec2-instances", "vpc-networking":
+		return regions, nil
+	default:
+		return nil, nil
 	}
 }
 
@@ -142,6 +236,12 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 			request.Provider, request.Operation, request.Params["group-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSecurityGroups, id
 		case "ec2.security-group-rule":
 			request.Provider, request.Operation, request.Params["security-group-rule-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSecurityGroupRules, id
+		case "ec2.security-group-rules-inbound":
+			request.Provider, request.Operation = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSecurityGroupRules
+			request.Params["group-id"], request.Params["direction"] = id, "ingress"
+		case "ec2.security-group-rules-outbound":
+			request.Provider, request.Operation = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSecurityGroupRules
+			request.Params["group-id"], request.Params["direction"] = id, "egress"
 		case "ec2.vpc":
 			request.Provider, request.Operation, request.Params["vpc-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcs, id
 		case "ec2.subnet":
@@ -150,6 +250,10 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 			request.Provider, request.Operation, request.Params["route-table-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeRouteTables, id
 		case "iam.role":
 			request.Provider, request.Operation, request.Params["role-name"] = awsbrowser.ProviderIAM, awsbrowser.OperationGetRole, id
+		case "iam.role-attached-policies":
+			request.Provider, request.Operation, request.Params["role-name"] = awsbrowser.ProviderIAM, awsbrowser.OperationListAttachedRolePolicies, id
+		case "iam.role-inline-policies":
+			request.Provider, request.Operation, request.Params["role-name"] = awsbrowser.ProviderIAM, awsbrowser.OperationListRolePolicies, id
 		case "iam.instance-profile":
 			request.Provider, request.Operation, request.Params["instance-profile-name"] = awsbrowser.ProviderIAM, awsbrowser.OperationGetInstanceProfile, id
 		case "iam.managed-policy":
@@ -170,6 +274,12 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 			request.Params["policy-arn"], request.Params["version-id"] = id[:index], id[index+1:]
 		case "hosted-zone":
 			request.Provider, request.Operation, request.Params["hosted-zone-id"] = awsbrowser.ProviderRoute53, awsbrowser.OperationListResourceRecordSets, id
+		case "route53.records":
+			request.Provider, request.Operation, request.Params["hosted-zone-id"] = awsbrowser.ProviderRoute53, awsbrowser.OperationListResourceRecordSets, id
+		case "cloudfront.distribution-domain":
+			request.Provider, request.Operation, request.Params["distribution-domain"] = awsbrowser.ProviderCloudFront, awsbrowser.OperationListDistributions, id
+		case "s3.bucket":
+			request.Provider, request.Operation, request.Params["bucket"] = awsbrowser.ProviderS3, awsbrowser.OperationGetBucketLocation, id
 		default:
 			return awsintegration.Request{}, false
 		}
@@ -252,6 +362,229 @@ func (dispatcher *awsIntentDispatcher) dispatchQuery(ctx context.Context, reques
 	return stream, nil
 }
 
+type regionIntentEvent struct {
+	region string
+	update awsbrowser.IntentUpdate
+}
+
+type regionIntentState struct {
+	projection awsbrowser.IntentProjection
+	context    *awsbrowser.AWSContext
+	query      awsbrowser.QueryUpdate
+	done       bool
+}
+
+func (dispatcher *awsIntentDispatcher) dispatchMultiRegion(ctx context.Context, request awsintegration.Request, regions []string) awsbrowser.IntentStream {
+	updates := make(chan awsbrowser.IntentUpdate, 1)
+	queryCtx, cancel := context.WithCancel(ctx)
+	stream := &awsbrowser.ChannelIntentStream{C: updates, CancelFunc: cancel}
+	go func() {
+		defer close(updates)
+		defer cancel()
+		events := make(chan regionIntentEvent, len(regions)*2)
+		semaphore := make(chan struct{}, 2)
+		currentReady := make(chan struct{})
+		var currentReadyOnce sync.Once
+		var workers sync.WaitGroup
+		for regionIndex, region := range regions {
+			regionIndex := regionIndex
+			region := region
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				if regionIndex != 0 {
+					select {
+					case <-currentReady:
+					case <-queryCtx.Done():
+						return
+					}
+				}
+				select {
+				case semaphore <- struct{}{}:
+				case <-queryCtx.Done():
+					return
+				}
+				defer func() { <-semaphore }()
+				regional := request
+				regional.Region = region
+				subscription, err := dispatcher.core.Subscribe(queryCtx, regional)
+				if regionIndex == 0 {
+					currentReadyOnce.Do(func() { close(currentReady) })
+				}
+				if err != nil {
+					emitRegionIntentEvent(queryCtx, events, regionIntentEvent{region: region, update: unsupportedIntentUpdate()})
+					return
+				}
+				defer subscription.Unsubscribe()
+				terminal := false
+				for raw := range subscription.Updates() {
+					converted := intentUpdateFromIntegration(raw)
+					terminal = terminal || converted.Done || multiRegionTerminal(converted.Query.Snapshot.State)
+					if !emitRegionIntentEvent(queryCtx, events, regionIntentEvent{region: region, update: converted}) {
+						return
+					}
+					if terminal {
+						return
+					}
+				}
+				if !terminal {
+					failure := unsupportedIntentUpdate()
+					failure.Query.Snapshot.State = awsbrowser.LoadUnknown
+					failure.Query.Failure.State = awsbrowser.LoadUnknown
+					emitRegionIntentEvent(queryCtx, events, regionIntentEvent{region: region, update: failure})
+				}
+			}()
+		}
+		go func() {
+			workers.Wait()
+			close(events)
+		}()
+
+		states := make(map[string]*regionIntentState, len(regions))
+		for _, region := range regions {
+			states[region] = &regionIntentState{}
+		}
+		for event := range events {
+			state := states[event.region]
+			state.query = event.update.Query
+			if event.update.Context != nil && event.update.Context.Validate() == nil {
+				copy := *event.update.Context
+				state.context = &copy
+			}
+			projection := projectionWithContext(event.update.Projection, state.context)
+			if projection.Resources != nil || event.update.Query.Snapshot.State == awsbrowser.LoadEmpty {
+				state.projection = projection
+			}
+			state.done = state.done || event.update.Done || multiRegionTerminal(event.update.Query.Snapshot.State)
+			aggregate := aggregateRegionIntent(request.Profile, request.Region, regions, states)
+			select {
+			case updates <- aggregate:
+			case <-queryCtx.Done():
+				return
+			}
+			if aggregate.Done {
+				return
+			}
+		}
+	}()
+	return stream
+}
+
+func emitRegionIntentEvent(ctx context.Context, events chan<- regionIntentEvent, event regionIntentEvent) bool {
+	select {
+	case events <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func multiRegionTerminal(state awsbrowser.LoadState) bool {
+	switch state {
+	case awsbrowser.LoadReady, awsbrowser.LoadEmpty, awsbrowser.LoadStale, awsbrowser.LoadForbidden,
+		awsbrowser.LoadAuthRequired, awsbrowser.LoadThrottled, awsbrowser.LoadTimedOut,
+		awsbrowser.LoadCancelled, awsbrowser.LoadUnsupported, awsbrowser.LoadUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func projectionWithContext(projection awsbrowser.IntentProjection, awsContext *awsbrowser.AWSContext) awsbrowser.IntentProjection {
+	result := awsbrowser.IntentProjection{Resources: append([]awsbrowser.ResourceProjection(nil), projection.Resources...)}
+	if awsContext == nil || awsContext.Validate() != nil {
+		return result
+	}
+	for index := range result.Resources {
+		copy := *awsContext
+		result.Resources[index].Context = &copy
+	}
+	return result
+}
+
+func aggregateRegionIntent(profile, current string, regions []string, states map[string]*regionIntentState) awsbrowser.IntentUpdate {
+	result := awsbrowser.IntentUpdate{
+		Query:    awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: awsbrowser.LoadLoading}},
+		Coverage: &awsbrowser.SearchCoverage{Profiles: make([]awsbrowser.SearchProfileCoverage, 0, len(regions))},
+	}
+	regionOrder := make(map[string]int, len(regions))
+	completed, successful := 0, 0
+	var firstFailure *awsbrowser.ProviderFailure
+	for index, region := range regions {
+		regionOrder[region] = index
+		state := states[region]
+		coverage := awsbrowser.SearchProfileCoverage{Profile: profile, Region: region, Current: region == current, Status: "not_searched"}
+		if state.context != nil {
+			coverage.AccountID = state.context.AccountID
+			if region == current {
+				copy := *state.context
+				result.Context = &copy
+				result.Query.Key = state.query.Key
+			}
+		}
+		if len(state.projection.Resources) != 0 {
+			coverage.Status = "matched"
+			coverage.Matches = len(state.projection.Resources)
+			resources := append([]awsbrowser.ResourceProjection(nil), state.projection.Resources...)
+			for index := range resources {
+				if resources[index].Subtitle == "" {
+					resources[index].Subtitle = region
+				} else {
+					resources[index].Subtitle += " · " + region
+				}
+			}
+			result.Projection.Resources = append(result.Projection.Resources, resources...)
+		} else if state.done && state.query.Failure == nil {
+			coverage.Status = "not_found"
+		} else if state.query.Failure != nil {
+			coverage.Status = string(state.query.Failure.State)
+		}
+		if state.query.Failure != nil && firstFailure == nil {
+			copy := *state.query.Failure
+			firstFailure = &copy
+		}
+		if state.done {
+			completed++
+			if state.query.Failure == nil {
+				successful++
+			}
+		}
+		result.Coverage.Profiles = append(result.Coverage.Profiles, coverage)
+	}
+	sort.SliceStable(result.Projection.Resources, func(left, right int) bool {
+		leftRegion, rightRegion := "", ""
+		if result.Projection.Resources[left].Context != nil {
+			leftRegion = result.Projection.Resources[left].Context.Region
+		}
+		if result.Projection.Resources[right].Context != nil {
+			rightRegion = result.Projection.Resources[right].Context.Region
+		}
+		if regionOrder[leftRegion] != regionOrder[rightRegion] {
+			return regionOrder[leftRegion] < regionOrder[rightRegion]
+		}
+		if result.Projection.Resources[left].Title != result.Projection.Resources[right].Title {
+			return result.Projection.Resources[left].Title < result.Projection.Resources[right].Title
+		}
+		return result.Projection.Resources[left].Target < result.Projection.Resources[right].Target
+	})
+	result.Coverage.Partial = firstFailure != nil
+	if completed != len(regions) {
+		return result
+	}
+	result.Done = true
+	if len(result.Projection.Resources) != 0 {
+		result.Query.Snapshot.State = awsbrowser.LoadReady
+	} else if successful != 0 {
+		result.Query.Snapshot.State = awsbrowser.LoadEmpty
+	} else if firstFailure != nil {
+		result.Query.Snapshot.State = firstFailure.State
+		result.Query.Failure = firstFailure
+	} else {
+		result.Query.Snapshot.State = awsbrowser.LoadUnknown
+	}
+	return result
+}
+
 func intentUpdateFromIntegration(update awsintegration.Update) awsbrowser.IntentUpdate {
 	converted := awsbrowser.IntentUpdate{Query: awsbrowser.QueryUpdate{Snapshot: update.Snapshot}, Done: update.Coverage.Completed}
 	if update.Key != nil {
@@ -267,6 +600,7 @@ func intentUpdateFromIntegration(update awsintegration.Update) awsbrowser.Intent
 		converted.Done = true
 	}
 	converted.Projection = awsbrowser.ProjectQueryUpdate(converted.Query)
+	converted.Projection = projectionWithContext(converted.Projection, converted.Context)
 	return converted
 }
 

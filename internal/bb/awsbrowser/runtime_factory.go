@@ -81,7 +81,7 @@ func (f *runtimeFactory) Resolve(ctx context.Context, spec ContextSpec) (Runtime
 		return nil, err
 	}
 	if runtime == nil || runtime.credentials == nil || runtime.credentialSource != provider || runtime.sts == nil ||
-		runtime.ec2 == nil || runtime.iam == nil || runtime.route53 == nil {
+		runtime.ec2 == nil || runtime.iam == nil || runtime.route53 == nil || runtime.cloudfront == nil || runtime.s3 == nil {
 		return nil, errors.New("AWS SDK runtime is incomplete")
 	}
 
@@ -126,11 +126,13 @@ func resolveRuntimeIdentity(ctx context.Context, runtime *sdkRuntime) (VerifiedI
 }
 
 type verifiedRuntime struct {
-	guard   *readGuard
-	sts     STSAPI
-	ec2     EC2API
-	iam     IAMAPI
-	route53 Route53API
+	guard      *readGuard
+	sts        STSAPI
+	ec2        EC2API
+	iam        IAMAPI
+	route53    Route53API
+	cloudfront CloudFrontAPI
+	s3         S3API
 }
 
 var _ RuntimeContext = (*verifiedRuntime)(nil)
@@ -138,11 +140,13 @@ var _ RuntimeContext = (*verifiedRuntime)(nil)
 func newVerifiedRuntime(runtime *sdkRuntime, identity VerifiedIdentity) *verifiedRuntime {
 	guard := newReadGuard(runtime, identity)
 	return &verifiedRuntime{
-		guard:   guard,
-		sts:     guardedSTS{guard: guard, client: runtime.sts},
-		ec2:     guardedEC2{guard: guard, client: runtime.ec2},
-		iam:     guardedIAM{guard: guard, client: runtime.iam},
-		route53: guardedRoute53{guard: guard, client: runtime.route53},
+		guard:      guard,
+		sts:        guardedSTS{guard: guard, client: runtime.sts},
+		ec2:        guardedEC2{guard: guard, client: runtime.ec2},
+		iam:        guardedIAM{guard: guard, client: runtime.iam},
+		route53:    guardedRoute53{guard: guard, client: runtime.route53},
+		cloudfront: guardedCloudFront{guard: guard, client: runtime.cloudfront},
+		s3:         guardedS3{guard: guard, client: runtime.s3},
 	}
 }
 
@@ -151,3 +155,5 @@ func (r *verifiedRuntime) STS() STSAPI                { return r.sts }
 func (r *verifiedRuntime) EC2() EC2API                { return r.ec2 }
 func (r *verifiedRuntime) IAM() IAMAPI                { return r.iam }
 func (r *verifiedRuntime) Route53() Route53API        { return r.route53 }
+func (r *verifiedRuntime) CloudFront() CloudFrontAPI  { return r.cloudfront }
+func (r *verifiedRuntime) S3() S3API                  { return r.s3 }

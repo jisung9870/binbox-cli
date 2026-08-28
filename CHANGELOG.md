@@ -9,11 +9,52 @@ release tags and the corresponding release records.
 ### Added
 
 - Added the unreleased `bb aws browse` local-first progressive TUI with narrowed
-  AWS SDK for Go v2 EC2/IAM/Route 53 reads, STS-verified profile contexts,
+  AWS SDK for Go v2 EC2/IAM/Route 53/CloudFront/S3 reads, STS-verified profile contexts,
   generation fencing, linked-resource navigation, partial states, and
   explicit-submit bounded cross-profile search.
 - Added `bb aws query ec2 instances|domain|role` for scoped human or schema-v1
   JSON automation; interactive `aws browse` no longer accepts `--json`.
+- Added an in-browser AWS context selector: `c` discovers configured profiles,
+  lets the operator edit region, verifies the derived account/principal through
+  STS, and applies the context without restarting `bb aws browse`.
+- Added optional non-secret AWS context groups from `$XDG_CONFIG_HOME/bb/aws-contexts.json`
+  or the OS user-config fallback (`~/.config/bb` on WSL/Linux). The selector separates
+  profile, current region, and current/all-group scope; EC2 and VPC catalog
+  reads merge bounded per-region results and coverage, global services query
+  once, and linked resource reads pin the observed region.
+- Added local, no-request filtering to configured-profile and loaded-resource
+  lists. EC2 instance rows now prefer a non-blank `Name` tag, keep the instance
+  ID visible as secondary identity, and fall back to the ID when unnamed.
+- Centered the AWS browser in a bounded rounded card on roomy terminals and
+  added adaptive violet/cyan/green/amber/red styling for navigation, selection,
+  ready/loading/read-only, and failure states while preserving `NO_COLOR`.
+- Changed profile-less `bb aws browse` startup to open the local configured-
+  profile selector first. Explicit `--profile` still opens Home directly, and
+  Escape from the initial selector continues to ambient Home.
+- Grouped resource-detail relationships into local category screens such as
+  Security groups and Volumes. Category selection is now independent from long
+  detail-field scrolling, and a linked AWS request starts only after selecting
+  a resource inside the category.
+- Added horizontal browser navigation: Right mirrors Enter/open and Left returns
+  one browser screen. Security Group details now open dedicated inbound and
+  outbound rule lists with readable protocol/port/peer rows instead of an
+  embedded rules JSON field.
+- Generalized AWS resource identity to prefer a non-blank `Name` tag, then a
+  native resource name, then the stable ID. Tags now open in a dedicated local
+  searchable category instead of appearing as inline JSON, and the centered
+  browser card may grow to roughly 120×30 for the additional detail.
+- Split resource navigation into a compact Summary followed by an optional
+  full-field Detail screen. Exact linked-resource lookups that return one
+  resource now open its Summary directly instead of showing `Resources (1)`;
+  rule/record collections and multi-result reads retain their list screen.
+- Added direct IAM Role categories for attached and inline policies, exact
+  policy hydration, and managed-policy default document navigation. Added a
+  Route 53 Hosted Zone DNS-record category and readable multi-line JSON for
+  policy documents and Route 53 routing/alias detail values.
+- Added read-only Route 53 CloudFront Alias tracing. Matching aliases open the
+  same-account distribution Summary, preserve default and cache-behavior path
+  patterns in an Origins category, and continue to an S3 bucket Summary with
+  its region verified by `GetBucketLocation`; unknown targets stay evidence-only.
 - Restricted the browser's AWS CLI data path to profile discovery and
   credential export; committed Linux PTY process checks, a skip-free guard,
   release CI test/vet/AWS-browser-race preflight, and all four release-size
@@ -22,6 +63,11 @@ release tags and the corresponding release records.
   remain manual/external acceptance.
 - Added `bb setup shell` to register the checkout-independent zsh integration
   and native completion in `.zshrc` without duplicating an existing setup.
+
+### Fixed
+
+- Immediate context failures now publish a terminal query state instead of
+  leaving the TUI on a misleading `incomplete stream` status.
 
 ## 0.15.1 - 2026-08-13
 

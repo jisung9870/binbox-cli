@@ -15,7 +15,7 @@ var ErrNoInput = errors.New("AWS browser input ended")
 
 type Plain struct{ Dispatcher IntentDispatcher }
 
-var plainCatalog = []catalogItem{homeCatalog[0], homeCatalog[1], homeCatalog[2], homeCatalog[4]}
+var plainCatalog = []catalogItem{homeCatalog[0], homeCatalog[1], homeCatalog[2], homeCatalog[3], homeCatalog[4]}
 
 type plainFrame struct {
 	target, label string
@@ -54,6 +54,11 @@ type plainDispatchResult struct {
 	err    error
 }
 
+type plainContextSelection struct {
+	context *AWSContext
+	regions string
+}
+
 var errPlainBack = errors.New("plain load cancelled")
 var errPlainQuit = errors.New("plain load quit")
 
@@ -66,9 +71,24 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 	defer close(done)
 	inputs := &plainInputSource{ch: plainInputs(reader, done)}
 	var history []plainFrame
+	var activeContext *AWSContext
+	if catalog, ok := p.Dispatcher.(ContextCatalog); config.Profile == "" && ok && catalog != nil {
+		selected, err := p.selectContext(ctx, terminal.Err, inputs)
+		if errors.Is(err, errPlainQuit) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if selected != nil {
+			contextCopy := *selected.context
+			activeContext = &contextCopy
+			config.Profile, config.Region, config.Regions = contextCopy.Profile, contextCopy.Region, selected.regions
+		}
+	}
 	for {
 		if len(history) == 0 {
-			if err := writePlainHome(terminal.Err); err != nil {
+			if err := writePlainHome(terminal.Err, config, activeContext); err != nil {
 				return err
 			}
 		} else if err := writePlainFrame(terminal.Err, history[len(history)-1]); err != nil {
@@ -92,6 +112,20 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 		switch fields[0] {
 		case "quit", "q", "exit":
 			return nil
+		case "context":
+			selected, err := p.selectContext(ctx, terminal.Err, inputs)
+			if errors.Is(err, errPlainQuit) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if selected != nil {
+				contextCopy := *selected.context
+				activeContext = &contextCopy
+				config.Profile, config.Region, config.Regions = contextCopy.Profile, contextCopy.Region, selected.regions
+				history = nil
+			}
 		case "back", "b":
 			if len(history) != 0 {
 				history = history[:len(history)-1]
@@ -104,7 +138,7 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 			frame := &history[len(history)-1]
 			intent := frame.intent
 			if intent.Kind != IntentSearch || intent.Target != "cross-profile-search" {
-				intent = Intent{Kind: IntentRefresh, Target: frame.target}
+				intent = Intent{Kind: IntentRefresh, Target: frame.target, Regions: frame.intent.Regions}
 				if frame.context != nil && frame.context.Validate() == nil {
 					intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
 				} else {
@@ -197,6 +231,21 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 					copy := *resource.Context
 					resourceContext = &copy
 				}
+				if hydrateListResource(resource.Target) {
+					history = append(history, plainFrame{target: resource.Target, label: resource.Title, context: resourceContext})
+					if err := p.load(ctx, terminal.Err, config, &history[len(history)-1], Intent{Kind: IntentOpen, Target: resource.Target}, inputs, false); err != nil {
+						if errors.Is(err, errPlainBack) {
+							history = history[:len(history)-1]
+							continue
+						}
+						if errors.Is(err, errPlainQuit) {
+							return nil
+						}
+						return err
+					}
+					promotePlainSingleton(&history[len(history)-1])
+					continue
+				}
 				history = append(history, plainFrame{target: resource.Target, label: resource.Title, context: resourceContext, detail: &resource})
 				continue
 			}
@@ -221,8 +270,115 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 				}
 				return err
 			}
+			promotePlainSingleton(&history[len(history)-1])
 		default:
 			fmt.Fprintln(terminal.Err, "command: open <n>, back, refresh, or quit")
+		}
+	}
+}
+
+func promotePlainSingleton(frame *plainFrame) {
+	if frame == nil || !singletonDetailTarget(frame.target) || len(frame.projection.Resources) != 1 {
+		return
+	}
+	resource := frame.projection.Resources[0]
+	frame.target = resource.Target
+	frame.label = resource.Title
+	frame.detail = &resource
+	frame.projection = IntentProjection{}
+}
+
+func (p Plain) selectContext(ctx context.Context, out io.Writer, inputs *plainInputSource) (*plainContextSelection, error) {
+	catalog, ok := p.Dispatcher.(ContextCatalog)
+	if !ok || catalog == nil {
+		fmt.Fprintln(out, "context selection is unavailable")
+		return nil, nil
+	}
+	choices, err := catalog.ListContexts(ctx)
+	if err != nil {
+		fmt.Fprintln(out, "configured profiles unavailable")
+		return nil, nil
+	}
+	if len(choices) == 0 {
+		fmt.Fprintln(out, "no configured AWS profiles")
+		return nil, nil
+	}
+	fmt.Fprintln(out, "Select AWS context · account follows verified profile credentials")
+	for index, choice := range choices {
+		region := choice.Region
+		if region == "" {
+			region = "region required"
+		}
+		group := ""
+		if choice.Group != "" {
+			group = fmt.Sprintf("  %s · %d regions", safeIntentText(choice.Group), len(choice.Regions))
+		}
+		fmt.Fprintf(out, "%d  %-28s %s%s\n", index+1, safeIntentText(choice.Profile), safeIntentText(region), group)
+	}
+	for {
+		fmt.Fprint(out, "context [select <n> [region] [current|all]|back|quit]: ")
+		input, open := inputs.next()
+		if !open || input.err != nil && strings.TrimSpace(input.line) == "" {
+			return nil, ErrNoInput
+		}
+		fields := strings.Fields(strings.ToLower(input.line))
+		if len(fields) == 0 {
+			continue
+		}
+		switch fields[0] {
+		case "back", "b":
+			return nil, nil
+		case "quit", "q", "exit":
+			return nil, errPlainQuit
+		case "select":
+			if len(fields) < 2 || len(fields) > 4 {
+				fmt.Fprintln(out, "command: select <n> [region] [current|all]")
+				continue
+			}
+			number, convErr := strconv.Atoi(fields[1])
+			if convErr != nil || number < 1 || number > len(choices) {
+				fmt.Fprintln(out, "command: select <n> [region] [current|all]")
+				continue
+			}
+			choice := choices[number-1]
+			region := choice.Region
+			scope := "current"
+			if len(fields) >= 3 && fields[2] != "current" && fields[2] != "all" {
+				region = fields[2]
+			}
+			if fields[len(fields)-1] == "all" || fields[len(fields)-1] == "current" {
+				scope = fields[len(fields)-1]
+			}
+			if region == "" || ValidateContextSelection(choice.Profile, region) != nil {
+				fmt.Fprintln(out, "valid AWS region required")
+				continue
+			}
+			resolution, resolveErr := catalog.ResolveContext(ctx, choice.Profile, region)
+			if resolveErr != nil {
+				fmt.Fprintln(out, "context verification failed")
+				continue
+			}
+			if resolution.Failure != nil {
+				fmt.Fprintln(out, loadStateLabel(resolution.Failure.State))
+				continue
+			}
+			if resolution.Context == nil || resolution.Context.Validate() != nil {
+				fmt.Fprintln(out, "context verification failed")
+				continue
+			}
+			verified := *resolution.Context
+			regions := ""
+			if scope == "all" {
+				if len(choice.Regions) < 2 {
+					fmt.Fprintln(out, "all scope requires a configured region group")
+					continue
+				}
+				regions, _ = CanonicalRegionSet(choice.Regions, verified.Region)
+			}
+			fmt.Fprintf(out, "Verified account %s · profile %s · region %s · scope %s\n", safeIntentText(verified.AccountID), safeIntentText(verified.Profile), safeIntentText(verified.Region), scope)
+			return &plainContextSelection{context: &verified, regions: regions}, nil
+		default:
+			fmt.Fprintln(out, "command: select <n> [region] [current|all]")
 		}
 	}
 }
@@ -243,7 +399,7 @@ func (p Plain) load(ctx context.Context, out io.Writer, config Config, frame *pl
 		if frame.context != nil && frame.context.Validate() == nil {
 			intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
 		} else {
-			intent.Profile, intent.Region = config.Profile, config.Region
+			intent.Profile, intent.Region, intent.Regions = config.Profile, config.Region, config.Regions
 		}
 	}
 	frame.intent = intent
@@ -533,8 +689,11 @@ func plainChoice(value string, choices []string) bool {
 	return false
 }
 
-func writePlainHome(out io.Writer) error {
+func writePlainHome(out io.Writer, config Config, context *AWSContext) error {
 	if _, err := fmt.Fprintln(out, "AWS Browser · READ ONLY"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(out, contextLine(config, context)); err != nil {
 		return err
 	}
 	for number, item := range plainCatalog {
@@ -553,7 +712,7 @@ func writePlainHome(out io.Writer) error {
 			return err
 		}
 	}
-	_, err := fmt.Fprint(out, "command [open <n>|back|refresh|quit]: ")
+	_, err := fmt.Fprint(out, "command [open <n>|context|back|refresh|quit]: ")
 	return err
 }
 
@@ -588,6 +747,12 @@ func writePlainFrame(out io.Writer, frame plainFrame) error {
 	writePlainProvenance(out, *frame.detail)
 	for _, field := range frame.detail.Fields {
 		fmt.Fprintf(out, "%s: %s\n", safeIntentText(field.Label), safeIntentText(field.Value))
+	}
+	if len(frame.detail.Tags) != 0 {
+		fmt.Fprintln(out, "tags:")
+		for _, tag := range frame.detail.Tags {
+			fmt.Fprintf(out, "- %s: %s\n", safeIntentText(tag.Key), safeIntentText(tag.Value))
+		}
 	}
 	if len(frame.detail.Relations) == 0 {
 		fmt.Fprintln(out, "relations: none")
@@ -629,7 +794,11 @@ func writePlainCoverage(out io.Writer, coverage *SearchCoverage) {
 		if account == "" {
 			account = "unresolved"
 		}
-		fmt.Fprintf(out, "Coverage · %s %s · %s · %s · matches %d\n", marker, safeIntentText(name), safeIntentText(account), safeIntentText(profile.Status), profile.Matches)
+		region := ""
+		if profile.Region != "" {
+			region = " · region " + safeIntentText(profile.Region)
+		}
+		fmt.Fprintf(out, "Coverage · %s %s · %s · %s · matches %d%s\n", marker, safeIntentText(name), safeIntentText(account), safeIntentText(profile.Status), profile.Matches, region)
 	}
 }
 

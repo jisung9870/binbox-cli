@@ -1,19 +1,18 @@
-┌──────────────────────────────────────────────────────────────────────────────┐
+╭──────────────────────────────────────────────────────────────────────────────╮
 │ AWS Browser · READ ONLY                                                      │
 │ Profile dev  Account unresolved  Principal unresolved  ap-northeast-2        │
-│ AWS > web-api                                                                │
+│ AWS > web-api > Summary                                                      │
 │ running                                                                      │
 │                                                                              │
-│ Relations (1)                                                                │
-│ > sg-web · enter open                                                        │
-│     instance security group id                                               │
-│     evidence: id-exact                                                       │
+│ Categories (3)                                                               │
+│ > Security groups (1) · →/enter open                                         │
+│   Detail · →/enter view                                                      │
+│   Tags (0) · →/enter view                                                    │
 │                                                                              │
-│ Details                                                                      │
+│ Summary                                                                      │
 │ Private IP         10.0.1.24                                                 │
 │ Long value         metadata-metadata-metadata-metadata-metadata-metadata-met │
 │                    adata-metadata-metadata-metadata-metadata-metadata-       │
-│ ↑↓ relation · enter · pg↑↓ scroll · esc                                      │
 │                                                                              │
 │                                                                              │
 │                                                                              │
@@ -21,4 +20,5 @@
 │                                                                              │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+│ ↑↓ category · →/enter open · ← back · : command · ^o/^i history              │
+╰──────────────────────────────────────────────────────────────────────────────╯

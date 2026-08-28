@@ -1,4 +1,4 @@
-┌────────────────────────────────────────────────┐
+╭────────────────────────────────────────────────╮
 │ AWS Browser · READ ONLY                        │
 │ Profile dev  Account unresolved  Principal un… │
 │ Services / tasks · LIST                        │
@@ -7,10 +7,10 @@
 │   IAM Roles               Not loaded · AWS gl… │
 │   VPC & Networking        Not loaded           │
 │   Cross-profile search    Domain, role · scop… │
-│ ↑↓ move · enter open · ? help                  │
-│ ctrl+g search · ctrl+c quit                    │
+│ ↑↓ move · →/enter open · : command             │
 │                                                │
 │                                                │
 │                                                │
 │                                                │
-└────────────────────────────────────────────────┘
+│ c context · ctrl+g search · ? help             │
+╰────────────────────────────────────────────────╯

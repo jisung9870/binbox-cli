@@ -297,6 +297,35 @@ func TestRoute53ExactRecordSearchUsesFullTupleAndUniqueRoutingKeys(t *testing.T)
 	if relation["kind"] != string(awsbrowser.RelationAPIExact) || relation["scope"] != awsbrowser.GlobalRegion {
 		t.Fatalf("alias relation=%v", relation)
 	}
+	if _, navigable := relation["target"]; navigable {
+		t.Fatalf("non-CloudFront alias became navigable: %v", relation)
+	}
+}
+
+func TestRoute53CloudFrontAliasBecomesNavigableExactTarget(t *testing.T) {
+	fake := &route53Fake{listRecordSets: func(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
+		return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []types.ResourceRecordSet{{
+			Name: aws.String("binary.udg.line.games."), Type: types.RRTypeA,
+			AliasTarget: &types.AliasTarget{
+				HostedZoneId: aws.String(cloudFrontZoneID), DNSName: aws.String("D24ODQ2OCBSMJD.CLOUDFRONT.NET"),
+				EvaluateTargetHealth: false,
+			},
+		}}}, nil
+	}}
+	sink := &collectingSink{}
+	if err := newRoute53ForTest(t, fake).Execute(context.Background(), route53Key(t, awsbrowser.OperationListResourceRecordSets, map[string]string{"hosted-zone-id": "Z1"}), sink); err != nil {
+		t.Fatal(err)
+	}
+	resource := sink.pages[0].Resources()[0]
+	relation := resource.Observation.Fields()["alias_relation"].(map[string]any)
+	target, ok := relation["target"].(awsbrowser.ResourceKey)
+	if !ok || target.Type != "cloudfront.distribution-domain" || target.ID != "d24odq2ocbsmjd.cloudfront.net" || target.Region != awsbrowser.GlobalRegion {
+		t.Fatalf("target=%+v relation=%v", target, relation)
+	}
+	projection := awsbrowser.ProjectResourceFields(resource.Key, resource.Observation.Fields())
+	if len(projection.Relations) != 2 || projection.Relations[0].Label != "Alias target" || projection.Relations[0].Target != "cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net" {
+		t.Fatalf("projection=%+v", projection)
+	}
 }
 
 func TestRoute53RecordKeyIsStableWhenMutableRoutingValuesChange(t *testing.T) {

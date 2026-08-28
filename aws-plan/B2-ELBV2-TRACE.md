@@ -30,7 +30,7 @@ IP target은 EC2 instance로 추측하지 않는다. TUI는 IP와 health 상태�
 
 가정:
 
-- Route 53이 반환한 ELB alias DNS는 `<name>.<region>.elb.amazonaws.com` 또는 China partition의 `.com.cn` 형식이며 선택적으로 `dualstack.` prefix를 갖는다. 형식이 바뀌면 alias가 evidence-only로 남으므로 DNS recognizer를 재검토해야 한다.
+- Route 53이 반환한 ALB/NLB alias DNS는 `<name>.elb.<region>.amazonaws.com` 또는 China partition의 `.com.cn` 형식이며 선택적으로 `dualstack.` prefix를 갖는다. `<name>.<region>.elb.amazonaws.com`은 Classic Load Balancer 형식이므로 ELBv2 target으로 승격하지 않는다. 2026-08-28 확인 근거는 AWS의 [Application Load Balancer DNS](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html#load-balancer-dns-name)와 [Network Load Balancer DNS](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/network-load-balancers.html#load-balancer-dns) 문서다. 형식이 바뀌면 alias가 evidence-only로 남으므로 DNS recognizer를 재검토해야 한다.
 - listener rule API가 반환한 배열 순서는 AWS의 rule order다. provider는 이를 다시 정렬하지 않는다.
 
 ## 직접 catalog와 alias trace가 같은 ELBv2 provider를 사용한다

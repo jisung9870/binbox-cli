@@ -56,7 +56,7 @@ func TestELBV2DomainTraceFixturePreservesRuleConditionsAndTargetTypes(t *testing
 		}
 		return &elasticloadbalancingv2.DescribeLoadBalancersOutput{LoadBalancers: []types.LoadBalancer{{
 			LoadBalancerArn: aws.String(testLoadBalancerARN), LoadBalancerName: aws.String("api-public"),
-			DNSName: aws.String("api-public-123.ap-northeast-2.elb.amazonaws.com"), Type: types.LoadBalancerTypeEnumApplication,
+			DNSName: aws.String("api-public-123.elb.ap-northeast-2.amazonaws.com"), Type: types.LoadBalancerTypeEnumApplication,
 			Scheme: types.LoadBalancerSchemeEnumInternetFacing, IpAddressType: types.IpAddressTypeIpv4,
 			VpcId: aws.String("vpc-123"), SecurityGroups: []string{"sg-123"},
 			AvailabilityZones: []types.AvailabilityZone{{ZoneName: aws.String("ap-northeast-2a"), SubnetId: aws.String("subnet-123")}},
@@ -121,7 +121,7 @@ func TestELBV2DomainTraceFixturePreservesRuleConditionsAndTargetTypes(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	loadBalancer := executeELBV2Fixture(t, executor, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-dns": "dualstack.api-public-123.ap-northeast-2.elb.amazonaws.com"})[0]
+	loadBalancer := executeELBV2Fixture(t, executor, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-dns": "dualstack.api-public-123.elb.ap-northeast-2.amazonaws.com"})[0]
 	if loadBalancer.Key.Type != "elbv2.load-balancer" || loadBalancer.Key.ID != testLoadBalancerARN {
 		t.Fatalf("load balancer=%+v", loadBalancer.Key)
 	}
@@ -186,7 +186,7 @@ func TestELBV2CatalogListsAndFiltersALBAndNLB(t *testing.T) {
 		loadBalancer := func(kind types.LoadBalancerTypeEnum, resource, name string) types.LoadBalancer {
 			return types.LoadBalancer{
 				LoadBalancerArn:  aws.String("arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:loadbalancer/" + resource),
-				LoadBalancerName: aws.String(name), DNSName: aws.String(name + "-123.ap-northeast-2.elb.amazonaws.com"),
+				LoadBalancerName: aws.String(name), DNSName: aws.String(name + "-123.elb.ap-northeast-2.amazonaws.com"),
 				Type: kind, Scheme: types.LoadBalancerSchemeEnumInternal, IpAddressType: types.IpAddressTypeIpv4,
 				VpcId: aws.String("vpc-123"), State: &types.LoadBalancerState{Code: types.LoadBalancerStateEnumActive},
 			}

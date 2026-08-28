@@ -245,7 +245,7 @@ Record | Routing | Target | Provenance
 
 Type          A · Alias
 Zone          example.com. · Public
-Target        dualstack.api-prod-123.ap-northeast-2.elb.amazonaws.com.
+Target        dualstack.api-prod-123.elb.ap-northeast-2.amazonaws.com.
 Confidence    inferred
 Resolution    unresolved outside selected region
 Observed via  prod

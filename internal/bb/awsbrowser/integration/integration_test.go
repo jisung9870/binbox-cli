@@ -438,7 +438,7 @@ func TestELBV2QueryReachesNarrowedReadProvider(t *testing.T) {
 		}
 		return &elasticloadbalancingv2.DescribeLoadBalancersOutput{LoadBalancers: []elbv2types.LoadBalancer{{
 			LoadBalancerArn: aws.String(loadBalancerARN), LoadBalancerName: aws.String("api"),
-			DNSName: aws.String("api-123.us-east-1.elb.amazonaws.com"), Type: elbv2types.LoadBalancerTypeEnumApplication,
+			DNSName: aws.String("api-123.elb.us-east-1.amazonaws.com"), Type: elbv2types.LoadBalancerTypeEnumApplication,
 			Scheme: elbv2types.LoadBalancerSchemeEnumInternetFacing, IpAddressType: elbv2types.IpAddressTypeIpv4,
 			State: &elbv2types.LoadBalancerState{Code: elbv2types.LoadBalancerStateEnumActive},
 		}}}, nil

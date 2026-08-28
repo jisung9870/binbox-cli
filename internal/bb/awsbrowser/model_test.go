@@ -795,7 +795,7 @@ func TestRoute53ELBV2TraceUsesDirectK9sResourceCategories(t *testing.T) {
 	)
 
 	recordKey, _ := NewGlobalResourceKey(awsContext, "resource-record-set", "api-record")
-	loadBalancerDNS, _ := NewRegionalResourceKey(awsContext, "elbv2.load-balancer-dns", "dualstack.api-123.ap-northeast-2.elb.amazonaws.com")
+	loadBalancerDNS, _ := NewRegionalResourceKey(awsContext, "elbv2.load-balancer-dns", "dualstack.api-123.elb.ap-northeast-2.amazonaws.com")
 	record := ProjectResourceFields(recordKey, map[string]any{"name": "api.example.com.", "alias_relation": map[string]any{
 		"target": loadBalancerDNS, "relation_type": "alias-to", "direction": "outgoing", "condition": "A alias", "kind": "api-exact",
 	}})
@@ -863,7 +863,7 @@ func TestRoute53ELBV2TraceUsesDirectK9sResourceCategories(t *testing.T) {
 func TestExactRelationTargetsPromoteToSummary(t *testing.T) {
 	for _, target := range []string{
 		"cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net",
-		"elbv2.load-balancer-dns:api-123.ap-northeast-2.elb.amazonaws.com",
+		"elbv2.load-balancer-dns:api-123.elb.ap-northeast-2.amazonaws.com",
 		"elbv2.load-balancer:arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:loadbalancer/app/api/111",
 		"elbv2.target-group:arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:targetgroup/api/333",
 		"s3.bucket:udg-kr-game-binary",

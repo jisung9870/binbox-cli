@@ -336,7 +336,7 @@ func TestRoute53ELBV2AliasBecomesRegionalNavigableTarget(t *testing.T) {
 			Name: aws.String("api.example.com."), Type: types.RRTypeA,
 			AliasTarget: &types.AliasTarget{
 				HostedZoneId:         aws.String("ZWKZPGTI48KDX"),
-				DNSName:              aws.String("dualstack.api-public-123456.ap-northeast-2.elb.amazonaws.com."),
+				DNSName:              aws.String("m-nlb-udg-kr-pmm-24c45c678d7f8951.elb.ap-northeast-2.amazonaws.com."),
 				EvaluateTargetHealth: true,
 			},
 		}}}, nil
@@ -347,11 +347,11 @@ func TestRoute53ELBV2AliasBecomesRegionalNavigableTarget(t *testing.T) {
 	}
 	resource := sink.pages[0].Resources()[0]
 	target, ok := resource.Observation.Fields()["alias_relation"].(map[string]any)["target"].(awsbrowser.ResourceKey)
-	if !ok || target.Type != "elbv2.load-balancer-dns" || target.ID != "dualstack.api-public-123456.ap-northeast-2.elb.amazonaws.com" || target.Region != "ap-northeast-2" {
+	if !ok || target.Type != "elbv2.load-balancer-dns" || target.ID != "m-nlb-udg-kr-pmm-24c45c678d7f8951.elb.ap-northeast-2.amazonaws.com" || target.Region != "ap-northeast-2" {
 		t.Fatalf("target=%+v", target)
 	}
 	projection := awsbrowser.ProjectResourceFields(resource.Key, resource.Observation.Fields())
-	if len(projection.Relations) != 2 || projection.Relations[0].Target != "elbv2.load-balancer-dns:dualstack.api-public-123456.ap-northeast-2.elb.amazonaws.com" {
+	if len(projection.Relations) != 2 || projection.Relations[0].Target != "elbv2.load-balancer-dns:m-nlb-udg-kr-pmm-24c45c678d7f8951.elb.ap-northeast-2.amazonaws.com" {
 		t.Fatalf("projection=%+v", projection)
 	}
 }

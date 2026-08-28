@@ -56,6 +56,23 @@ func TestHomeResponsiveGoldens(t *testing.T) {
 	}
 }
 
+func TestNarrowHomeKeepsSelectedLoadBalancerAndSearchRowsVisible(t *testing.T) {
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, nil)
+	m.width, m.height = 40, 12
+	for range 4 {
+		model, _ := m.Update(key(tea.KeyDown))
+		m = model.(Model)
+	}
+	if !strings.Contains(m.View().Content, "> Load Balancers") {
+		t.Fatalf("selected load-balancer row is outside the narrow viewport:\n%s", m.View().Content)
+	}
+	model, _ := m.Update(key(tea.KeyDown))
+	m = model.(Model)
+	if !strings.Contains(m.View().Content, "> Cross-profile") {
+		t.Fatalf("selected search row is outside the narrow viewport:\n%s", m.View().Content)
+	}
+}
+
 func TestResourceAndDetailResponsiveGoldens(t *testing.T) {
 	for _, test := range []struct {
 		name          string

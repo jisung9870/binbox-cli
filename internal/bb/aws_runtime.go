@@ -230,7 +230,8 @@ func multiRegionIntentRegions(intent awsbrowser.Intent) ([]string, error) {
 		return nil, nil
 	}
 	switch intent.Target {
-	case "ec2-instances", "vpc-networking":
+	case "ec2-instances", "vpc-networking", "elbv2-load-balancers",
+		"elbv2-application-load-balancers", "elbv2-network-load-balancers":
 		return regions, nil
 	default:
 		return nil, nil
@@ -248,6 +249,14 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 		request.Provider, request.Operation = awsbrowser.ProviderIAM, awsbrowser.OperationListRoles
 	case "vpc-networking":
 		request.Provider, request.Operation = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcs
+	case "elbv2-load-balancers":
+		request.Provider, request.Operation = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers
+	case "elbv2-application-load-balancers":
+		request.Provider, request.Operation = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers
+		request.Params = map[string]string{"load-balancer-type": "application"}
+	case "elbv2-network-load-balancers":
+		request.Provider, request.Operation = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers
+		request.Params = map[string]string{"load-balancer-type": "network"}
 	default:
 		resourceType, id, ok := strings.Cut(intent.Target, ":")
 		if !ok || !awsbrowser.NavigableRelationTargetType(resourceType) || !safeAWSIntentParameter(id) {

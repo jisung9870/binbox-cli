@@ -57,17 +57,22 @@ func (executor *ELBV2QueryExecutor) Execute(ctx context.Context, key awsbrowser.
 }
 
 func (executor *ELBV2QueryExecutor) describeLoadBalancers(ctx context.Context, key awsbrowser.QueryKey, sink awsbrowser.QueryPageSink) error {
-	params, err := exactELBV2Params(key, []string{"load-balancer-dns"}, []string{"load-balancer-arn"})
+	params, err := exactELBV2Params(key, []string{}, []string{"load-balancer-type"}, []string{"load-balancer-dns"}, []string{"load-balancer-arn"})
 	if err != nil {
 		return err
 	}
 	dnsName := canonicalELBV2DNS(params.Get("load-balancer-dns"))
 	loadBalancerARN := params.Get("load-balancer-arn")
+	loadBalancerType := params.Get("load-balancer-type")
+	catalogQuery := len(params) == 0 || loadBalancerType != ""
+	if loadBalancerType != "" && !validCatalogLoadBalancerType(loadBalancerType) {
+		return awsbrowser.ErrInvalidQueryKey
+	}
 	if dnsName != "" {
 		if region, ok := awsbrowser.ELBV2RegionFromDNS(key.Context.Partition, dnsName); !ok || region != key.Context.Region {
 			return awsbrowser.ErrInvalidQueryKey
 		}
-	} else if !validELBV2ARN(key.Context, loadBalancerARN, "loadbalancer/") {
+	} else if !catalogQuery && !validELBV2ARN(key.Context, loadBalancerARN, "loadbalancer/") {
 		return awsbrowser.ErrInvalidQueryKey
 	}
 	input := &elasticloadbalancingv2.DescribeLoadBalancersInput{PageSize: aws.Int32(elbv2PageSize)}
@@ -88,6 +93,10 @@ func (executor *ELBV2QueryExecutor) describeLoadBalancers(ctx context.Context, k
 		resources := make([]awsbrowser.ObservedResource, 0, len(output.LoadBalancers))
 		for _, loadBalancer := range output.LoadBalancers {
 			if dnsName != "" && canonicalELBV2DNS(aws.ToString(loadBalancer.DNSName)) != dnsName {
+				continue
+			}
+			observedType := string(loadBalancer.Type)
+			if catalogQuery && (!validCatalogLoadBalancerType(observedType) || loadBalancerType != "" && observedType != loadBalancerType) {
 				continue
 			}
 			resource, mapErr := mapELBV2LoadBalancer(key, loadBalancer, fetchedAt)
@@ -627,6 +636,10 @@ func validTargetType(value string) bool {
 	default:
 		return false
 	}
+}
+
+func validCatalogLoadBalancerType(value string) bool {
+	return value == string(types.LoadBalancerTypeEnumApplication) || value == string(types.LoadBalancerTypeEnumNetwork)
 }
 
 func canonicalELBV2DNS(value string) string {

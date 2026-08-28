@@ -59,6 +59,9 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 		{"route53-hosted-zones", awsbrowser.ProviderRoute53, awsbrowser.OperationListHostedZones, nil},
 		{"iam-roles", awsbrowser.ProviderIAM, awsbrowser.OperationListRoles, nil},
 		{"vpc-networking", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcs, nil},
+		{"elbv2-load-balancers", awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, nil},
+		{"elbv2-application-load-balancers", awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-type": "application"}},
+		{"elbv2-network-load-balancers", awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-type": "network"}},
 		{"ec2.instance:i-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeInstances, map[string]string{"instance-id": "i-123"}},
 		{"ec2.volume:vol-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVolumes, map[string]string{"volume-id": "vol-123"}},
 		{"ec2.security-group:sg-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSecurityGroups, map[string]string{"group-id": "sg-123"}},
@@ -169,9 +172,11 @@ func TestAWSSearchIntentMapsCurrentAndAll(t *testing.T) {
 func TestAWSMultiRegionRoutingAndAggregation(t *testing.T) {
 	regions := []string{"ap-northeast-2", "ap-southeast-1", "us-east-1", "eu-central-1"}
 	regionSet := strings.Join(regions, ",")
-	regional, err := multiRegionIntentRegions(awsbrowser.Intent{Target: "ec2-instances", Region: regions[0], Regions: regionSet})
-	if err != nil || !reflect.DeepEqual(regional, regions) {
-		t.Fatalf("regional=%+v error=%v", regional, err)
+	for _, target := range []string{"ec2-instances", "elbv2-load-balancers", "elbv2-application-load-balancers", "elbv2-network-load-balancers"} {
+		regional, err := multiRegionIntentRegions(awsbrowser.Intent{Target: target, Region: regions[0], Regions: regionSet})
+		if err != nil || !reflect.DeepEqual(regional, regions) {
+			t.Fatalf("target=%s regional=%+v error=%v", target, regional, err)
+		}
 	}
 	for _, target := range []string{"route53-hosted-zones", "iam-roles", "cloudfront.distribution-domain:example.cloudfront.net", "ec2.instance:i-1"} {
 		got, err := multiRegionIntentRegions(awsbrowser.Intent{Target: target, Region: regions[0], Regions: regionSet})

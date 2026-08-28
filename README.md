@@ -170,9 +170,10 @@ remain relationship evidence rather than being guessed as owned resources.
 The browser uses the full terminal as a k9s-style workspace with adaptive
 status/selection colors; additional height shows more rows instead of adding
 outer whitespace. `:` opens resource/action commands (`ec2`, `vpc`, `route53`,
-`iam`, `context`, `search`, `home`, `refresh`), `/` explicitly focuses the
+`iam`, `elbv2`, `alb`, `nlb`, `context`, `search`, `home`, `refresh`), `/` explicitly focuses the
 current local filter, and `Ctrl-o`/`Ctrl-i` move backward/forward through browser
-history. Direct typing still filters without requiring `/`. `NO_COLOR=1` keeps
+history. Home and `:elbv2` open the regional ALB/NLB catalog; `:alb` and `:nlb`
+apply a type filter before rendering the same Name-first table. Direct typing still filters without requiring `/`. `NO_COLOR=1` keeps
 the same hierarchy without ANSI styling.
 Cross-profile domain/role search runs only after submit, with bounded concurrency
 and per-profile coverage. `bb aws browse` is interactive and has no `--json`;

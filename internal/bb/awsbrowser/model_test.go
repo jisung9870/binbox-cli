@@ -86,7 +86,7 @@ func TestModelStartupAndLocalNavigationAreZeroCall(t *testing.T) {
 	if cmd := m.Init(); cmd != nil {
 		t.Fatalf("Init command=%v", cmd)
 	}
-	for _, want := range []string{"AWS Browser · READ ONLY", "EC2 Instances", "Route 53 Hosted Zones", "IAM Roles", "VPC & Networking", "Cross-profile search", "Account unresolved", "Principal unresolved"} {
+	for _, want := range []string{"AWS Browser · READ ONLY", "EC2 Instances", "Route 53 Hosted Zones", "IAM Roles", "VPC & Networking", "Load Balancers (ALB/NLB)", "Cross-profile search", "Account unresolved", "Principal unresolved"} {
 		if !strings.Contains(m.View().Content, want) {
 			t.Fatalf("Home missing %q:\n%s", want, m.View().Content)
 		}
@@ -129,6 +129,57 @@ func TestModelK9sCommandJumpsToResourceAndRejectsUnknownAlias(t *testing.T) {
 	unknownModel, _ = unknownModel.Update(key(tea.KeyEnter))
 	if !strings.Contains(unknownModel.View().Content, "Unknown command: wat") {
 		t.Fatalf("unknown command feedback is missing:\n%s", unknownModel.View().Content)
+	}
+}
+
+func TestModelK9sLoadBalancerCommandsOpenAllALBAndNLB(t *testing.T) {
+	tests := []struct {
+		command string
+		target  string
+		label   string
+	}{
+		{command: "elbv2", target: "elbv2-load-balancers", label: "Load Balancers (ALB/NLB)"},
+		{command: "alb", target: "elbv2-application-load-balancers", label: "Application Load Balancers"},
+		{command: "nlb", target: "elbv2-network-load-balancers", label: "Network Load Balancers"},
+	}
+	for _, test := range tests {
+		t.Run(test.command, func(t *testing.T) {
+			dispatcher := new(recordingDispatcher)
+			model := tea.Model(NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher))
+			for _, character := range ":" + test.command {
+				model, _ = model.Update(key(character))
+			}
+			model, command := model.Update(key(tea.KeyEnter))
+			opened := model.(Model)
+			if command == nil || opened.current() == nil || opened.current().target != test.target || opened.current().label != test.label {
+				t.Fatalf("command=%v frame=%+v", command != nil, opened.current())
+			}
+			_ = command()
+			if len(dispatcher.intents) != 1 || dispatcher.intents[0].Target != test.target {
+				t.Fatalf("intents=%+v", dispatcher.intents)
+			}
+		})
+	}
+}
+
+func TestLoadBalancerResourceRowsShowALBAndNLBTypes(t *testing.T) {
+	headers := []string{"NAME", "TYPE", "ID", "STATUS"}
+	for _, test := range []struct {
+		kind string
+		want string
+	}{
+		{kind: "application", want: "ALB"},
+		{kind: "network", want: "NLB"},
+	} {
+		resource := ResourceProjection{
+			Target: "elbv2.load-balancer:arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:loadbalancer/" + test.kind + "/api/123",
+			Title:  "api-" + test.kind,
+			Fields: []ProjectionField{{Label: "Type", Value: test.kind}, {Label: "State", Value: "active"}},
+		}
+		cells := resourceTableCells(resource, headers)
+		if len(cells) != len(headers) || cells[1] != test.want {
+			t.Fatalf("kind=%s cells=%v", test.kind, cells)
+		}
 	}
 }
 
@@ -772,6 +823,19 @@ func TestRoute53ELBV2TraceUsesDirectK9sResourceCategories(t *testing.T) {
 	groups = relationGroups(listener)
 	if len(groups) != 2 || groups[0].Key != "listener-rules" || groups[1].Key != "target-groups" || !directRelationGroup(groups[0]) || !directRelationGroup(groups[1]) {
 		t.Fatalf("listener groups=%+v", groups)
+	}
+	networkListenerARN := "arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:listener/net/internal/444/555"
+	networkListenerKey, _ := NewRegionalResourceKey(awsContext, "elbv2.listener", networkListenerARN)
+	networkListener := ProjectResourceFields(networkListenerKey, map[string]any{
+		"name": "TCP 443",
+		"relations": []any{map[string]any{
+			"target": targetGroupKey, "label": "api", "relation_type": "routes-to", "direction": "outgoing",
+			"condition": "default; action-order=1", "kind": "api-exact",
+		}},
+	})
+	groups = relationGroups(networkListener)
+	if len(groups) != 1 || groups[0].Key != "target-groups" || !directRelationGroup(groups[0]) {
+		t.Fatalf("NLB listener exposed ALB-only rules or lost its default target group: groups=%+v", groups)
 	}
 
 	targetGroup := ProjectResourceFields(targetGroupKey, map[string]any{"name": "api", "target_type": "instance"})

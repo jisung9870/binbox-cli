@@ -375,14 +375,19 @@ func renderHome(m Model) string {
 	}
 	headers, widths := homeTableLayout(inner)
 	lines = append(lines, tableHeader(styles, headers, widths, inner))
-	for i, item := range homeCatalog {
-		lines = append(lines, tableRow(styles, i == m.selected, homeTableCells(headers, item), widths, inner))
-	}
 	footer := "↑↓ move  →/enter open  : command  c context  ctrl+g search  ? help"
 	if m.width < 60 {
 		footer = "↑↓ move · →/enter open · : command\nc context · ctrl+g search · ? help"
 	}
-	for _, line := range strings.Split(footer, "\n") {
+	footerLines := strings.Split(footer, "\n")
+	available := max(1, m.height-2-len(lines)-len(footerLines))
+	start := max(0, m.selected-available+1)
+	end := min(len(homeCatalog), start+available)
+	for i := start; i < end; i++ {
+		item := homeCatalog[i]
+		lines = append(lines, tableRow(styles, i == m.selected, homeTableCells(headers, item), widths, inner))
+	}
+	for _, line := range footerLines {
 		lines = append(lines, styles.footer.Render(line))
 	}
 	return frameView(lines, m.width, m.height, styles)
@@ -874,6 +879,15 @@ func resourceTableLayout(inner int) ([]string, []int) {
 
 func resourceTableCells(resource ResourceProjection, headers []string) []string {
 	resourceType, resourceID, _ := strings.Cut(resource.Target, ":")
+	displayType := resourceType
+	if resourceType == "elbv2.load-balancer" {
+		switch projectionFieldValue(resource.Fields, "Type") {
+		case "application":
+			displayType = "ALB"
+		case "network":
+			displayType = "NLB"
+		}
+	}
 	status := projectionFieldValue(resource.Fields, "State", "Status")
 	if status == "-" {
 		status = strings.TrimSpace(resource.Subtitle)
@@ -887,7 +901,7 @@ func resourceTableCells(resource ResourceProjection, headers []string) []string 
 		account, region = resource.Context.AccountID, resource.Context.Region
 	}
 	return tableValues(headers, map[string]string{
-		"NAME": resource.Title, "TYPE": resourceType, "ID": resourceID,
+		"NAME": resource.Title, "TYPE": displayType, "ID": resourceID,
 		"STATUS": status, "ACCOUNT": account, "REGION": region,
 	})
 }
@@ -966,7 +980,7 @@ func renderHelp(m Model) string {
 		"→ / enter      open resource or relation",
 		"←              return one browser screen",
 		":              resource command line",
-		"               ec2 vpc route53 iam context search home refresh",
+		"               ec2 vpc route53 iam elbv2 alb nlb context search home refresh",
 		"/              focus local filter",
 		"ctrl+o/ctrl+i  browser history back/forward",
 		"c              select profile/account/region",
@@ -1019,7 +1033,7 @@ func overlayCommandLine(view string, m Model) string {
 	inner := max(1, m.width-4)
 	value := m.commandValue
 	if value == "" {
-		value = "ec2 · vpc · route53 · iam · context · search · home · refresh"
+		value = "ec2 · vpc · route53 · iam · elbv2 · alb · nlb · context · search · home · refresh"
 	}
 	command := styles.prompt.Render(":") + styles.query.Render(safeIntentText(value))
 	if m.commandStatus != "" {

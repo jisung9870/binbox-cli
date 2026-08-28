@@ -24,6 +24,7 @@ var homeCatalog = []catalogItem{
 	{ID: "route53-hosted-zones", Label: "Route 53 Hosted Zones", Status: "Not loaded · AWS global"},
 	{ID: "iam-roles", Label: "IAM Roles", Status: "Not loaded · AWS global"},
 	{ID: "vpc-networking", Label: "VPC & Networking", Status: "Not loaded"},
+	{ID: "elbv2-load-balancers", Label: "Load Balancers (ALB/NLB)", Status: "Not loaded"},
 	{ID: "cross-profile-search", Label: "Cross-profile search", Status: "Domain, role · scope on open"},
 }
 
@@ -480,6 +481,15 @@ func (m Model) executeCommand() (tea.Model, tea.Cmd) {
 	case "iam", "roles", "iam-roles":
 		m.closeCommand()
 		return m.openCatalogByID("iam-roles")
+	case "elb", "elbv2", "load-balancers":
+		m.closeCommand()
+		return m.openCatalogByID("elbv2-load-balancers")
+	case "alb", "application-load-balancers":
+		m.closeCommand()
+		return m.pushAndDispatch(Intent{Kind: IntentOpen, Target: "elbv2-application-load-balancers"}, "Application Load Balancers", nil)
+	case "nlb", "network-load-balancers":
+		m.closeCommand()
+		return m.pushAndDispatch(Intent{Kind: IntentOpen, Target: "elbv2-network-load-balancers"}, "Network Load Balancers", nil)
 	case "search", "find":
 		m.closeCommand()
 		return m.openSearch()

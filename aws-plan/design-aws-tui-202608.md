@@ -228,11 +228,11 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 - Detail과 policy document는 구조화된 값을 읽는 scroll view이므로 한 행 table로 변경하지 않았다.
 - 완료 판정: 120x30, 80x24, 50x16, 40x12 golden과 관계/context/Tags column test, 전체 test·race·vet·stripped build가 통과했다. 증거는 [B1.5 테이블 기준선](B15-K9S-TABLE.md)에 기록한다.
 
-### B2 — domain에서 compute target까지 live chain 완성
+### B2 — ALB/NLB catalog와 domain-to-compute live chain 완성
 
-- 완료 상태: 2026-08-28 fixture 검증 완료. Route 53→ALB/NLB→listener/rule→target group→target을 existing live coordinator에 추가했다.
+- 완료 상태: 2026-08-28 fixture 검증 완료. Home 및 `:elbv2`/`:alb`/`:nlb`에서 regional ALB/NLB catalog를 직접 열 수 있고, Route 53→ALB/NLB→listener/rule→target group→target chain도 같은 live coordinator를 사용한다.
 - relation 계약: listener priority, host/path condition, action order/weight, target type을 보존하고 IP target을 임의 EC2로 연결하지 않는다.
-- 완료 판정: exact domain fixture에서 최종 instance 또는 IP unresolved 이유까지 같은 route stack으로 도달하고 raw source/target evidence로 reverse edge를 재구성했다. 2026-08-28 `lg-udg-ops` smoke는 `elasticloadbalancing:DescribeLoadBalancers` explicit deny로 차단되어 read 권한이 있는 profile의 운영 인계 gate로 남긴다.
+- 완료 판정: direct catalog가 ALB/NLB만 반환하고 Gateway Load Balancer를 제외하며, type-filtered command와 멀티리전 fan-out이 같은 provider 계약을 사용한다. ALB listener는 rules와 target groups, NLB listener는 default target groups만 노출한다. Exact domain fixture는 최종 instance 또는 IP unresolved 이유까지 같은 route stack으로 도달한다. 2026-08-28 `lg-udg-ops` smoke는 `elasticloadbalancing:DescribeLoadBalancers` explicit deny로 차단되어 read 권한이 있는 profile의 운영 인계 gate로 남긴다.
 - 증거: [B2 ELBv2 ingress trace 기준선](B2-ELBV2-TRACE.md)
 
 ### B3 — SG reverse를 이용한 snapshot graph PoC

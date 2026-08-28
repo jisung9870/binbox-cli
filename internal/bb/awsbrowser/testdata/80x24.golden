@@ -7,8 +7,8 @@
 │   Route 53 Hosted Zones           route53-hosted-zones      Not loaded · AW… │
 │   IAM Roles                       iam-roles                 Not loaded · AW… │
 │   VPC & Networking                vpc-networking            Not loaded       │
+│   Load Balancers (ALB/NLB)        elbv2-load-balancers      Not loaded       │
 │   Cross-profile search            cross-profile-search      Domain, role · … │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

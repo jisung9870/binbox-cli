@@ -176,6 +176,54 @@ func TestELBV2DomainTraceFixturePreservesRuleConditionsAndTargetTypes(t *testing
 	}
 }
 
+func TestELBV2CatalogListsAndFiltersALBAndNLB(t *testing.T) {
+	now := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
+	fake := &elbv2Fake{}
+	fake.describeLoadBalancers = func(_ context.Context, input *elasticloadbalancingv2.DescribeLoadBalancersInput) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error) {
+		if len(input.LoadBalancerArns) != 0 || len(input.Names) != 0 || aws.ToInt32(input.PageSize) != elbv2PageSize {
+			t.Fatalf("catalog input=%+v", input)
+		}
+		loadBalancer := func(kind types.LoadBalancerTypeEnum, resource, name string) types.LoadBalancer {
+			return types.LoadBalancer{
+				LoadBalancerArn:  aws.String("arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:loadbalancer/" + resource),
+				LoadBalancerName: aws.String(name), DNSName: aws.String(name + "-123.ap-northeast-2.elb.amazonaws.com"),
+				Type: kind, Scheme: types.LoadBalancerSchemeEnumInternal, IpAddressType: types.IpAddressTypeIpv4,
+				VpcId: aws.String("vpc-123"), State: &types.LoadBalancerState{Code: types.LoadBalancerStateEnumActive},
+			}
+		}
+		return &elasticloadbalancingv2.DescribeLoadBalancersOutput{LoadBalancers: []types.LoadBalancer{
+			loadBalancer(types.LoadBalancerTypeEnumApplication, "app/api/111", "api-alb"),
+			loadBalancer(types.LoadBalancerTypeEnumNetwork, "net/internal/222", "internal-nlb"),
+			loadBalancer(types.LoadBalancerTypeEnumGateway, "gwy/appliance/333", "appliance-gwlb"),
+		}}, nil
+	}
+	executor, err := NewELBV2(fake, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		params map[string]string
+		want   []string
+	}{
+		{name: "all ALB and NLB", want: []string{"application", "network"}},
+		{name: "ALB only", params: map[string]string{"load-balancer-type": "application"}, want: []string{"application"}},
+		{name: "NLB only", params: map[string]string{"load-balancer-type": "network"}, want: []string{"network"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resources := executeELBV2Fixture(t, executor, awsbrowser.OperationDescribeLoadBalancers, test.params)
+			got := make([]string, 0, len(resources))
+			for _, resource := range resources {
+				got = append(got, resource.Observation.Fields()["type"].(string))
+			}
+			if strings.Join(got, ",") != strings.Join(test.want, ",") {
+				t.Fatalf("types=%v want=%v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestELBV2RejectsCrossRegionARNAndMalformedTargetQuery(t *testing.T) {
 	fake := &elbv2Fake{}
 	executor, _ := NewELBV2(fake, time.Now)
@@ -185,6 +233,7 @@ func TestELBV2RejectsCrossRegionARNAndMalformedTargetQuery(t *testing.T) {
 	}{
 		{awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-arn": strings.Replace(testLoadBalancerARN, "ap-northeast-2", "us-west-2", 1)}},
 		{awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-dns": "not-an-elb.example.com"}},
+		{awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-type": "gateway"}},
 		{awsbrowser.OperationDescribeTargetHealth, map[string]string{"target-group-arn": testTargetGroupARN, "target-type": "container"}},
 	} {
 		key, err := awsbrowser.NewQueryKey(testIAMContext(t), awsbrowser.ProviderELBV2, test.operation, test.params)

@@ -7,9 +7,9 @@
 │   Route 53 Hosted Zones         Not loaded · … │
 │   IAM Roles                     Not loaded · … │
 │   VPC & Networking              Not loaded     │
+│   Load Balancers (ALB/NLB)      Not loaded     │
 │   Cross-profile search          Domain, role … │
 │ ↑↓ move · →/enter open · : command             │
-│                                                │
 │                                                │
 │                                                │
 │ c context · ctrl+g search · ? help             │

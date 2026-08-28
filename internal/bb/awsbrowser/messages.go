@@ -310,11 +310,13 @@ func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProje
 			Kind: "scoped-query", Reason: "listeners attached to load balancer", Scope: key.Region,
 		})
 	case "elbv2.listener":
-		relations = append(relations, ProjectionRelation{
-			Label: "Listener rules", Target: "elbv2.rules:" + key.ID,
-			Type: string(RelationContains), Direction: string(RelationOutgoing),
-			Kind: "scoped-query", Reason: "ordered rules attached to listener", Scope: key.Region,
-		})
+		if strings.Contains(key.ID, ":listener/app/") {
+			relations = append(relations, ProjectionRelation{
+				Label: "Listener rules", Target: "elbv2.rules:" + key.ID,
+				Type: string(RelationContains), Direction: string(RelationOutgoing),
+				Kind: "scoped-query", Reason: "ordered rules attached to application load balancer listener", Scope: key.Region,
+			})
+		}
 	case "elbv2.target-group":
 		if targetType, ok := fields["target_type"].(string); ok && strings.TrimSpace(targetType) != "" {
 			targetID := url.Values{"target-group-arn": []string{key.ID}, "target-type": []string{targetType}}.Encode()

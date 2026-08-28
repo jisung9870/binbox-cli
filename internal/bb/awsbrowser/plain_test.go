@@ -30,7 +30,7 @@ func TestPlainStartupAndQuitAreZeroCall(t *testing.T) {
 	if len(dispatcher.intents) != 0 {
 		t.Fatalf("startup intents=%+v", dispatcher.intents)
 	}
-	for _, want := range []string{"AWS Browser · READ ONLY", "Account unresolved", "1  EC2 Instances", "2  Route 53", "3  IAM Roles", "4  VPC & Networking", "5  Cross-profile search", "open <n>|context|back|refresh|quit"} {
+	for _, want := range []string{"AWS Browser · READ ONLY", "Account unresolved", "1  EC2 Instances", "2  Route 53", "3  IAM Roles", "4  VPC & Networking", "5  Load Balancers (ALB/NLB)", "6  Cross-profile search", "open <n>|context|back|refresh|quit"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("plain missing %q:\n%s", want, out.String())
 		}
@@ -210,7 +210,7 @@ func TestPlainSearchRefreshRepeatsValidatedSearchIntentAndContext(t *testing.T) 
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{initial, refresh}}
 	var out bytes.Buffer
 	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{
-		In: strings.NewReader("open 5\nsearch role all reader\nrefresh\nquit\n"), Err: &out,
+		In: strings.NewReader("open 6\nsearch role all reader\nrefresh\nquit\n"), Err: &out,
 	}, Config{Profile: "dev", Region: "us-east-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestPlainSearchUsesIntentStreamAndSanitizesFailure(t *testing.T) {
 	stream.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadForbidden}, Failure: &ProviderFailure{State: LoadForbidden, Service: "iam\x1b[31m", Operation: "GetRole"}}, Done: true}
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 5\nsearch domain all api.example.com\nquit\n"), Err: &out}, Config{Profile: "dev"})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 6\nsearch domain all api.example.com\nquit\n"), Err: &out}, Config{Profile: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestPlainSearchUsesIntentStreamAndSanitizesFailure(t *testing.T) {
 func TestPlainSearchOpenAndEditingAreZeroCallUntilSubmit(t *testing.T) {
 	dispatcher := new(recordingDispatcher)
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 5\nback\nquit\n"), Err: &out}, Config{})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 6\nback\nquit\n"), Err: &out}, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestPlainSearchRelationUsesSelectedResourceContext(t *testing.T) {
 	relation.updates <- IntentUpdate{Query: QueryUpdate{Snapshot: QuerySnapshot{State: LoadEmpty, FetchedAt: time.Now()}}, Done: true}
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{search, relation}}
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 5\nsearch domain all api.example.com\nopen 2\nopen 1\nquit\n"), Err: &out}, Config{Profile: "dev", Region: "us-east-1"})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 6\nsearch domain all api.example.com\nopen 2\nopen 1\nquit\n"), Err: &out}, Config{Profile: "dev", Region: "us-east-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestPlainSearchRendersCoverageAndSelectedResourceProvenance(t *testing.T) {
 	}
 	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
 	var out bytes.Buffer
-	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 5\nsearch domain all api.example.com\nopen 1\nback\nquit\n"), Err: &out}, Config{})
+	err := (Plain{Dispatcher: dispatcher}).Run(context.Background(), Terminal{In: strings.NewReader("open 6\nsearch domain all api.example.com\nopen 1\nback\nquit\n"), Err: &out}, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,7 +15,7 @@ var ErrNoInput = errors.New("AWS browser input ended")
 
 type Plain struct{ Dispatcher IntentDispatcher }
 
-var plainCatalog = []catalogItem{homeCatalog[0], homeCatalog[1], homeCatalog[2], homeCatalog[3], homeCatalog[4]}
+var plainCatalog = append([]catalogItem(nil), homeCatalog...)
 
 type plainFrame struct {
 	target, label string

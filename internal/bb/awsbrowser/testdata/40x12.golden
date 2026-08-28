@@ -7,6 +7,6 @@
 │   Route 53 Hosted Z…  Not loaded · … │
 │   IAM Roles           Not loaded · … │
 │   VPC & Networking    Not loaded     │
-│   Cross-profile sea…  Domain, role … │
+│ ↑↓ move · →/enter open · : command   │
 │ c context · ctrl+g search · ? help   │
 ╰──────────────────────────────────────╯

@@ -87,6 +87,16 @@ type ProjectionTag struct {
 	Value string
 }
 
+// ResourceNavigation is an unverified execution hint stored with a snapshot
+// row. The model must resolve Profile+Region and match the expected identity
+// before using it for an exact live read.
+type ResourceNavigation struct {
+	Profile           string
+	Region            string
+	ExpectedPartition string
+	ExpectedAccountID string
+}
+
 type ResourceProjection struct {
 	Target    string
 	Title     string
@@ -100,6 +110,7 @@ type ResourceProjection struct {
 	Context              *AWSContext
 	Current              bool
 	AvailableViaProfiles []string
+	Navigation           *ResourceNavigation
 }
 
 type IntentProjection struct {
@@ -609,7 +620,7 @@ func NavigableRelationTargetType(resourceType string) bool {
 	switch resourceType {
 	case "ec2.instance", "ec2.volume", "ec2.security-group", "ec2.security-group-rule",
 		"ec2.security-group-rules-inbound", "ec2.security-group-rules-outbound",
-		"ec2.vpc", "ec2.subnet", "ec2.route-table", "iam.role", "iam.instance-profile",
+		"ec2.vpc", "ec2.subnet", "ec2.route-table", "ec2.vpc-peering-connection", "iam.role", "iam.instance-profile",
 		"iam.role-attached-policies", "iam.role-inline-policies", "iam.managed-policy", "iam.inline-policy",
 		"iam.managed-policy-version", "hosted-zone", "route53.records",
 		"cloudfront.distribution-domain", "elbv2.load-balancer-dns", "elbv2.load-balancer",

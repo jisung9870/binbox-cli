@@ -478,7 +478,11 @@ func renderList(m Model, route routeFrame) string {
 	if m.height >= 16 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, styles.footer.Render("type or / filter  ↑↓ move  →/enter detail  ← back  : command  ^o/^i history"))
+	footer := "type or / filter  ↑↓ move  →/enter detail  ← back  : command  ^o/^i history"
+	if route.graph != nil {
+		footer = "type or / filter  ↑↓ move  →/enter live  e evidence  ← back  ^r refresh"
+	}
+	lines = append(lines, styles.footer.Render(footer))
 	return frameView(lines, m.width, min(m.height, max(14, len(lines)+2)), styles)
 }
 

@@ -360,6 +360,8 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 			request.Provider, request.Operation, request.Params["subnet-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSubnets, id
 		case "ec2.route-table":
 			request.Provider, request.Operation, request.Params["route-table-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeRouteTables, id
+		case "ec2.vpc-peering-connection":
+			request.Provider, request.Operation, request.Params["vpc-peering-connection-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcPeeringConnections, id
 		case "iam.role":
 			request.Provider, request.Operation, request.Params["role-name"] = awsbrowser.ProviderIAM, awsbrowser.OperationGetRole, id
 		case "iam.role-attached-policies":

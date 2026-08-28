@@ -164,14 +164,20 @@ func projectAWSIncomingSnapshot(execution awsSnapshotRefsExecution, request awsA
 		if title == "" {
 			title = edge.Source.ID
 		}
+		navigation := awsSnapshotResourceNavigation(edge, request)
 		target := ""
-		if edge.Source.AccountID == request.AccountID && edge.Source.Region == request.Region && awsbrowser.NavigableRelationTargetType(edge.Source.Type) {
+		if navigation != nil && awsbrowser.NavigableRelationTargetType(edge.Source.Type) {
 			target = edge.Source.Type + ":" + edge.Source.ID
 		}
 		profiles := make([]string, 0, len(edge.Observers))
+		seenProfiles := make(map[string]bool, len(edge.Observers))
 		for _, observer := range edge.Observers {
-			profiles = append(profiles, observer.Profile)
+			if !seenProfiles[observer.Profile] {
+				seenProfiles[observer.Profile] = true
+				profiles = append(profiles, observer.Profile)
+			}
 		}
+		sort.Strings(profiles)
 		resources = append(resources, awsbrowser.ResourceProjection{
 			Target: target, Title: title,
 			Subtitle: strings.Join([]string{edge.RelationType, edge.Source.Type, edge.Source.AccountID, edge.Source.Region}, " · "),
@@ -183,10 +189,47 @@ func projectAWSIncomingSnapshot(execution awsSnapshotRefsExecution, request awsA
 				{Label: "Operation", Value: edge.Operation}, {Label: "Observed at", Value: edge.ObservedAt.Format(time.RFC3339)},
 				{Label: "Observed via", Value: strings.Join(profiles, ", ")},
 			},
-			AvailableViaProfiles: profiles,
+			AvailableViaProfiles: profiles, Navigation: navigation,
 		})
 	}
 	return awsbrowser.IntentProjection{Resources: resources}, nil
+}
+
+func awsSnapshotResourceNavigation(edge awsSnapshotEdgeData, request awsAutoSnapshotRequest) *awsbrowser.ResourceNavigation {
+	if !awsSnapshotPartitionRE.MatchString(edge.Source.Partition) || len(edge.Observers) == 0 {
+		return nil
+	}
+	observers := append([]awsSnapshotObserverData(nil), edge.Observers...)
+	sort.SliceStable(observers, func(left, right int) bool {
+		leftCurrent := observers[left].Profile == request.Profile
+		rightCurrent := observers[right].Profile == request.Profile
+		if leftCurrent != rightCurrent {
+			return leftCurrent
+		}
+		leftSourceRegion := observers[left].Region == edge.Source.Region
+		rightSourceRegion := observers[right].Region == edge.Source.Region
+		if leftSourceRegion != rightSourceRegion {
+			return leftSourceRegion
+		}
+		if observers[left].Profile != observers[right].Profile {
+			return observers[left].Profile < observers[right].Profile
+		}
+		if observers[left].Region != observers[right].Region {
+			return observers[left].Region < observers[right].Region
+		}
+		return observers[left].AccountID < observers[right].AccountID
+	})
+	for _, observer := range observers {
+		if observer.Profile == "" || observer.Region == "" ||
+			awsbrowser.ValidateContextSelection(observer.Profile, observer.Region) != nil || !awsSnapshotAccountRE.MatchString(observer.AccountID) {
+			continue
+		}
+		return &awsbrowser.ResourceNavigation{
+			Profile: observer.Profile, Region: observer.Region,
+			ExpectedPartition: edge.Source.Partition, ExpectedAccountID: observer.AccountID,
+		}
+	}
+	return nil
 }
 
 func awsSnapshotPath(stateRoot string) string {

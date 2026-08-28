@@ -98,7 +98,7 @@ func TestAutoSnapshotRefreshesStaleCoverageWithoutManualSync(t *testing.T) {
 	}
 }
 
-func TestIncomingSnapshotProjectionPrefersNameAndFencesCrossAccountNavigation(t *testing.T) {
+func TestIncomingSnapshotProjectionPrefersNameAndCarriesVerifiedNavigationHints(t *testing.T) {
 	at := time.Date(2026, 8, 28, 15, 0, 0, 0, time.UTC)
 	target := snapshot.ResourceRef{Partition: "aws", AccountID: "123456789012", Region: "ap-northeast-2", Type: "ec2.security-group", ID: "sg-abc123"}
 	sameAccount := snapshot.ResourceRef{Partition: "aws", AccountID: target.AccountID, Region: target.Region, Type: "ec2.instance", ID: "i-abc123"}
@@ -110,8 +110,11 @@ func TestIncomingSnapshotProjectionPrefersNameAndFencesCrossAccountNavigation(t 
 		{SourceKey: sameKey, TargetKey: targetKey, SourceName: "web", Relation: snapshot.Relation{Type: awsbrowser.RelationUses, Direction: awsbrowser.RelationOutgoing, Confidence: awsbrowser.RelationIDExact, Reason: "fixture", Operation: "DescribeInstances", Scope: target.Region, ObservedAt: at}, Observers: []snapshot.Observer{{Profile: "dev", AccountID: sameAccount.AccountID, Region: sameAccount.Region, ObservedAt: at}}},
 		{SourceKey: crossKey, TargetKey: targetKey, SourceName: "batch", Relation: snapshot.Relation{Type: awsbrowser.RelationUses, Direction: awsbrowser.RelationOutgoing, Confidence: awsbrowser.RelationIDExact, Reason: "fixture", Operation: "DescribeInstances", Scope: target.Region, ObservedAt: at}, Observers: []snapshot.Observer{{Profile: "prod", AccountID: crossAccount.AccountID, Region: crossAccount.Region, ObservedAt: at}}},
 	}}
-	projection, err := projectAWSIncomingSnapshot(execution, awsAutoSnapshotRequest{AccountID: target.AccountID, Region: target.Region})
-	if err != nil || len(projection.Resources) != 2 || projection.Resources[0].Title != "web" || projection.Resources[0].Target != "ec2.instance:i-abc123" || projection.Resources[1].Target != "" {
+	projection, err := projectAWSIncomingSnapshot(execution, awsAutoSnapshotRequest{Profile: "dev", AccountID: target.AccountID, Region: target.Region})
+	if err != nil || len(projection.Resources) != 2 || projection.Resources[0].Title != "web" || projection.Resources[0].Target != "ec2.instance:i-abc123" ||
+		projection.Resources[0].Navigation == nil || projection.Resources[0].Navigation.Profile != "dev" ||
+		projection.Resources[1].Target != "ec2.instance:i-def456" || projection.Resources[1].Navigation == nil ||
+		projection.Resources[1].Navigation.Profile != "prod" || projection.Resources[1].Navigation.ExpectedAccountID != crossAccount.AccountID {
 		t.Fatalf("projection=%+v error=%v", projection, err)
 	}
 }

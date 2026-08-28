@@ -7,7 +7,7 @@
 다음 검토   선택적 tmux/interactive resize 관찰 및 실계정 gate 승인 시
 상태        구현·자동 Linux PTY·자동 release gate 완료, 수동/외부 acceptance 대기
 
-`bb aws browse`는 시작할 때 전체 AWS inventory를 만들지 않는다. 로컬 정보로 서비스 카탈로그를 즉시 열고, EC2·Route 53·IAM 같은 카테고리에 들어가거나 연결 리소스를 선택할 때 필요한 조회만 실행한다. 도메인·IAM role처럼 소유 계정을 모를 수 있는 검색은 사용자가 검색을 확정한 뒤 여러 AWS profile을 제한된 동시성으로 자동 조회한다. Security Group/VPC 역방향 관계는 Summary의 `Incoming relations · AUTO` 진입 시 Context Group을 자동 수집하고 snapshot cache를 재사용하므로 선행 `sync`가 필요 없다. 경로·diff는 이 live 경로를 교체하지 않고 이후 snapshot graph 기능으로 확장한다.
+`bb aws browse`는 시작할 때 전체 AWS inventory를 만들지 않는다. 로컬 정보로 서비스 카탈로그를 즉시 열고, EC2·Route 53·IAM 같은 카테고리에 들어가거나 연결 리소스를 선택할 때 필요한 조회만 실행한다. 도메인·IAM role처럼 소유 계정을 모를 수 있는 검색은 사용자가 검색을 확정한 뒤 여러 AWS profile을 제한된 동시성으로 자동 조회한다. Security Group/VPC 역방향 관계는 Summary의 `Incoming relations · AUTO` 진입 시 Context Group을 자동 수집하고 snapshot cache를 재사용하므로 선행 `sync`가 필요 없다. Cross-account/cross-region 행은 snapshot observer profile을 STS로 재검증한 뒤 exact live Summary로 이동하며 `e`는 network call 없이 evidence를 연다. 경로·diff는 이 live 경로를 교체하지 않고 이후 snapshot graph 기능으로 확장한다.
 
 ## 이번 기획에서 바뀌는 결론
 

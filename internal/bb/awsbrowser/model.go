@@ -79,6 +79,7 @@ type routeFrame struct {
 	contextLoading    bool
 	contextStartup    bool
 	verifiedContext   *AWSContext
+	navigationLoading bool
 }
 
 type Model struct {
@@ -117,6 +118,13 @@ type contextChoicesMsg struct {
 
 type contextResolvedMsg struct {
 	generation uint64
+	resolution ContextResolution
+	err        error
+}
+
+type snapshotNavigationResolvedMsg struct {
+	generation uint64
+	resource   ResourceProjection
 	resolution ContextResolution
 	err        error
 }
@@ -286,6 +294,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		frame.verifiedContext = &verified
 		frame.status = "Verified account " + safeIntentText(verified.AccountID) + " · enter apply"
 		return m, nil
+	case snapshotNavigationResolvedMsg:
+		frame := m.current()
+		if frame == nil || !frame.navigationLoading || frame.generation != msg.generation {
+			return m, nil
+		}
+		m.finishSnapshotNavigation(frame)
+		hint := msg.resource.Navigation
+		if msg.err != nil || hint == nil {
+			frame.status = "! live context verification failed · e snapshot evidence"
+			return m, nil
+		}
+		if msg.resolution.Failure != nil {
+			frame.status = "! live verification " + loadStateLabel(msg.resolution.Failure.State) + " · e snapshot evidence"
+			return m, nil
+		}
+		if msg.resolution.Context == nil || msg.resolution.Context.Validate() != nil {
+			frame.status = "! live context verification failed · e snapshot evidence"
+			return m, nil
+		}
+		verified := *msg.resolution.Context
+		if verified.Profile != hint.Profile || verified.Region != hint.Region || verified.Partition != hint.ExpectedPartition || verified.AccountID != hint.ExpectedAccountID {
+			frame.status = "! snapshot observer identity changed · e snapshot evidence"
+			return m, nil
+		}
+		return m.pushAndDispatch(Intent{Kind: IntentOpen, Target: msg.resource.Target}, msg.resource.Title, &verified)
 	case IntentResultMsg:
 		// Kept as a public message for small external adapters. Model-originated
 		// dispatches use intentStartedMsg so stale starts remain fenced.
@@ -304,13 +337,26 @@ func (m Model) updateKey(key string) (tea.Model, tea.Cmd) {
 	if m.commandActive {
 		return m.updateCommandKey(key)
 	}
+	frame := m.current()
+	if frame != nil && frame.navigationLoading {
+		switch key {
+		case "ctrl+c":
+			m.cancelAll()
+			return m, tea.Quit
+		case "esc", "left":
+			m.finishSnapshotNavigation(frame)
+			m.nextGeneration++
+			frame.generation = m.nextGeneration
+			frame.status = "Live verification cancelled · snapshot results preserved"
+		}
+		return m, nil
+	}
 	if key == ":" {
 		m.commandActive = true
 		m.commandValue = ""
 		m.commandStatus = ""
 		return m, nil
 	}
-	frame := m.current()
 	textValueFocused := frame != nil && (frame.mode == routeSearch && frame.searchFocus == 1 ||
 		frame.mode == routeContext || frame.mode == routeList || frame.mode == routeRelations || frame.mode == routeTags)
 	if key == "q" && !textValueFocused {
@@ -391,6 +437,9 @@ func (m Model) updateKey(key string) (tea.Model, tea.Cmd) {
 	case "e":
 		if frame != nil && frame.mode == routeRelations && !frame.filterActive && frame.filterValue == "" {
 			return m.openSelectedRelationEvidence()
+		}
+		if frame != nil && frame.mode == routeList && frame.graph != nil && !frame.filterActive && frame.filterValue == "" {
+			return m.openSelectedSnapshotEvidence()
 		}
 		if frame != nil && filterableRoute(frame.mode) {
 			m.appendResourceFilter(frame, key)
@@ -874,6 +923,12 @@ func (m Model) enterCurrent() (tea.Model, tea.Cmd) {
 			copy := *resource.Context
 			resourceContext = &copy
 		}
+		if resource.Target != "" && resource.Navigation != nil {
+			if snapshotNavigationMatches(resource.Navigation, resourceContext) {
+				return m.pushAndDispatch(Intent{Kind: IntentOpen, Target: resource.Target}, resource.Title, resourceContext)
+			}
+			return m.verifySnapshotNavigation(resource)
+		}
 		if hydrateListResource(resource.Target) {
 			return m.pushAndDispatch(Intent{Kind: IntentOpen, Target: resource.Target}, resource.Title, resourceContext)
 		}
@@ -936,6 +991,64 @@ func (m Model) enterCurrent() (tea.Model, tea.Cmd) {
 		return m.openRelationEvidence(relation)
 	}
 	return m.pushAndDispatch(Intent{Kind: IntentOpen, Target: relation.Target}, relation.Label, frame.context)
+}
+
+func snapshotNavigationMatches(hint *ResourceNavigation, awsContext *AWSContext) bool {
+	return validResourceNavigation(hint) && awsContext != nil && awsContext.Validate() == nil &&
+		awsContext.Profile == hint.Profile && awsContext.Region == hint.Region &&
+		awsContext.Partition == hint.ExpectedPartition && awsContext.AccountID == hint.ExpectedAccountID
+}
+
+func validResourceNavigation(hint *ResourceNavigation) bool {
+	return hint != nil && hint.Profile != "" && hint.Region != "" &&
+		ValidateContextSelection(hint.Profile, hint.Region) == nil &&
+		partitionRE.MatchString(hint.ExpectedPartition) && accountIDRE.MatchString(hint.ExpectedAccountID)
+}
+
+func (m Model) verifySnapshotNavigation(resource ResourceProjection) (tea.Model, tea.Cmd) {
+	frame := m.current()
+	hint := resource.Navigation
+	catalog, ok := m.dispatcher.(ContextCatalog)
+	if frame == nil || !ok || catalog == nil || resource.Target == "" || !validResourceNavigation(hint) {
+		if frame != nil {
+			frame.status = "! live verification unavailable · e snapshot evidence"
+		}
+		return m, nil
+	}
+	m.finishFrame(frame)
+	m.nextGeneration++
+	requestCtx, cancel := context.WithCancel(m.ctx)
+	frame.generation = m.nextGeneration
+	frame.dispatchCancel = cancel
+	frame.navigationLoading = true
+	frame.status = "Verifying snapshot observer " + safeIntentText(hint.Profile) + "/" + safeIntentText(hint.Region) + "… · Esc cancel"
+	generation := frame.generation
+	return m, func() tea.Msg {
+		resolution, err := catalog.ResolveContext(requestCtx, hint.Profile, hint.Region)
+		return snapshotNavigationResolvedMsg{generation: generation, resource: resource, resolution: resolution, err: err}
+	}
+}
+
+func (m Model) openSelectedSnapshotEvidence() (tea.Model, tea.Cmd) {
+	frame := m.current()
+	if frame == nil || frame.mode != routeList || frame.graph == nil {
+		return m, nil
+	}
+	resources := filteredResources(*frame)
+	if len(resources) == 0 {
+		return m, nil
+	}
+	resource := resources[frame.selected]
+	resource.Target = ""
+	resource.Navigation = nil
+	m.finishFrame(frame)
+	m.pushFrame(routeFrame{mode: routeDetail, label: resource.Title, context: frame.context, detail: resource, status: "SNAPSHOT evidence · live resource unchanged"})
+	return m, nil
+}
+
+func (m *Model) finishSnapshotNavigation(frame *routeFrame) {
+	m.releaseFrame(frame)
+	frame.navigationLoading = false
 }
 
 func (m Model) openSelectedRelationEvidence() (tea.Model, tea.Cmd) {
@@ -1029,7 +1142,7 @@ func singletonDetailTarget(target string) bool {
 		return false
 	}
 	switch resourceType {
-	case "ec2.instance", "ec2.volume", "ec2.security-group", "ec2.security-group-rule",
+	case "ec2.instance", "ec2.volume", "ec2.security-group", "ec2.security-group-rule", "ec2.vpc-peering-connection",
 		"ec2.vpc", "ec2.subnet", "ec2.route-table", "iam.role", "iam.instance-profile",
 		"iam.managed-policy", "iam.inline-policy", "iam.managed-policy-version",
 		"cloudfront.distribution-domain", "elbv2.load-balancer-dns", "elbv2.load-balancer",
@@ -1727,6 +1840,7 @@ func (m *Model) finishFrame(frame *routeFrame) {
 	}
 	fence := !frame.terminalUpdate && (frame.dispatchCancel != nil || frame.stream != nil)
 	m.releaseFrame(frame)
+	frame.navigationLoading = false
 	if fence {
 		m.nextGeneration++
 		frame.generation = m.nextGeneration

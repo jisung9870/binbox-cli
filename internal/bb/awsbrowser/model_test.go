@@ -670,6 +670,87 @@ func TestIncomingRelationsRefreshForcesAutomaticRecollection(t *testing.T) {
 	}
 }
 
+func TestSnapshotCrossAccountRowVerifiesObserverBeforeLiveRead(t *testing.T) {
+	currentContext := testStoreContext(t, "dev", "123456789012", "ap-northeast-2", 1)
+	targetContext := testStoreContext(t, "prod", "210987654321", "us-east-1", 2)
+	dispatcher := &contextRecordingDispatcher{resolution: ContextResolution{Context: &targetContext}}
+	resource := ResourceProjection{
+		Target: "ec2.instance:i-def456", Title: "batch",
+		Fields: []ProjectionField{{Label: "Relation", Value: "uses"}},
+		Navigation: &ResourceNavigation{
+			Profile: "prod", Region: "us-east-1", ExpectedPartition: "aws", ExpectedAccountID: "210987654321",
+		},
+	}
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher)
+	m.history = []routeFrame{{
+		mode: routeList, context: &currentContext, graph: &GraphSnapshot{Group: "udg"}, terminalUpdate: true,
+		projection: IntentProjection{Resources: []ResourceProjection{resource}},
+	}}
+
+	model, verifyCommand := m.Update(key(tea.KeyRight))
+	verifying := model.(Model)
+	if verifyCommand == nil || !verifying.current().navigationLoading || !strings.Contains(verifying.current().status, "Verifying snapshot observer prod/us-east-1") {
+		t.Fatalf("verification did not start: command=%v frame=%+v", verifyCommand != nil, verifying.current())
+	}
+	message := verifyCommand()
+	model, liveCommand := verifying.Update(message)
+	updated := model.(Model)
+	frame := updated.current()
+	if liveCommand == nil || dispatcher.resolvedProfile != "prod" || dispatcher.resolvedRegion != "us-east-1" ||
+		frame.intent.Target != resource.Target || frame.intent.Profile != "prod" || frame.intent.Region != "us-east-1" ||
+		frame.context == nil || frame.context.AccountID != "210987654321" {
+		t.Fatalf("live transition frame=%+v resolved=%s/%s command=%v", frame, dispatcher.resolvedProfile, dispatcher.resolvedRegion, liveCommand != nil)
+	}
+}
+
+func TestSnapshotSameContextRowReusesVerifiedContext(t *testing.T) {
+	awsContext := testStoreContext(t, "dev", "123456789012", "ap-northeast-2", 1)
+	dispatcher := new(contextRecordingDispatcher)
+	resource := ResourceProjection{
+		Target: "ec2.instance:i-abc123", Title: "web",
+		Navigation: &ResourceNavigation{Profile: "dev", Region: "ap-northeast-2", ExpectedPartition: "aws", ExpectedAccountID: "123456789012"},
+	}
+	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
+	m.history = []routeFrame{{
+		mode: routeList, context: &awsContext, graph: &GraphSnapshot{Group: "udg"}, terminalUpdate: true,
+		projection: IntentProjection{Resources: []ResourceProjection{resource}},
+	}}
+	model, command := m.Update(key(tea.KeyEnter))
+	updated := model.(Model)
+	if command == nil || dispatcher.resolvedProfile != "" || updated.current().navigationLoading || updated.current().intent.Target != resource.Target || updated.current().context != &awsContext {
+		t.Fatalf("same-context transition frame=%+v resolved=%s command=%v", updated.current(), dispatcher.resolvedProfile, command != nil)
+	}
+}
+
+func TestSnapshotIdentityMismatchKeepsEvidenceAndBlocksLiveRead(t *testing.T) {
+	currentContext := testStoreContext(t, "dev", "123456789012", "ap-northeast-2", 1)
+	changedContext := testStoreContext(t, "prod", "999999999999", "us-east-1", 2)
+	dispatcher := &contextRecordingDispatcher{resolution: ContextResolution{Context: &changedContext}}
+	resource := ResourceProjection{
+		Target: "ec2.instance:i-def456", Title: "batch", Fields: []ProjectionField{{Label: "Relation", Value: "uses"}},
+		Navigation: &ResourceNavigation{Profile: "prod", Region: "us-east-1", ExpectedPartition: "aws", ExpectedAccountID: "210987654321"},
+	}
+	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
+	m.history = []routeFrame{{
+		mode: routeList, context: &currentContext, graph: &GraphSnapshot{Group: "udg"}, terminalUpdate: true,
+		projection: IntentProjection{Resources: []ResourceProjection{resource}},
+	}}
+
+	model, verifyCommand := m.Update(key(tea.KeyEnter))
+	message := verifyCommand()
+	model, liveCommand := model.Update(message)
+	blocked := model.(Model)
+	if liveCommand != nil || blocked.current().mode != routeList || !strings.Contains(blocked.current().status, "snapshot observer identity changed") || len(dispatcher.intents) != 0 {
+		t.Fatalf("identity mismatch was not fenced: command=%v frame=%+v intents=%+v", liveCommand != nil, blocked.current(), dispatcher.intents)
+	}
+	model, evidenceCommand := blocked.Update(key('e'))
+	evidence := model.(Model)
+	if evidenceCommand != nil || evidence.current().mode != routeDetail || evidence.current().detail.Title != "batch" || evidence.current().detail.Target != "" ||
+		!strings.Contains(evidence.View().Content, "Relation") {
+		t.Fatalf("snapshot evidence unavailable after mismatch: command=%v frame=%+v\n%s", evidenceCommand != nil, evidence.current(), evidence.View().Content)
+	}
+}
+
 func TestIAMAndRoute53SummariesExposePolicyAndDNSCategories(t *testing.T) {
 	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
 	roleKey, err := NewGlobalResourceKey(awsContext, "iam.role", "reader")

@@ -71,6 +71,7 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 		{"ec2.vpc:vpc-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcs, map[string]string{"vpc-id": "vpc-123"}},
 		{"ec2.subnet:subnet-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSubnets, map[string]string{"subnet-id": "subnet-123"}},
 		{"ec2.route-table:rtb-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeRouteTables, map[string]string{"route-table-id": "rtb-123"}},
+		{"ec2.vpc-peering-connection:pcx-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcPeeringConnections, map[string]string{"vpc-peering-connection-id": "pcx-123"}},
 		{"iam.role:reader", awsbrowser.ProviderIAM, awsbrowser.OperationGetRole, map[string]string{"role-name": "reader"}},
 		{"iam.role-attached-policies:reader", awsbrowser.ProviderIAM, awsbrowser.OperationListAttachedRolePolicies, map[string]string{"role-name": "reader"}},
 		{"iam.role-inline-policies:reader", awsbrowser.ProviderIAM, awsbrowser.OperationListRolePolicies, map[string]string{"role-name": "reader"}},
@@ -112,7 +113,7 @@ func TestAWSNavigableRelationContractHasRuntimeMapping(t *testing.T) {
 		"ec2.instance": "i-1", "ec2.volume": "vol-1", "ec2.security-group": "sg-1",
 		"ec2.security-group-rule": "sgr-1", "ec2.security-group-rules-inbound": "sg-1",
 		"ec2.security-group-rules-outbound": "sg-1", "ec2.vpc": "vpc-1", "ec2.subnet": "subnet-1",
-		"ec2.route-table": "rtb-1", "iam.role": "reader", "iam.instance-profile": "worker",
+		"ec2.route-table": "rtb-1", "ec2.vpc-peering-connection": "pcx-1", "iam.role": "reader", "iam.instance-profile": "worker",
 		"iam.role-attached-policies": "reader", "iam.role-inline-policies": "reader",
 		"iam.managed-policy":             "arn:aws:iam::123456789012:policy/read",
 		"iam.inline-policy":              "reader:inline",
@@ -136,7 +137,7 @@ func TestAWSNavigableRelationContractHasRuntimeMapping(t *testing.T) {
 			t.Fatalf("navigable type %q has no runtime mapping", resourceType)
 		}
 	}
-	for _, resourceType := range []string{"ec2.gateway", "ec2.egress-only-internet-gateway", "ec2.carrier-gateway", "ec2.local-gateway", "ec2.nat-gateway", "ec2.network-interface", "ec2.transit-gateway", "ec2.vpc-peering-connection", "networkmanager.core-network"} {
+	for _, resourceType := range []string{"ec2.gateway", "ec2.egress-only-internet-gateway", "ec2.carrier-gateway", "ec2.local-gateway", "ec2.nat-gateway", "ec2.network-interface", "ec2.transit-gateway", "networkmanager.core-network"} {
 		if awsbrowser.NavigableRelationTargetType(resourceType) {
 			t.Fatalf("unmapped emitted type %q is navigable", resourceType)
 		}

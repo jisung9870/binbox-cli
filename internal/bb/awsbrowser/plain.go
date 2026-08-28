@@ -232,7 +232,21 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 					copy := *resource.Context
 					resourceContext = &copy
 				}
-				if hydrateListResource(resource.Target) {
+				if resource.Target != "" && resource.Navigation != nil && !snapshotNavigationMatches(resource.Navigation, resourceContext) {
+					catalog, ok := p.Dispatcher.(ContextCatalog)
+					if !ok || catalog == nil || !validResourceNavigation(resource.Navigation) {
+						fmt.Fprintln(terminal.Err, "live verification unavailable; snapshot evidence preserved")
+						continue
+					}
+					resolution, resolveErr := catalog.ResolveContext(ctx, resource.Navigation.Profile, resource.Navigation.Region)
+					if resolveErr != nil || resolution.Failure != nil || !snapshotNavigationMatches(resource.Navigation, resolution.Context) {
+						fmt.Fprintln(terminal.Err, "live context verification failed; snapshot evidence preserved")
+						continue
+					}
+					copy := *resolution.Context
+					resourceContext = &copy
+				}
+				if hydrateListResource(resource.Target) || resource.Navigation != nil {
 					history = append(history, plainFrame{target: resource.Target, label: resource.Title, context: resourceContext})
 					if err := p.load(ctx, terminal.Err, config, &history[len(history)-1], Intent{Kind: IntentOpen, Target: resource.Target}, inputs, false); err != nil {
 						if errors.Is(err, errPlainBack) {

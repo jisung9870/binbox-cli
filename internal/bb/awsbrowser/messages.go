@@ -53,7 +53,7 @@ type Intent struct {
 	Query      string
 	Scope      string
 	// ExpectedPartition and ExpectedAccountID fence snapshot-backed reverse
-	// lookups to the exact live resource identity shown in Summary.
+	// lookups to the exact live resource identity shown in Overview.
 	ExpectedPartition string
 	ExpectedAccountID string
 	Force             bool

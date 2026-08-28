@@ -9,7 +9,7 @@
 
 ## 결론
 
-Security Group과 VPC Summary의 `Incoming relations · AUTO`가 자동 수집의 일반 사용자 진입점이다. 진입 시 5분 이내이며 선택된 Context Group의 필수 profile×region coverage가 모두 성공한 snapshot은 재사용하고, 그렇지 않으면 같은 화면에서 `graph` 수집 후 refs를 읽는다. 결과 행은 edge observer의 profile·region을 STS로 재검증한 뒤에만 exact live Summary로 이동한다. `bb aws sync graph`는 CI·prewarm·진단용으로 유지하되 Browse의 선행 절차가 아니다.
+Security Group과 VPC Overview의 `Incoming relations · AUTO`가 자동 수집의 일반 사용자 진입점이다. 진입 시 5분 이내이며 선택된 Context Group의 필수 profile×region coverage가 모두 성공한 snapshot은 재사용하고, 그렇지 않으면 같은 화면에서 `graph` 수집 후 refs를 읽는다. 결과 행은 edge observer의 profile·region을 STS로 재검증한 뒤에만 exact live Overview로 이동한다. `bb aws sync graph`는 CI·prewarm·진단용으로 유지하되 Browse의 선행 절차가 아니다.
 
 ## 요구사항과 제약
 
@@ -28,7 +28,7 @@ Security Group과 VPC Summary의 `Incoming relations · AUTO`가 자동 수집�
 
 ## B4-C1에서 B4-C2로 바뀐 점
 
-- B4-C1: Browse Summary에서 `Incoming relations`를 열면 in-process Go service가 cache 판정, 필요 시 sync, refs 조회를 연속 실행했다.
+- B4-C1: Browse Overview에서 `Incoming relations`를 열면 in-process Go service가 cache 판정, 필요 시 sync, refs 조회를 연속 실행했다.
 - B4-C1 제한: 동일 account/region source만 exact live read가 가능했고 cross-account/cross-region source는 snapshot evidence에 머물렀다.
 - B4-C2: edge observer profile·region을 STS로 다시 검증하고 stored partition/account와 일치할 때 exact live read를 실행한다. VPC Peering connection도 ID-scoped `DescribeVpcPeeringConnections` resolver를 사용한다.
 

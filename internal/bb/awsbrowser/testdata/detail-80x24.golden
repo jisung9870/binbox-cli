@@ -1,19 +1,19 @@
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ AWS Browser · READ ONLY                                                      │
 │ Profile dev  Account unresolved  Principal unresolved  ap-northeast-2        │
-│ AWS > web-api > Summary                                                      │
+│ AWS > web-api > Overview                                                     │
 │ running                                                                      │
 │                                                                              │
-│ Categories (3)                                                               │
-│   CATEGORY                                                    COUNT  ACTION  │
-│ > Security groups                                             1      OPEN    │
-│   Detail                                                      2      VIEW    │
-│   Tags                                                        0      VIEW    │
-│                                                                              │
-│ Summary                                                                      │
+│ At a glance                                                                  │
 │   FIELD               VALUE                                                  │
 │   Private IP          10.0.1.24                                              │
 │   Long value          metadata-metadata-metadata-metadata-metadata-metadata… │
+│                                                                              │
+│ Explore (3) · rows 1-3                                                       │
+│   CATEGORY            COUNT  PREVIEW                                 ACTION  │
+│ > Security groups     1      sg-web                                  OPEN    │
+│   Detail              2      all projected fields                    VIEW    │
+│   Tags                0      -                                       VIEW    │
 │                                                                              │
 │                                                                              │
 │                                                                              │

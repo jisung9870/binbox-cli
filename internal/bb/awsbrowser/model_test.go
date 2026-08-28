@@ -422,7 +422,7 @@ func TestModelProgressiveListDetailRelationAndHistory(t *testing.T) {
 	}
 }
 
-func TestDetailGroupsRelationsAndOpensEachCategoryLocally(t *testing.T) {
+func TestOverviewPreviewsRelationsAndOpensEachCategoryLocally(t *testing.T) {
 	resource := ResourceProjection{
 		Target: "ec2.instance:i-001", Title: "web-api",
 		Relations: []ProjectionRelation{
@@ -443,9 +443,9 @@ func TestDetailGroupsRelationsAndOpensEachCategoryLocally(t *testing.T) {
 			t.Fatalf("detail missing category %q count %s:\n%s", want.label, want.count, view)
 		}
 	}
-	for _, hidden := range []string{"sg-web", "vol-data"} {
-		if strings.Contains(view, hidden) {
-			t.Fatalf("detail leaked relation %q before its category opened:\n%s", hidden, view)
+	for _, preview := range []string{"sg-web · sg-ops", "vol-data", "vpc-main"} {
+		if !strings.Contains(view, preview) {
+			t.Fatalf("overview missing relation preview %q:\n%s", preview, view)
 		}
 	}
 
@@ -498,7 +498,7 @@ func TestHorizontalArrowsOpenAndReturnOneBrowserScreen(t *testing.T) {
 	}
 }
 
-func TestExactLinkedSingletonOpensSummaryWithoutResourceDetour(t *testing.T) {
+func TestExactLinkedSingletonOpensOverviewWithoutResourceDetour(t *testing.T) {
 	stream := newTestIntentStream()
 	resource := ResourceProjection{
 		Target: "ec2.security-group:sg-001", Title: "web-sg", Subtitle: "sg-001 · web access",
@@ -517,8 +517,8 @@ func TestExactLinkedSingletonOpensSummaryWithoutResourceDetour(t *testing.T) {
 		Projection: IntentProjection{Resources: []ResourceProjection{resource}}, Done: true,
 	}})
 	current := model.(Model)
-	if current.current().mode != routeDetail || !strings.Contains(current.View().Content, "AWS > web-sg > Summary") || strings.Contains(current.View().Content, "Resources (1)") {
-		t.Fatalf("singleton did not open Summary directly: frame=%+v\n%s", current.current(), current.View().Content)
+	if current.current().mode != routeDetail || !strings.Contains(current.View().Content, "AWS > web-sg > Overview") || strings.Contains(current.View().Content, "Resources (1)") {
+		t.Fatalf("singleton did not open Overview directly: frame=%+v\n%s", current.current(), current.View().Content)
 	}
 	if stream.cancels != 1 {
 		t.Fatalf("terminal singleton stream was not released: cancels=%d", stream.cancels)
@@ -563,7 +563,7 @@ func TestSingletonPromotionRetainsTrueCollectionsAndAmbiguousResults(t *testing.
 	}
 }
 
-func TestSummaryOpensFullDetailLocally(t *testing.T) {
+func TestOverviewOpensFullDetailLocally(t *testing.T) {
 	resource := ResourceProjection{
 		Target: "ec2.instance:i-001", Title: "web-api", Subtitle: "i-001 · running",
 		Fields: []ProjectionField{
@@ -580,8 +580,8 @@ func TestSummaryOpensFullDetailLocally(t *testing.T) {
 	m.history = []routeFrame{{mode: routeList, projection: IntentProjection{Resources: []ResourceProjection{resource}}}}
 	model, command := m.Update(key(tea.KeyRight))
 	current := model.(Model)
-	if command != nil || current.current().mode != routeDetail || !strings.Contains(current.View().Content, "AWS > web-api > Summary") || strings.Contains(current.View().Content, "visible in full detail") {
-		t.Fatalf("resource did not open compact Summary: command=%v\n%s", command != nil, current.View().Content)
+	if command != nil || current.current().mode != routeDetail || !strings.Contains(current.View().Content, "AWS > web-api > Overview") || strings.Contains(current.View().Content, "visible in full detail") {
+		t.Fatalf("resource did not open compact Overview: command=%v\n%s", command != nil, current.View().Content)
 	}
 	model, command = current.Update(key(tea.KeyRight))
 	current = model.(Model)
@@ -591,7 +591,7 @@ func TestSummaryOpensFullDetailLocally(t *testing.T) {
 	model, _ = current.Update(key(tea.KeyLeft))
 	current = model.(Model)
 	if current.current().mode != routeDetail {
-		t.Fatalf("left did not return to Summary: %+v", current.current())
+		t.Fatalf("left did not return to Overview: %+v", current.current())
 	}
 }
 
@@ -1126,7 +1126,7 @@ func TestTagsCategoryOpensAndFiltersLocally(t *testing.T) {
 	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
 	m.history = []routeFrame{{mode: routeDetail, detail: resource}}
 	detail := m.View().Content
-	if !viewLineContainsAll(detail, "Tags", "2", "VIEW") || strings.Contains(detail, "Owner=platform") {
+	if !viewLineContainsAll(detail, "Tags", "2", "VIEW") || !strings.Contains(detail, "Name=main-vpc · Owner=platform") {
 		t.Fatalf("detail tags category is wrong:\n%s", detail)
 	}
 

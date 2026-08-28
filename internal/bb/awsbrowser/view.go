@@ -493,7 +493,7 @@ func renderSummary(m Model, route routeFrame) string {
 	header := []string{
 		browserHeader(styles),
 		fit(styles.context.Render(contextLine(m.config, route.context)), inner),
-		fit(browserBreadcrumb(styles, resource.Title+" > Summary"), inner),
+		fit(browserBreadcrumb(styles, resource.Title+" > Overview"), inner),
 	}
 	content := []string{}
 	if resource.Subtitle != "" {
@@ -503,50 +503,62 @@ func renderSummary(m Model, route routeFrame) string {
 		}
 	}
 	categories := detailCategories(resource)
-	content = append(content, styles.section.Render(fmt.Sprintf("Categories (%d)", len(categories))))
-	if len(categories) == 0 {
-		content = append(content, styles.muted.Render("  No categories."))
-	}
-	categoryHeaders, categoryWidths := categoryTableLayout(inner)
+	categoryHeight := 1
 	if len(categories) != 0 {
-		content = append(content, tableHeader(styles, categoryHeaders, categoryWidths, inner))
-	}
-	for index, category := range categories {
-		action := "OPEN"
-		if category.Key == "incoming-relations" {
-			action = "AUTO"
-		} else if category.Key == "detail" {
-			action = "VIEW"
-		} else if category.Key == "tags" {
-			action = "VIEW"
-		} else if category.Key == "evidence" {
-			action = "EVIDENCE"
-		} else if directRelationGroup(category.Group) {
-			action = "LIST"
-			if category.Key == "policy-document" {
-				action = "VIEW"
-			} else if category.Key == "alias-targets" {
-				action = "TRACE"
-			}
-		}
-		content = append(content, tableRow(styles, index == route.relationSelected,
-			categoryTableCells(categoryHeaders, category.Label, category.Count, action), categoryWidths, inner))
-	}
-	content = append(content, "", styles.section.Render("Summary"))
-	fields := summaryFields(resource)
-	if len(fields) == 0 {
-		content = append(content, styles.muted.Render("No summary fields were returned."))
+		categoryHeight += 1 + len(categories)
 	} else {
-		fieldHeaders, fieldWidths := fieldTableLayout(inner)
-		content = append(content, tableHeader(styles, fieldHeaders, fieldWidths, inner))
-		for _, field := range fields {
-			content = append(content, tableRow(styles, false, []string{field.Label, field.Value}, fieldWidths, inner))
+		categoryHeight++
+	}
+	available := max(1, m.height-2-len(header)-1)
+	fieldBudget := available - len(content) - categoryHeight - 1
+	if fieldBudget >= 3 {
+		fields := overviewFields(resource, fieldBudget-2)
+		if len(fields) != 0 {
+			content = append(content, styles.section.Render("At a glance"))
+			fieldHeaders, fieldWidths := fieldTableLayout(inner)
+			content = append(content, tableHeader(styles, fieldHeaders, fieldWidths, inner))
+			for _, field := range fields {
+				content = append(content, tableRow(styles, false, []string{field.Label, field.Value}, fieldWidths, inner))
+			}
+			content = append(content, "")
+		}
+	}
+	if len(categories) == 0 {
+		content = append(content, styles.section.Render("Explore (0)"))
+		content = append(content, styles.muted.Render("  No categories."))
+	} else {
+		categoryRows := max(1, available-len(content)-2)
+		start := max(0, route.relationSelected-categoryRows+1)
+		end := min(len(categories), start+categoryRows)
+		content = append(content, styles.section.Render(fmt.Sprintf("Explore (%d) · rows %d-%d", len(categories), start+1, end)))
+		categoryHeaders, categoryWidths := categoryTableLayout(inner)
+		content = append(content, tableHeader(styles, categoryHeaders, categoryWidths, inner))
+		for index := start; index < end; index++ {
+			category := categories[index]
+			action := "OPEN"
+			if category.Key == "incoming-relations" {
+				action = "AUTO"
+			} else if category.Key == "detail" {
+				action = "VIEW"
+			} else if category.Key == "tags" {
+				action = "VIEW"
+			} else if category.Key == "evidence" {
+				action = "EVIDENCE"
+			} else if directRelationGroup(category.Group) {
+				action = "LIST"
+				if category.Key == "policy-document" {
+					action = "VIEW"
+				} else if category.Key == "alias-targets" {
+					action = "TRACE"
+				}
+			}
+			content = append(content, tableRow(styles, index == route.relationSelected,
+				categoryTableCells(categoryHeaders, category, action, categoryPreview(resource, category)), categoryWidths, inner))
 		}
 	}
 	if route.status != "" {
 		content = append(content, "", fit(browserStatus(styles, route.status), inner))
 	}
-	available := max(1, m.height-2-len(header)-1)
 	end := min(len(content), available)
 	lines := append(header, content[:end]...)
 	footer := "↑↓ category · →/enter open · ← back · : command · ^o/^i history"
@@ -554,13 +566,12 @@ func renderSummary(m Model, route routeFrame) string {
 	return frameView(lines, m.width, m.height, styles)
 }
 
-func summaryFields(resource ResourceProjection) []ProjectionField {
-	const limit = 6
-	priority := []string{
-		"Name", "Id", "State", "Status", "Type", "Instance Type", "Description",
-		"VPC Id", "Subnet Id", "CIDR Block", "Availability Zone", "Private IP", "Public IP",
-		"Volume Type", "Size", "Size GiB", "Encrypted", "IOPS", "Throughput", "Create Time",
+func overviewFields(resource ResourceProjection, limit int) []ProjectionField {
+	if limit <= 0 {
+		return nil
 	}
+	limit = min(limit, 8)
+	priority := overviewFieldPriority(resource.Target)
 	result := make([]ProjectionField, 0, min(limit, len(resource.Fields)))
 	used := make(map[int]bool, len(resource.Fields))
 	for _, label := range priority {
@@ -575,17 +586,43 @@ func summaryFields(resource ResourceProjection) []ProjectionField {
 			return result
 		}
 	}
+	fallbackLimit := min(limit, 6)
+	if len(result) >= fallbackLimit {
+		return result
+	}
 	for index, field := range resource.Fields {
 		value := strings.TrimSpace(field.Value)
 		if used[index] || value == "" || len([]rune(value)) > 120 || strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
 			continue
 		}
 		result = append(result, field)
-		if len(result) == limit {
+		if len(result) == fallbackLimit {
 			break
 		}
 	}
 	return result
+}
+
+func overviewFieldPriority(target string) []string {
+	resourceType, _, _ := strings.Cut(target, ":")
+	common := []string{"Name", "Id", "State", "Status", "Type", "Description"}
+	specific := map[string][]string{
+		"ec2.instance":            {"Name", "State", "Instance Type", "Availability Zone", "Private IP Address", "Public IP Address", "VPC Id", "Subnet Id"},
+		"ec2.security-group":      {"Name", "Description", "VPC Id", "Owner Id", "Usage Scope"},
+		"ec2.vpc":                 {"Name", "State", "CIDR Block", "Is Default", "Instance Tenancy", "Owner Id"},
+		"ec2.volume":              {"Name", "State", "Volume Type", "Size GiB", "Availability Zone", "Encrypted", "IOPS", "Throughput Mibps"},
+		"elbv2.load-balancer":     {"Name", "Type", "State", "DNS Name", "Scheme", "IP Address Type", "VPC Id"},
+		"elbv2.target-group":      {"Name", "Target Type", "Protocol", "Port", "Health Check Protocol", "VPC Id"},
+		"hosted-zone":             {"Name", "Id", "Private", "Record Count", "Comment"},
+		"resource-record-set":     {"Name", "Type", "TTL", "Set Identifier", "Hosted Zone Id", "Health Check Id"},
+		"iam.role":                {"Role Name", "Role Id", "ARN", "Path", "Create Date", "Last Used Date"},
+		"iam.managed-policy":      {"Policy Name", "Policy Id", "ARN", "Attachment Count", "Default Version Id", "Update Date"},
+		"cloudfront.distribution": {"Distribution Id", "Domain Name", "Status", "Enabled", "Last Modified Time"},
+	}
+	if fields := specific[resourceType]; len(fields) != 0 {
+		return fields
+	}
+	return append(common, "VPC Id", "Subnet Id", "CIDR Block", "Availability Zone", "Private IP", "Public IP", "Create Time")
 }
 
 func renderDetail(m Model, route routeFrame) string {
@@ -949,15 +986,69 @@ func projectionFieldValue(fields []ProjectionField, labels ...string) string {
 
 func categoryTableLayout(inner int) ([]string, []int) {
 	content := max(1, inner-2)
+	if inner >= 72 {
+		return []string{"CATEGORY", "COUNT", "PREVIEW", "ACTION"}, expandedTableWidths(content, []int{18, 5, 24, 7}, 2)
+	}
 	return []string{"CATEGORY", "COUNT", "ACTION"}, expandedTableWidths(content, []int{18, 5, 7}, 0)
 }
 
-func categoryTableCells(headers []string, label string, count int, action string) []string {
-	countLabel := fmt.Sprintf("%d", count)
-	if count < 0 {
+func categoryTableCells(headers []string, category detailCategory, action, preview string) []string {
+	countLabel := fmt.Sprintf("%d", category.Count)
+	if category.Count < 0 {
 		countLabel = "-"
 	}
-	return tableValues(headers, map[string]string{"CATEGORY": label, "COUNT": countLabel, "ACTION": action})
+	return tableValues(headers, map[string]string{
+		"CATEGORY": category.Label,
+		"COUNT":    countLabel,
+		"PREVIEW":  preview,
+		"ACTION":   action,
+	})
+}
+
+func categoryPreview(resource ResourceProjection, category detailCategory) string {
+	switch category.Key {
+	case "detail":
+		return "all projected fields"
+	case "tags":
+		values := make([]string, 0, min(2, len(resource.Tags)))
+		for _, tag := range resource.Tags {
+			values = append(values, tag.Key+"="+tag.Value)
+			if len(values) == 2 {
+				break
+			}
+		}
+		return previewValues(values, len(resource.Tags))
+	case "incoming-relations":
+		return "context group on open"
+	}
+	values := make([]string, 0, min(2, len(category.Group.Relations)))
+	for _, relation := range category.Group.Relations {
+		value := strings.TrimSpace(relation.Label)
+		if value == "" {
+			value = strings.TrimSpace(relation.TargetRef)
+		}
+		if value == "" {
+			_, value, _ = strings.Cut(relation.Target, ":")
+		}
+		if value != "" {
+			values = append(values, value)
+		}
+		if len(values) == 2 {
+			break
+		}
+	}
+	return previewValues(values, len(category.Group.Relations))
+}
+
+func previewValues(values []string, total int) string {
+	if len(values) == 0 {
+		return "-"
+	}
+	result := strings.Join(values, " · ")
+	if total > len(values) {
+		result += fmt.Sprintf(" · +%d", total-len(values))
+	}
+	return result
 }
 
 func fieldTableLayout(inner int) ([]string, []int) {

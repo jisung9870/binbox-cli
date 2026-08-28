@@ -117,6 +117,69 @@ func TestDetailWrapsLongValuesWithoutDroppingText(t *testing.T) {
 	}
 }
 
+func TestOverviewPrioritizesServiceFieldsAndCompactsPreviews(t *testing.T) {
+	resource := ResourceProjection{
+		Target:   "ec2.instance:i-001",
+		Title:    "web-api",
+		Subtitle: "i-001 · running",
+		Fields: []ProjectionField{
+			{Label: "Full Only", Value: "open Detail to see this"},
+			{Label: "Subnet Id", Value: "subnet-app"},
+			{Label: "VPC Id", Value: "vpc-main"},
+			{Label: "Public IP Address", Value: "203.0.113.10"},
+			{Label: "Private IP Address", Value: "10.0.1.24"},
+			{Label: "Availability Zone", Value: "ap-northeast-2a"},
+			{Label: "Instance Type", Value: "m7i.large"},
+			{Label: "State", Value: "running"},
+			{Label: "Name", Value: "web-api"},
+		},
+		Relations: []ProjectionRelation{
+			{Label: "web-sg", Target: "ec2.security-group:sg-web"},
+			{Label: "ops-sg", Target: "ec2.security-group:sg-ops"},
+			{Label: "metrics-sg", Target: "ec2.security-group:sg-metrics"},
+		},
+		Tags: []ProjectionTag{{Key: "Name", Value: "web-api"}, {Key: "Env", Value: "prod"}, {Key: "Owner", Value: "platform"}},
+	}
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.width, m.height = 120, 30
+	m.history = []routeFrame{{mode: routeDetail, detail: resource}}
+	view := m.View().Content
+	for _, want := range []string{
+		"AWS > web-api > Overview", "At a glance", "Instance Type", "m7i.large", "VPC Id", "vpc-main",
+		"web-sg · ops-sg · +1", "Name=web-api · Env=prod · +1",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("overview missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "open Detail to see this") {
+		t.Fatalf("overview exposed a non-priority full-detail field:\n%s", view)
+	}
+}
+
+func TestNarrowOverviewKeepsSelectedExploreRowVisible(t *testing.T) {
+	resource := ResourceProjection{
+		Target: "ec2.instance:i-001",
+		Title:  "web-api",
+		Relations: []ProjectionRelation{
+			{Label: "alias", Target: "elbv2.load-balancer-dns:api.example.com"},
+			{Label: "listener", Target: "elbv2.listeners:lb"},
+			{Label: "target-group", Target: "elbv2.target-group:tg"},
+			{Label: "security-group", Target: "ec2.security-group:sg"},
+			{Label: "volume", Target: "ec2.volume:vol"},
+			{Label: "vpc", Target: "ec2.vpc:vpc"},
+		},
+	}
+	categories := detailCategories(resource)
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.width, m.height = 40, 12
+	m.history = []routeFrame{{mode: routeDetail, detail: resource, relationSelected: len(categories) - 1}}
+	view := m.View().Content
+	if !strings.Contains(view, "> Tags") || !strings.Contains(view, "Explore (8) · rows") {
+		t.Fatalf("selected Explore row is outside the narrow viewport:\n%s", view)
+	}
+}
+
 func TestDetailExpandsPolicyAndRoute53JSON(t *testing.T) {
 	resource := ResourceProjection{
 		Title: "ReadOnly",

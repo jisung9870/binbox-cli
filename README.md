@@ -145,13 +145,13 @@ Typing in a loaded resource list or the `c` profile selector filters locally
 without an AWS request. AWS resource rows prefer a non-blank `Name` tag, then a
 native resource name such as an SG group name, and finally the stable resource
 ID; when a name is used, the ID remains visible as secondary identity. Opening
-a resource lands on a compact Summary with identity/status fields and relation,
-Detail, and Tags categories. Detail shows the full projected field set only when
-requested. Relationships are grouped into categories such as Security groups
+a resource lands on a service-aware Overview with key fields plus relation and
+Tags previews. Detail shows the full projected field set only when requested.
+Relationships are grouped into categories such as Security groups
 and Volumes; opening a category is local-only and shows its related resources
 in a dedicated list before any linked-resource request runs. If that linked
 exact lookup returns one resource, the browser skips `Resources (1)` and opens
-its Summary directly; actual collections and multiple results keep their list.
+its Overview directly; actual collections and multiple results keep their list.
 Related-resource lists also filter locally as the operator types. PageUp/PageDown
 scroll long detail fields independently of category selection. In browser
 screens, Right or Enter opens the selection and Left returns one screen. A
@@ -159,13 +159,14 @@ Security Group detail exposes direct Inbound rules and Outbound rules lists;
 each row summarizes protocol, ports, peer, rule ID, and description instead of
 showing one embedded rules JSON value. Resource tags are removed from inline
 details and exposed through a locally searchable `Tags` category.
-IAM Role summaries similarly expose Attached policies and Inline policies;
+IAM Role overviews similarly expose Attached policies and Inline policies;
 managed policies link to their default policy document. Route 53 Hosted Zone
-summaries expose DNS records. Policy documents and record routing/alias values
+overviews expose DNS records. Policy documents and record routing/alias values
 are expanded as readable multi-line JSON in Detail. A CloudFront Route 53 Alias
-can be traced to its same-account distribution, then through an Origins category
-whose rows retain `Default /*` and cache-behavior path patterns, and finally to
-an S3 bucket Summary with its API-verified region. Unknown alias/custom origins
+offers `Target trace`, which collects the supported CloudFront or ALB/NLB path
+into one indented list instead of requiring an Enter at every resource. CloudFront
+origin rows retain `Default /*` and cache-behavior path patterns and can finish at
+an S3 bucket Overview with its API-verified region. Unknown alias/custom origins
 remain relationship evidence rather than being guessed as owned resources.
 The browser uses the full terminal as a k9s-style workspace with adaptive
 status/selection colors; additional height shows more rows instead of adding

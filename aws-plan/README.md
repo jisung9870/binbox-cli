@@ -41,6 +41,7 @@
 - [B4B1-VPC-PEERING.md](B4B1-VPC-PEERING.md): SG와 VPC Peering을 합친 graph sync, cross-account participant coverage, VPC reverse refs 결과.
 - [B4C-AUTO-INCOMING-RELATIONS.md](B4C-AUTO-INCOMING-RELATIONS.md): Browse 진입 시 자동 멀티계정 역방향 수집, 5분 cache, coverage 표시와 강제 갱신 계약.
 - [B4D-RESOURCE-OVERVIEW.md](B4D-RESOURCE-OVERVIEW.md): 서비스별 핵심 필드와 관계·태그 preview를 한 화면에 표시하는 저-depth Overview 계약.
+- [B4E-ONE-SCREEN-TARGET-TRACE.md](B4E-ONE-SCREEN-TARGET-TRACE.md): Route 53 alias에서 target까지 한 번에 수집하는 bounded BFS trace와 부분 실패 보존 계약.
 
 ## 기존 작업과의 관계
 

@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jisung9870/binbox-cli/internal/bb/awsbrowser"
 	awsintegration "github.com/jisung9870/binbox-cli/internal/bb/awsbrowser/integration"
@@ -274,6 +276,11 @@ func (dispatcher *awsIntentDispatcher) Dispatch(ctx context.Context, intent awsb
 		return nil, errUnsupportedAWSIntent
 	}
 	switch intent.Kind {
+	case awsbrowser.IntentTrace:
+		if !traceRootTarget(intent.Target) {
+			return nil, errUnsupportedAWSIntent
+		}
+		return dispatcher.dispatchTrace(ctx, intent)
 	case awsbrowser.IntentOpen, awsbrowser.IntentRefresh:
 		request, ok := awsRequestForIntent(intent)
 		if !ok || dispatcher.core == nil {
@@ -499,6 +506,171 @@ func (dispatcher *awsIntentDispatcher) dispatchQuery(ctx context.Context, reques
 		}
 	}()
 	return stream, nil
+}
+
+const (
+	maxTraceQueries   = 64
+	maxTraceResources = 500
+)
+
+type traceQueueItem struct {
+	target          string
+	profile, region string
+	depth           int
+	via             string
+}
+
+func (dispatcher *awsIntentDispatcher) dispatchTrace(ctx context.Context, intent awsbrowser.Intent) (awsbrowser.IntentStream, error) {
+	queryCore, ok := dispatcher.core.(awsSnapshotQueryCore)
+	if !ok || queryCore == nil {
+		return nil, errUnsupportedAWSIntent
+	}
+	updates := make(chan awsbrowser.IntentUpdate, 1)
+	traceCtx, cancel := context.WithCancel(ctx)
+	stream := &awsbrowser.ChannelIntentStream{C: updates, CancelFunc: cancel}
+	go func() {
+		defer close(updates)
+		defer cancel()
+		queue := []traceQueueItem{{target: intent.Target, profile: intent.Profile, region: intent.Region, via: "Alias target"}}
+		seenTargets := make(map[string]bool)
+		_, rootID, _ := strings.Cut(intent.Target, ":")
+		seenResources := map[string]bool{intent.Target: true}
+		projection := awsbrowser.IntentProjection{Resources: []awsbrowser.ResourceProjection{{
+			Target: intent.Target, Title: rootID, Subtitle: "Trace start",
+			Fields: []awsbrowser.ProjectionField{{Label: "Trace Depth", Value: "0"}, {Label: "Trace Via", Value: "DNS alias"}},
+		}}}
+		var traceContext *awsbrowser.AWSContext
+		var firstFailure *awsbrowser.ProviderFailure
+		var fetchedAt time.Time
+		queries := 0
+		for len(queue) != 0 && queries < maxTraceQueries && len(projection.Resources) < maxTraceResources {
+			item := queue[0]
+			queue = queue[1:]
+			if seenTargets[item.target] {
+				continue
+			}
+			seenTargets[item.target] = true
+			request, valid := awsRequestForIntent(awsbrowser.Intent{
+				Kind: awsbrowser.IntentOpen, Target: item.target, Profile: item.profile, Region: item.region,
+			})
+			if !valid {
+				if firstFailure == nil {
+					firstFailure = &awsbrowser.ProviderFailure{State: awsbrowser.LoadUnsupported, Kind: awsbrowser.ProviderUnsupported, Operation: "TargetTrace", Code: "unsupported_target"}
+				}
+				continue
+			}
+			queries++
+			result, err := queryCore.Query(traceCtx, request)
+			converted := intentUpdateFromIntegration(result.Update)
+			if converted.Context != nil && converted.Context.Validate() == nil {
+				copy := *converted.Context
+				traceContext = &copy
+			}
+			if !converted.Query.Snapshot.FetchedAt.IsZero() {
+				fetchedAt = converted.Query.Snapshot.FetchedAt
+			}
+			if err != nil || converted.Query.Failure != nil {
+				if firstFailure == nil {
+					firstFailure = converted.Query.Failure
+					if firstFailure == nil {
+						firstFailure = &awsbrowser.ProviderFailure{State: awsbrowser.LoadUnknown, Operation: "TargetTrace", Code: "query_failed"}
+					}
+				}
+				continue
+			}
+			for _, resource := range converted.Projection.Resources {
+				if resource.Target == "" || seenResources[resource.Target] {
+					continue
+				}
+				seenResources[resource.Target] = true
+				resource.Fields = append(resource.Fields,
+					awsbrowser.ProjectionField{Label: "Trace Depth", Value: strconv.Itoa(item.depth + 1)},
+					awsbrowser.ProjectionField{Label: "Trace Via", Value: item.via},
+				)
+				projection.Resources = append(projection.Resources, resource)
+				for _, relation := range resource.Relations {
+					if !traceFollowTarget(relation.Target) || seenTargets[relation.Target] {
+						continue
+					}
+					profile, region := request.Profile, request.Region
+					if resource.Context != nil && resource.Context.Validate() == nil {
+						profile, region = resource.Context.Profile, resource.Context.Region
+					}
+					queue = append(queue, traceQueueItem{
+						target: relation.Target, profile: profile, region: region,
+						depth: item.depth + 1, via: traceRelationLabel(relation),
+					})
+				}
+				if len(projection.Resources) == maxTraceResources {
+					break
+				}
+			}
+			progress := awsbrowser.IntentUpdate{
+				Context: traceContext, Projection: projection,
+				Query: awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: awsbrowser.LoadLoading, FetchedAt: fetchedAt}},
+			}
+			if !sendTraceUpdate(traceCtx, updates, progress) {
+				return
+			}
+		}
+		if len(queue) != 0 && firstFailure == nil {
+			firstFailure = &awsbrowser.ProviderFailure{State: awsbrowser.LoadUnsupported, Kind: awsbrowser.ProviderUnsupported, Operation: "TargetTrace", Code: "trace_limit"}
+		}
+		state := awsbrowser.LoadReady
+		if len(projection.Resources) == 0 {
+			state = awsbrowser.LoadEmpty
+		}
+		if firstFailure != nil {
+			state = firstFailure.State
+		}
+		final := awsbrowser.IntentUpdate{
+			Context: traceContext, Projection: projection, Done: true,
+			Query: awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: state, FetchedAt: fetchedAt}, Failure: firstFailure},
+		}
+		sendTraceUpdate(traceCtx, updates, final)
+	}()
+	return stream, nil
+}
+
+func sendTraceUpdate(ctx context.Context, updates chan<- awsbrowser.IntentUpdate, update awsbrowser.IntentUpdate) bool {
+	select {
+	case updates <- update:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func traceRootTarget(target string) bool {
+	resourceType, _, ok := strings.Cut(target, ":")
+	return ok && (resourceType == "elbv2.load-balancer-dns" || resourceType == "cloudfront.distribution-domain")
+}
+
+func traceFollowTarget(target string) bool {
+	resourceType, _, ok := strings.Cut(target, ":")
+	if !ok {
+		return false
+	}
+	switch resourceType {
+	case "elbv2.listeners", "elbv2.rules", "elbv2.target-group", "elbv2.targets",
+		"ec2.instance", "elbv2.load-balancer", "s3.bucket":
+		return true
+	default:
+		return false
+	}
+}
+
+func traceRelationLabel(relation awsbrowser.ProjectionRelation) string {
+	if value := strings.TrimSpace(relation.Condition); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(relation.Label); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(relation.Type); value != "" {
+		return value
+	}
+	return "related"
 }
 
 type regionIntentEvent struct {

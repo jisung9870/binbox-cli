@@ -38,6 +38,7 @@ const (
 	IntentRefresh  IntentKind = "refresh"
 	IntentSearch   IntentKind = "cross-profile-search"
 	IntentIncoming IntentKind = "incoming-relations"
+	IntentTrace    IntentKind = "target-trace"
 )
 
 // Intent is a credential-free request from a browser view. Target is either a

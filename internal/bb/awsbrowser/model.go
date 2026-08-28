@@ -224,6 +224,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyIntentUpdate(frame, msg.update)
 		frame.terminalUpdate = frame.terminalUpdate || terminalLoadState(msg.update.Query.Snapshot.State)
 		if frame.terminalUpdate {
+			if frame.intent.Kind == IntentOpen && len(frame.projection.Resources) == 0 && msg.update.Query.Snapshot.State.isFailure() && len(m.history) > 1 {
+				status := strings.TrimPrefix(frame.status, "! ")
+				m.finishFrame(frame)
+				m.history = m.history[:len(m.history)-1]
+				if parent := m.current(); parent != nil {
+					parent.status = "! linked target " + status
+				}
+				return m, nil
+			}
 			if frame.refreshing {
 				m.finalizeRefresh(frame, "")
 			} else {
@@ -942,6 +951,9 @@ func (m Model) enterCurrent() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		category := categories[frame.relationSelected]
+		if category.Key == "target-trace" {
+			return m.pushAndDispatch(Intent{Kind: IntentTrace, Target: category.Group.Relations[0].Target}, "Target trace", frame.context)
+		}
 		if category.Key == "incoming-relations" {
 			intent := Intent{Kind: IntentIncoming, Target: frame.detail.Target}
 			if frame.context != nil && frame.context.Validate() == nil {
@@ -1442,6 +1454,9 @@ func queryStatus(update QueryUpdate, count int) string {
 			if update.Failure.PartialPages != 0 {
 				status += fmt.Sprintf(" · %d complete pages kept", update.Failure.PartialPages)
 			}
+			if update.Failure.Code != "" {
+				status += " · " + safeIntentText(update.Failure.Code)
+			}
 		}
 		return status
 	}
@@ -1553,8 +1568,11 @@ type detailCategory struct {
 
 func detailCategories(resource ResourceProjection) []detailCategory {
 	groups := relationGroups(resource)
-	categories := make([]detailCategory, 0, len(groups)+3)
+	categories := make([]detailCategory, 0, len(groups)+4)
 	for _, group := range groups {
+		if group.Key == "alias-targets" && len(group.Relations) == 1 && traceableTarget(group.Relations[0].Target) {
+			categories = append(categories, detailCategory{Key: "target-trace", Label: "Target trace", Count: -1, Group: group})
+		}
 		categories = append(categories, detailCategory{Key: group.Key, Label: group.Label, Count: len(group.Relations), Group: group})
 	}
 	if supportsIncomingRelations(resource.Target) {
@@ -1563,6 +1581,11 @@ func detailCategories(resource ResourceProjection) []detailCategory {
 	categories = append(categories, detailCategory{Key: "detail", Label: "Detail", Count: len(resource.Fields)})
 	categories = append(categories, detailCategory{Key: "tags", Label: "Tags", Count: len(resource.Tags)})
 	return categories
+}
+
+func traceableTarget(target string) bool {
+	resourceType, _, ok := strings.Cut(target, ":")
+	return ok && (resourceType == "elbv2.load-balancer-dns" || resourceType == "cloudfront.distribution-domain")
 }
 
 func supportsIncomingRelations(target string) bool {

@@ -175,7 +175,7 @@ func TestNarrowOverviewKeepsSelectedExploreRowVisible(t *testing.T) {
 	m.width, m.height = 40, 12
 	m.history = []routeFrame{{mode: routeDetail, detail: resource, relationSelected: len(categories) - 1}}
 	view := m.View().Content
-	if !strings.Contains(view, "> Tags") || !strings.Contains(view, "Explore (8) · rows") {
+	if !strings.Contains(view, "> Tags") || !strings.Contains(view, "Explore (9) · rows") {
 		t.Fatalf("selected Explore row is outside the narrow viewport:\n%s", view)
 	}
 }

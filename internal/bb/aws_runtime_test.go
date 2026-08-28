@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,87 @@ func (function awsIntentSearchFunc) Submit(ctx context.Context, request awsinteg
 
 type awsIntentSearchStreamFake struct {
 	updates <-chan awsintegration.SearchUpdate
+}
+
+type traceIntentCoreFake struct {
+	context       awsbrowser.AWSContext
+	requests      []awsintegration.Request
+	failOperation string
+}
+
+func (*traceIntentCoreFake) Subscribe(context.Context, awsintegration.Request) (*awsintegration.Subscription, error) {
+	return nil, errors.New("unexpected Subscribe")
+}
+
+func (fake *traceIntentCoreFake) Resolve(context.Context, awsintegration.ContextRequest) (awsintegration.ContextResult, error) {
+	copy := fake.context
+	return awsintegration.ContextResult{Context: &copy}, nil
+}
+
+func (*traceIntentCoreFake) ListContexts(context.Context) ([]awsbrowser.ContextChoice, error) {
+	return nil, nil
+}
+
+func (fake *traceIntentCoreFake) Query(_ context.Context, request awsintegration.Request) (awsintegration.Result, error) {
+	fake.requests = append(fake.requests, request)
+	key, err := awsbrowser.NewQueryKey(fake.context, request.Provider, request.Operation, request.Params)
+	if err != nil {
+		return awsintegration.Result{}, err
+	}
+	if request.Operation == fake.failOperation {
+		failure := &awsintegration.Failure{
+			State: awsbrowser.LoadForbidden, Kind: awsbrowser.ProviderForbidden,
+			Provider: request.Provider, Operation: request.Operation, Code: "AccessDenied",
+		}
+		return awsintegration.Result{Update: awsintegration.Update{
+			Key: &key, Snapshot: awsbrowser.QuerySnapshot{State: awsbrowser.LoadForbidden},
+			Coverage: awsintegration.Coverage{ContextResolved: true, QueryStarted: true, Completed: true}, Failure: failure,
+		}}, failure
+	}
+	store := awsbrowser.NewSessionStore()
+	if err := store.Queue(key); err != nil {
+		return awsintegration.Result{}, err
+	}
+	if err := store.BeginLoad(key); err != nil {
+		return awsintegration.Result{}, err
+	}
+	when := time.Date(2026, 8, 29, 1, 2, 3, 0, time.UTC)
+	var resourceType, resourceID string
+	fields := map[string]any{}
+	switch request.Operation {
+	case awsbrowser.OperationDescribeLoadBalancers:
+		resourceType = "elbv2.load-balancer"
+		resourceID = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/api/111"
+		fields = map[string]any{"name": "api-alb", "state": "active"}
+	case awsbrowser.OperationDescribeListeners:
+		resourceType = "elbv2.listener"
+		resourceID = "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/api/111/222"
+		fields = map[string]any{"name": "HTTPS 443"}
+	}
+	if resourceType != "" {
+		resourceKey, keyErr := awsbrowser.NewRegionalResourceKey(fake.context, resourceType, resourceID)
+		if keyErr != nil {
+			return awsintegration.Result{}, keyErr
+		}
+		observation, observationErr := awsbrowser.NewResourceObservationForOperation(fake.context, request.Operation, fields, when, true)
+		if observationErr != nil {
+			return awsintegration.Result{}, observationErr
+		}
+		page, pageErr := awsbrowser.NewQueryPage(0, []awsbrowser.ObservedResource{{Key: resourceKey, Observation: observation}}, when, true)
+		if pageErr != nil {
+			return awsintegration.Result{}, pageErr
+		}
+		if err := store.CommitPage(key, page); err != nil {
+			return awsintegration.Result{}, err
+		}
+	}
+	if err := store.CompleteQuery(key, when); err != nil {
+		return awsintegration.Result{}, err
+	}
+	snapshot, _ := store.Snapshot(key)
+	return awsintegration.Result{Update: awsintegration.Update{
+		Key: &key, Snapshot: snapshot, Coverage: awsintegration.Coverage{ContextResolved: true, QueryStarted: true, Completed: true},
+	}}, nil
 }
 
 func (fake awsIntentSearchStreamFake) Submit(context.Context, awsintegration.SearchRequest) (awsintegration.SearchResult, error) {
@@ -102,6 +184,77 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 		if _, ok := awsRequestForIntent(awsbrowser.Intent{Target: target}); ok {
 			t.Fatalf("unsupported target %q was accepted", target)
 		}
+	}
+}
+
+func TestAWSTargetTraceCollectsLinearPathInOneStream(t *testing.T) {
+	awsContext, err := awsbrowser.NewAWSContext(
+		awsbrowser.ContextSpec{Mode: awsbrowser.ContextModeNamedProfile, Profile: "dev", Region: "us-east-1"},
+		awsbrowser.VerifiedIdentity{Partition: "aws", AccountID: "123456789012", PrincipalARN: "arn:aws:sts::123456789012:assumed-role/ReadOnly/session", CredentialGeneration: 1},
+		"ReadOnly",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := &traceIntentCoreFake{context: awsContext}
+	dispatcher := &awsIntentDispatcher{core: core}
+	stream, err := dispatcher.Dispatch(context.Background(), awsbrowser.Intent{
+		Kind: awsbrowser.IntentTrace, Target: "elbv2.load-balancer-dns:api-123.elb.us-east-1.amazonaws.com",
+		Profile: "dev", Region: "us-east-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final awsbrowser.IntentUpdate
+	for update := range stream.Updates() {
+		final = update
+	}
+	if !final.Done || final.Query.Snapshot.State != awsbrowser.LoadReady || len(final.Projection.Resources) != 3 {
+		t.Fatalf("trace final=%+v", final)
+	}
+	if got := []string{core.requests[0].Operation, core.requests[1].Operation, core.requests[2].Operation}; !reflect.DeepEqual(got, []string{
+		awsbrowser.OperationDescribeLoadBalancers, awsbrowser.OperationDescribeListeners, awsbrowser.OperationDescribeRules,
+	}) {
+		t.Fatalf("trace requests=%+v", core.requests)
+	}
+	for index, resource := range final.Projection.Resources {
+		depth := ""
+		for _, field := range resource.Fields {
+			if field.Label == "Trace Depth" {
+				depth = field.Value
+			}
+		}
+		if depth != strconv.Itoa(index) {
+			t.Fatalf("resource %d trace depth=%q projection=%+v", index, depth, resource)
+		}
+	}
+}
+
+func TestAWSTargetTraceKeepsAliasEvidenceWhenLiveReadIsDenied(t *testing.T) {
+	awsContext, err := awsbrowser.NewAWSContext(
+		awsbrowser.ContextSpec{Mode: awsbrowser.ContextModeNamedProfile, Profile: "lg-udg-ops", Region: "ap-northeast-2"},
+		awsbrowser.VerifiedIdentity{Partition: "aws", AccountID: "306612189751", PrincipalARN: "arn:aws:sts::306612189751:assumed-role/common-ops/session", CredentialGeneration: 1},
+		"common-ops",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := &traceIntentCoreFake{context: awsContext, failOperation: awsbrowser.OperationDescribeLoadBalancers}
+	dispatcher := &awsIntentDispatcher{core: core}
+	target := "elbv2.load-balancer-dns:m-alb-udg-kr-pmm.elb.ap-northeast-2.amazonaws.com"
+	stream, err := dispatcher.Dispatch(context.Background(), awsbrowser.Intent{
+		Kind: awsbrowser.IntentTrace, Target: target, Profile: "lg-udg-ops", Region: "ap-northeast-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final awsbrowser.IntentUpdate
+	for update := range stream.Updates() {
+		final = update
+	}
+	if !final.Done || final.Query.Snapshot.State != awsbrowser.LoadForbidden || final.Query.Failure == nil || final.Query.Failure.Code != "AccessDenied" ||
+		len(final.Projection.Resources) != 1 || final.Projection.Resources[0].Target != target {
+		t.Fatalf("denied trace did not preserve root evidence: %+v", final)
 	}
 }
 

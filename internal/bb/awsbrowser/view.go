@@ -3,6 +3,7 @@ package awsbrowser
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -536,7 +537,9 @@ func renderSummary(m Model, route routeFrame) string {
 		for index := start; index < end; index++ {
 			category := categories[index]
 			action := "OPEN"
-			if category.Key == "incoming-relations" {
+			if category.Key == "target-trace" {
+				action = "TRACE"
+			} else if category.Key == "incoming-relations" {
 				action = "AUTO"
 			} else if category.Key == "detail" {
 				action = "VIEW"
@@ -967,8 +970,12 @@ func resourceTableCells(resource ResourceProjection, headers []string) []string 
 	if resource.Context != nil && resource.Context.Validate() == nil {
 		account, region = resource.Context.AccountID, resource.Context.Region
 	}
+	displayName := resource.Title
+	if depth, err := strconv.Atoi(projectionFieldValue(resource.Fields, "Trace Depth")); err == nil && depth > 0 {
+		displayName = strings.Repeat("  ", min(depth-1, 4)) + "↳ " + displayName
+	}
 	return tableValues(headers, map[string]string{
-		"NAME": resource.Title, "TYPE": displayType, "ID": resourceID,
+		"NAME": displayName, "TYPE": displayType, "ID": resourceID,
 		"STATUS": status, "ACCOUNT": account, "REGION": region,
 	})
 }
@@ -1007,6 +1014,8 @@ func categoryTableCells(headers []string, category detailCategory, action, previ
 
 func categoryPreview(resource ResourceProjection, category detailCategory) string {
 	switch category.Key {
+	case "target-trace":
+		return "DNS → LB → listener → target"
 	case "detail":
 		return "all projected fields"
 	case "tags":

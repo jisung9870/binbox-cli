@@ -981,6 +981,54 @@ func TestRoute53ELBV2TraceUsesDirectK9sResourceCategories(t *testing.T) {
 	}
 }
 
+func TestAliasOverviewDispatchesOneTargetTraceIntent(t *testing.T) {
+	stream := newTestIntentStream()
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
+	resource := ResourceProjection{
+		Target: "resource-record-set:api", Title: "api.example.com.",
+		Relations: []ProjectionRelation{{
+			Label: "api-nlb", Target: "elbv2.load-balancer-dns:api-123.elb.ap-northeast-2.amazonaws.com",
+			Type: "alias-to", Direction: "outgoing", Kind: "api-exact",
+		}},
+	}
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher)
+	m.history = []routeFrame{{mode: routeDetail, detail: resource}}
+	if view := m.View().Content; !viewLineContainsAll(view, "Target trace", "TRACE") || !strings.Contains(view, "DNS → LB → listener → target") {
+		t.Fatalf("target trace action missing:\n%s", view)
+	}
+	model, command := m.Update(key(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("target trace did not start dispatch")
+	}
+	current := model.(Model)
+	if current.current().intent.Kind != IntentTrace || current.current().intent.Target != resource.Relations[0].Target || current.current().label != "Target trace" {
+		t.Fatalf("trace frame=%+v", current.current())
+	}
+}
+
+func TestFailedLinkedReadReturnsToParentOverview(t *testing.T) {
+	parent := ResourceProjection{Target: "elbv2.load-balancer:lb", Title: "api-lb"}
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.history = []routeFrame{
+		{mode: routeDetail, detail: parent},
+		{mode: routeList, generation: 7, intent: Intent{Kind: IntentOpen, Target: "elbv2.listeners:lb"}},
+	}
+	model, command := m.Update(intentStreamMsg{generation: 7, open: true, update: IntentUpdate{
+		Query: QueryUpdate{
+			Snapshot: QuerySnapshot{State: LoadForbidden},
+			Failure:  &ProviderFailure{State: LoadForbidden, Service: ProviderELBV2, Operation: OperationDescribeListeners, Code: "AccessDenied"},
+		},
+		Done: true,
+	}})
+	if command != nil {
+		t.Fatal("failed linked read returned a command")
+	}
+	current := model.(Model)
+	if len(current.history) != 1 || current.current().mode != routeDetail || !strings.Contains(current.current().status, "linked target access denied") || !strings.Contains(current.current().status, "AccessDenied") {
+		t.Fatalf("failed child was not collapsed: history=%d frame=%+v", len(current.history), current.current())
+	}
+}
+
 func TestExactRelationTargetsPromoteToSummary(t *testing.T) {
 	for _, target := range []string{
 		"cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net",

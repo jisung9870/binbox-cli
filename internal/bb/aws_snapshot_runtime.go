@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,6 +32,10 @@ type productionAWSSnapshotReadService struct {
 }
 
 type awsSGSnapshotCollector struct {
+	core awsSnapshotQueryCore
+}
+
+type awsSnapshotCollector struct {
 	core awsSnapshotQueryCore
 }
 
@@ -71,10 +76,28 @@ func (service *productionAWSSnapshotSyncService) Sync(ctx context.Context, reque
 	if core == nil {
 		return snapshot.Run{}, nil, errors.New("invalid snapshot sync service")
 	}
-	scopes := make([]snapshot.Scope, 0, len(selected.Profiles)*len(selected.Regions))
+	services := []string{"ec2-sg"}
+	switch request.Collection {
+	case "", "sg":
+	case "graph":
+		services = append(services, "ec2-vpc-peering")
+	default:
+		return snapshot.Run{}, nil, invalid("unsupported AWS snapshot collection: " + request.Collection)
+	}
+	scopes := make([]snapshot.Scope, 0, len(selected.Profiles)*len(selected.Regions)*len(services))
 	for _, profile := range selected.Profiles {
 		for _, region := range selected.Regions {
-			scopes = append(scopes, snapshot.Scope{Profile: profile, Region: region, Service: "ec2-sg"})
+			for _, serviceName := range services {
+				scopes = append(scopes, snapshot.Scope{Profile: profile, Region: region, Service: serviceName})
+			}
+			if request.Collection == "graph" {
+				for _, serviceName := range []string{"ec2-transit-gateway", "ec2-privatelink"} {
+					scopes = append(scopes, snapshot.Scope{
+						Profile: profile, Region: region, Service: serviceName,
+						NotObserved: true, NotObservedReason: "collector-not-implemented",
+					})
+				}
+			}
 		}
 	}
 	var input snapshot.RunInput
@@ -82,7 +105,7 @@ func (service *productionAWSSnapshotSyncService) Sync(ctx context.Context, reque
 	err := withFileLockContext(ctx, service.path+".sync", func() error {
 		var err error
 		input, err = (snapshot.Coordinator{
-			Collector: &awsSGSnapshotCollector{core: core}, Now: service.now, Concurrency: awsRuntimeConcurrency,
+			Collector: &awsSnapshotCollector{core: core}, Now: service.now, Concurrency: awsRuntimeConcurrency,
 		}).Collect(ctx, scopes)
 		if err != nil {
 			return err
@@ -121,9 +144,13 @@ func (service *productionAWSSnapshotReadService) Refs(ctx context.Context, reque
 			return err
 		}
 		defer view.Close()
+		resourceType := "ec2.security-group"
+		if request.Kind == "vpc" {
+			resourceType = "ec2.vpc"
+		}
 		target := snapshot.ResourceRef{
 			Partition: request.Partition, AccountID: request.AccountID, Region: request.Region,
-			Type: "ec2.security-group", ID: request.GroupID,
+			Type: resourceType, ID: request.ResourceID,
 		}
 		observed, err := view.ResourceObserved(ctx, target)
 		if err != nil {
@@ -148,6 +175,84 @@ func (service *productionAWSSnapshotReadService) Refs(ctx context.Context, reque
 		return nil
 	})
 	return execution, err
+}
+
+func (collector *awsSnapshotCollector) Collect(ctx context.Context, scope snapshot.Scope) (snapshot.Collection, error) {
+	if collector == nil || collector.core == nil {
+		return snapshot.Collection{}, &snapshot.CollectionError{Kind: "unsupported", Err: errors.New("snapshot collector unavailable")}
+	}
+	switch scope.Service {
+	case "ec2-sg":
+		return (&awsSGSnapshotCollector{core: collector.core}).Collect(ctx, scope)
+	case "ec2-vpc-peering":
+		return collector.collectVpcPeering(ctx, scope)
+	default:
+		return snapshot.Collection{}, &snapshot.CollectionError{Kind: "unsupported", Err: errors.New("snapshot collector unavailable")}
+	}
+}
+
+func (collector *awsSnapshotCollector) collectVpcPeering(ctx context.Context, scope snapshot.Scope) (snapshot.Collection, error) {
+	ctx, cancel := context.WithTimeout(ctx, awsSnapshotScopeTimeout)
+	defer cancel()
+	result, err := collector.core.Query(ctx, awsintegration.Request{
+		Profile: scope.Profile, Region: scope.Region, Provider: awsbrowser.ProviderEC2,
+		Operation: awsbrowser.OperationDescribeVpcPeeringConnections,
+	})
+	if err != nil {
+		kind := "unknown"
+		if result.Update.Failure != nil {
+			kind = string(result.Update.Failure.Kind)
+		} else if errors.Is(err, context.DeadlineExceeded) {
+			kind = string(awsbrowser.ProviderTimedOut)
+		}
+		return snapshot.Collection{}, &snapshot.CollectionError{Kind: kind, Err: errors.New("AWS VPC peering collection failed")}
+	}
+	if result.Update.Key == nil || result.Update.Key.Validate() != nil || result.Update.Key.Context.Profile != scope.Profile || result.Update.Key.Context.Region != scope.Region {
+		return snapshot.Collection{}, &snapshot.CollectionError{Kind: "context-changed", Err: errors.New("AWS snapshot context changed")}
+	}
+	collection := snapshot.Collection{AccountID: result.Update.Key.Context.AccountID}
+	remoteCoverage := map[string]snapshot.Coverage{}
+	for _, page := range result.Update.Snapshot.Pages() {
+		for _, observed := range page.Resources() {
+			resourceRef, refErr := snapshot.RefFromKey(observed.Key)
+			if refErr != nil {
+				return collection, &snapshot.CollectionError{Kind: "decode", Err: errors.New("invalid VPC peering resource")}
+			}
+			fields := observed.Observation.Fields()
+			collection.Resources = append(collection.Resources, snapshot.Resource{Ref: resourceRef, Name: awsSnapshotResourceName(fields)})
+			relations, relationErr := awsbrowser.RelationsFromMappedFields(fields)
+			if relationErr != nil {
+				return collection, &snapshot.CollectionError{Kind: "decode", Err: errors.New("invalid VPC peering relation")}
+			}
+			for _, relation := range relations {
+				if relation.Source.Type != "ec2.vpc-peering-connection" || relation.Target.Type != "ec2.vpc" || relation.Semantics.Type != awsbrowser.RelationAssociatedWith {
+					continue
+				}
+				converted, convertErr := snapshot.RelationsFromBrowser(relation, scope.Profile)
+				if convertErr != nil {
+					return collection, &snapshot.CollectionError{Kind: "decode", Err: errors.New("invalid VPC peering evidence")}
+				}
+				collection.Relations = append(collection.Relations, converted...)
+				if relation.Target.AccountID != collection.AccountID {
+					key := relation.Target.AccountID + "\x00" + relation.Target.Region
+					remoteCoverage[key] = snapshot.Coverage{
+						Profile: scope.Profile, AccountID: relation.Target.AccountID, Region: relation.Target.Region,
+						Service: "ec2-vpc-peering-participant", Status: snapshot.CoverageNotObserved,
+						ErrorKind: "participant-account-not-searched",
+					}
+				}
+			}
+		}
+	}
+	remoteKeys := make([]string, 0, len(remoteCoverage))
+	for key := range remoteCoverage {
+		remoteKeys = append(remoteKeys, key)
+	}
+	sort.Strings(remoteKeys)
+	for _, key := range remoteKeys {
+		collection.Coverage = append(collection.Coverage, remoteCoverage[key])
+	}
+	return collection, nil
 }
 
 func (collector *awsSGSnapshotCollector) Collect(ctx context.Context, scope snapshot.Scope) (snapshot.Collection, error) {

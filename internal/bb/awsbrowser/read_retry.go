@@ -249,6 +249,12 @@ func (c guardedEC2) DescribeRouteTables(ctx context.Context, input *ec2.Describe
 	})
 }
 
+func (c guardedEC2) DescribeVpcPeeringConnections(ctx context.Context, input *ec2.DescribeVpcPeeringConnectionsInput) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
+		return c.client.DescribeVpcPeeringConnections(ctx, input)
+	})
+}
+
 type guardedIAM struct {
 	guard  *readGuard
 	client rawIAMAPI

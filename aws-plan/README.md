@@ -38,6 +38,7 @@
 - [B2-ELBV2-TRACE.md](B2-ELBV2-TRACE.md): Route 53 alias에서 ELBv2 target까지의 live ingress trace 기준선.
 - [B3-SNAPSHOT-GRAPH-POC.md](B3-SNAPSHOT-GRAPH-POC.md): SG reverse snapshot graph의 성능·coverage·retention·corruption PoC 결과.
 - [ADR-002-SQLITE-SNAPSHOT-GRAPH.md](ADR-002-SQLITE-SNAPSHOT-GRAPH.md): optional snapshot store의 cgo-free SQLite 채택 결정.
+- [B4B1-VPC-PEERING.md](B4B1-VPC-PEERING.md): SG와 VPC Peering을 합친 graph sync, cross-account participant coverage, VPC reverse refs 결과.
 
 ## 기존 작업과의 관계
 

@@ -20,19 +20,22 @@ var (
 	awsSnapshotAccountRE   = regexp.MustCompile(`^[0-9]{12}$`)
 	awsSnapshotPartitionRE = regexp.MustCompile(`^aws(?:-[a-z0-9-]+)?$`)
 	awsSnapshotSGRE        = regexp.MustCompile(`^sg-[0-9a-f]+$`)
+	awsSnapshotVPCRE       = regexp.MustCompile(`^vpc-[0-9a-f]+$`)
 )
 
 const awsSnapshotRefsLimit = 10_000
 
 type awsSnapshotSyncRequest struct {
-	Group string `json:"group"`
+	Collection string `json:"collection"`
+	Group      string `json:"group"`
 }
 
 type awsSnapshotRefsRequest struct {
-	Partition string `json:"partition"`
-	AccountID string `json:"account_id"`
-	Region    string `json:"region"`
-	GroupID   string `json:"group_id"`
+	Partition  string `json:"partition"`
+	AccountID  string `json:"account_id"`
+	Region     string `json:"region"`
+	Kind       string `json:"kind"`
+	ResourceID string `json:"resource_id"`
 }
 
 type awsSnapshotSyncService interface {
@@ -77,6 +80,7 @@ type awsSnapshotCoverageData struct {
 	Failed                 int                        `json:"failed"`
 	NotObserved            int                        `json:"not_observed"`
 	RuleReferencesComplete bool                       `json:"rule_references_complete"`
+	VpcPeeringComplete     bool                       `json:"vpc_peering_complete"`
 	AttachmentsComplete    bool                       `json:"attachments_complete"`
 	Complete               bool                       `json:"complete"`
 	Scopes                 []awsSnapshotCoverageScope `json:"scopes"`
@@ -113,10 +117,11 @@ type awsSnapshotEdgeData struct {
 }
 
 type awsSnapshotSyncData struct {
-	Source   string                  `json:"source"`
-	Group    string                  `json:"group"`
-	Run      awsSnapshotRunData      `json:"run"`
-	Coverage awsSnapshotCoverageData `json:"coverage"`
+	Source     string                  `json:"source"`
+	Collection string                  `json:"collection"`
+	Group      string                  `json:"group"`
+	Run        awsSnapshotRunData      `json:"run"`
+	Coverage   awsSnapshotCoverageData `json:"coverage"`
 }
 
 type awsSnapshotRefsData struct {
@@ -132,7 +137,7 @@ type awsSnapshotRefsData struct {
 
 func (a *App) awsSnapshotSyncCommand(args []string) error {
 	if len(args) == 0 || helpRequested(args) {
-		_, err := fmt.Fprint(a.out, "Usage: bb aws sync sg --group <configured-context-group> [--json]\n")
+		_, err := fmt.Fprint(a.out, "Usage: bb aws sync <sg|graph> --group <configured-context-group> [--json]\n")
 		return err
 	}
 	request, jsonMode, err := parseAWSSnapshotSync(args)
@@ -150,9 +155,9 @@ func (a *App) awsSnapshotSyncCommand(args []string) error {
 	defer stop()
 	run, coverage, err := service.Sync(ctx, request)
 	if err != nil {
-		return mapAWSSnapshotFailure(err, "sync AWS security-group snapshot")
+		return mapAWSSnapshotFailure(err, "sync AWS "+request.Collection+" snapshot")
 	}
-	data := awsSnapshotSyncData{Source: "snapshot", Group: request.Group, Run: awsSnapshotRun(run, a.now()), Coverage: awsSnapshotCoverage(coverage)}
+	data := awsSnapshotSyncData{Source: "snapshot", Collection: request.Collection, Group: request.Group, Run: awsSnapshotRun(run, a.now()), Coverage: awsSnapshotCoverage(coverage)}
 	warnings := awsSnapshotWarnings(data.Coverage, false)
 	if jsonMode {
 		return printEnvelope(a.out, data, warnings)
@@ -162,7 +167,7 @@ func (a *App) awsSnapshotSyncCommand(args []string) error {
 
 func (a *App) awsSnapshotRefsCommand(args []string) error {
 	if len(args) == 0 || helpRequested(args) {
-		_, err := fmt.Fprint(a.out, "Usage: bb aws refs sg <sg-id> --account <12-digit-id> --region <region> [--partition <partition>] [--json]\n")
+		_, err := fmt.Fprint(a.out, "Usage: bb aws refs <sg|vpc> <resource-id> --account <12-digit-id> --region <region> [--partition <partition>] [--json]\n")
 		return err
 	}
 	request, jsonMode, err := parseAWSSnapshotRefs(args)
@@ -180,7 +185,7 @@ func (a *App) awsSnapshotRefsCommand(args []string) error {
 	defer stop()
 	execution, err := service.Refs(ctx, request)
 	if err != nil {
-		return mapAWSSnapshotFailure(err, "read AWS security-group references")
+		return mapAWSSnapshotFailure(err, "read AWS "+request.Kind+" references")
 	}
 	data, err := normalizeAWSSnapshotRefs(execution, a.now())
 	if err != nil {
@@ -195,9 +200,10 @@ func (a *App) awsSnapshotRefsCommand(args []string) error {
 
 func parseAWSSnapshotSync(args []string) (awsSnapshotSyncRequest, bool, error) {
 	request := awsSnapshotSyncRequest{}
-	if len(args) == 0 || args[0] != "sg" {
-		return request, false, usage("aws sync", "sg --group <configured-context-group> [--json]")
+	if len(args) == 0 || args[0] != "sg" && args[0] != "graph" {
+		return request, false, usage("aws sync", "<sg|graph> --group <configured-context-group> [--json]")
 	}
+	request.Collection = args[0]
 	jsonMode, groupSet := false, false
 	for tail := args[1:]; len(tail) > 0; {
 		switch tail[0] {
@@ -223,10 +229,11 @@ func parseAWSSnapshotSync(args []string) (awsSnapshotSyncRequest, bool, error) {
 
 func parseAWSSnapshotRefs(args []string) (awsSnapshotRefsRequest, bool, error) {
 	request := awsSnapshotRefsRequest{Partition: "aws"}
-	if len(args) < 2 || args[0] != "sg" || !awsSnapshotSGRE.MatchString(args[1]) {
-		return request, false, usage("aws refs", "sg <sg-id> --account <12-digit-id> --region <region> [--partition <partition>] [--json]")
+	if len(args) < 2 || (args[0] != "sg" && args[0] != "vpc") ||
+		(args[0] == "sg" && !awsSnapshotSGRE.MatchString(args[1])) || (args[0] == "vpc" && !awsSnapshotVPCRE.MatchString(args[1])) {
+		return request, false, usage("aws refs", "<sg|vpc> <resource-id> --account <12-digit-id> --region <region> [--partition <partition>] [--json]")
 	}
-	request.GroupID = args[1]
+	request.Kind, request.ResourceID = args[0], args[1]
 	jsonMode := false
 	set := map[string]bool{}
 	for tail := args[2:]; len(tail) > 0; {
@@ -285,6 +292,7 @@ func awsSnapshotRun(run snapshot.Run, now time.Time) awsSnapshotRunData {
 func awsSnapshotCoverage(values []snapshot.Coverage) awsSnapshotCoverageData {
 	data := awsSnapshotCoverageData{Scopes: make([]awsSnapshotCoverageScope, 0, len(values))}
 	ruleScopes, succeededRuleScopes := 0, 0
+	peeringScopes, succeededPeeringScopes, unobservedParticipants := 0, 0, 0
 	for _, value := range values {
 		data.Total++
 		switch value.Status {
@@ -301,12 +309,22 @@ func awsSnapshotCoverage(values []snapshot.Coverage) awsSnapshotCoverageData {
 				succeededRuleScopes++
 			}
 		}
+		if value.Service == "ec2-vpc-peering" {
+			peeringScopes++
+			if value.Status == snapshot.CoverageSucceeded {
+				succeededPeeringScopes++
+			}
+		}
+		if value.Service == "ec2-vpc-peering-participant" && value.Status == snapshot.CoverageNotObserved {
+			unobservedParticipants++
+		}
 		data.Scopes = append(data.Scopes, awsSnapshotCoverageScope{
 			Profile: value.Profile, AccountID: value.AccountID, Region: value.Region, Service: value.Service,
 			Status: string(value.Status), ErrorKind: value.ErrorKind,
 		})
 	}
 	data.RuleReferencesComplete = ruleScopes > 0 && succeededRuleScopes == ruleScopes
+	data.VpcPeeringComplete = peeringScopes > 0 && succeededPeeringScopes == peeringScopes && unobservedParticipants == 0
 	data.AttachmentsComplete = data.RuleReferencesComplete && data.Failed == 0 && data.NotObserved == 0
 	data.Complete = data.RuleReferencesComplete && data.AttachmentsComplete
 	return data
@@ -319,7 +337,7 @@ func normalizeAWSSnapshotRefs(execution awsSnapshotRefsExecution, now time.Time)
 		References: make([]awsSnapshotEdgeData, 0, len(execution.Edges)), Limit: awsSnapshotRefsLimit, Truncated: execution.Truncated,
 	}
 	for _, edge := range execution.Edges {
-		if edge.Relation.Type != awsbrowser.RelationReferences && edge.Relation.Type != awsbrowser.RelationUses {
+		if !awsSnapshotIncomingRelationAllowed(execution.Target.Type, edge.Relation.Type) {
 			continue
 		}
 		source, err := snapshot.ParseResourceRefKey(edge.SourceKey)
@@ -344,6 +362,17 @@ func normalizeAWSSnapshotRefs(execution awsSnapshotRefsExecution, now time.Time)
 	return data, nil
 }
 
+func awsSnapshotIncomingRelationAllowed(targetType string, relationType awsbrowser.RelationType) bool {
+	switch targetType {
+	case "ec2.security-group":
+		return relationType == awsbrowser.RelationReferences || relationType == awsbrowser.RelationUses
+	case "ec2.vpc":
+		return relationType == awsbrowser.RelationAssociatedWith
+	default:
+		return false
+	}
+}
+
 func awsSnapshotResource(ref snapshot.ResourceRef, name string) awsSnapshotResourceData {
 	return awsSnapshotResourceData{Partition: ref.Partition, AccountID: ref.AccountID, Region: ref.Region, Type: ref.Type, ID: ref.ID, Name: name}
 }
@@ -360,13 +389,13 @@ func awsSnapshotWarnings(coverage awsSnapshotCoverageData, truncated bool) []str
 }
 
 func renderAWSSnapshotSync(out io.Writer, data awsSnapshotSyncData, warnings []string) error {
-	if _, err := fmt.Fprintf(out, "AWS snapshot synced: group=%s run=%s\n", safeAWSQueryText(data.Group), safeAWSQueryText(data.Run.ID)); err != nil {
+	if _, err := fmt.Fprintf(out, "AWS snapshot synced: collection=%s group=%s run=%s\n", safeAWSQueryText(data.Collection), safeAWSQueryText(data.Group), safeAWSQueryText(data.Run.ID)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(out, "Coverage: %d succeeded, %d failed, %d not observed\n", data.Coverage.Succeeded, data.Coverage.Failed, data.Coverage.NotObserved); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "Completeness: rule-references=%t attachments=%t\n", data.Coverage.RuleReferencesComplete, data.Coverage.AttachmentsComplete); err != nil {
+	if _, err := fmt.Fprintf(out, "Completeness: rule-references=%t vpc-peering=%t attachments=%t\n", data.Coverage.RuleReferencesComplete, data.Coverage.VpcPeeringComplete, data.Coverage.AttachmentsComplete); err != nil {
 		return err
 	}
 	for _, warning := range warnings {
@@ -423,7 +452,7 @@ func renderAWSSnapshotRefs(out io.Writer, data awsSnapshotRefsData, warnings []s
 	if _, err := fmt.Fprintf(out, "Coverage: %d succeeded, %d failed, %d not observed\n", data.Coverage.Succeeded, data.Coverage.Failed, data.Coverage.NotObserved); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "Completeness: rule-references=%t attachments=%t\n", data.Coverage.RuleReferencesComplete, data.Coverage.AttachmentsComplete); err != nil {
+	if _, err := fmt.Fprintf(out, "Completeness: rule-references=%t vpc-peering=%t attachments=%t\n", data.Coverage.RuleReferencesComplete, data.Coverage.VpcPeeringComplete, data.Coverage.AttachmentsComplete); err != nil {
 		return err
 	}
 	for _, warning := range warnings {

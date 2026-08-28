@@ -15,10 +15,10 @@ func (a *App) aws(args []string) error {
   bb aws query domain <fqdn> [--profile NAME] [--region REGION] [--scope current|all] [--json]
   bb aws query role <exact-name> [--profile NAME] [--region REGION] [--scope current|all] [--json]
                                   Run one scoped read-only AWS query
-  bb aws sync sg --group NAME [--json]
-                                  Collect an explicit EC2 security-group snapshot
-  bb aws refs sg <sg-id> --account ID --region REGION [--partition PARTITION] [--json]
-                                  Find observed incoming SG references in the active snapshot
+  bb aws sync <sg|graph> --group NAME [--json]
+                                  Collect an explicit SG-only or combined AWS graph snapshot
+  bb aws refs <sg|vpc> <resource-id> --account ID --region REGION [--partition PARTITION] [--json]
+                                  Find observed incoming references in the active snapshot
   bb aws sso [session]             Select or log in to an AWS SSO session
   bb aws sso list                  List configured AWS SSO sessions
   bb aws assume [profile]          Select or apply AWS CLI-resolved credentials

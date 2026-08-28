@@ -118,6 +118,10 @@ func (*ec2Stub) DescribeRouteTables(context.Context, *ec2.DescribeRouteTablesInp
 	return &ec2.DescribeRouteTablesOutput{}, nil
 }
 
+func (*ec2Stub) DescribeVpcPeeringConnections(context.Context, *ec2.DescribeVpcPeeringConnectionsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
+	return &ec2.DescribeVpcPeeringConnectionsOutput{}, nil
+}
+
 type iamStub struct{}
 
 func (iamStub) ListRoles(context.Context, *iam.ListRolesInput, ...func(*iam.Options)) (*iam.ListRolesOutput, error) {

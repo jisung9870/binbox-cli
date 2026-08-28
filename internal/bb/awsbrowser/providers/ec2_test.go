@@ -22,6 +22,7 @@ type fakeEC2 struct {
 	vpcs      func(context.Context, *ec2.DescribeVpcsInput) (*ec2.DescribeVpcsOutput, error)
 	subnets   func(context.Context, *ec2.DescribeSubnetsInput) (*ec2.DescribeSubnetsOutput, error)
 	routes    func(context.Context, *ec2.DescribeRouteTablesInput) (*ec2.DescribeRouteTablesOutput, error)
+	peerings  func(context.Context, *ec2.DescribeVpcPeeringConnectionsInput) (*ec2.DescribeVpcPeeringConnectionsOutput, error)
 }
 
 func (f *fakeEC2) DescribeInstances(c context.Context, i *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
@@ -65,6 +66,12 @@ func (f *fakeEC2) DescribeRouteTables(c context.Context, i *ec2.DescribeRouteTab
 		panic("unexpected DescribeRouteTables")
 	}
 	return f.routes(c, i)
+}
+func (f *fakeEC2) DescribeVpcPeeringConnections(c context.Context, i *ec2.DescribeVpcPeeringConnectionsInput) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
+	if f.peerings == nil {
+		panic("unexpected DescribeVpcPeeringConnections")
+	}
+	return f.peerings(c, i)
 }
 
 type captureSink struct {
@@ -191,6 +198,13 @@ func TestEC2ExecutorSelectivelyCallsAllFrozenOperations(t *testing.T) {
 		{awsbrowser.OperationDescribeRouteTables, &fakeEC2{routes: func(context.Context, *ec2.DescribeRouteTablesInput) (*ec2.DescribeRouteTablesOutput, error) {
 			return &ec2.DescribeRouteTablesOutput{RouteTables: []types.RouteTable{{RouteTableId: aws.String("rtb-op")}}}, nil
 		}}, "ec2.route-table"},
+		{awsbrowser.OperationDescribeVpcPeeringConnections, &fakeEC2{peerings: func(context.Context, *ec2.DescribeVpcPeeringConnectionsInput) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
+			return &ec2.DescribeVpcPeeringConnectionsOutput{VpcPeeringConnections: []types.VpcPeeringConnection{{
+				VpcPeeringConnectionId: aws.String("pcx-op"),
+				RequesterVpcInfo:       &types.VpcPeeringConnectionVpcInfo{OwnerId: aws.String("123456789012"), Region: aws.String("us-east-1"), VpcId: aws.String("vpc-requester")},
+				AccepterVpcInfo:        &types.VpcPeeringConnectionVpcInfo{OwnerId: aws.String("210987654321"), Region: aws.String("ap-northeast-2"), VpcId: aws.String("vpc-accepter")},
+			}}}, nil
+		}}, "ec2.vpc-peering-connection"},
 	}
 	for _, test := range tests {
 		t.Run(test.operation, func(t *testing.T) {
@@ -204,6 +218,51 @@ func TestEC2ExecutorSelectivelyCallsAllFrozenOperations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEC2ExecutorMapsCrossAccountVpcPeeringAndUnresolvedEndpoint(t *testing.T) {
+	client := &fakeEC2{peerings: func(_ context.Context, input *ec2.DescribeVpcPeeringConnectionsInput) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
+		if input.MaxResults == nil || input.NextToken != nil || len(input.VpcPeeringConnectionIds) != 0 {
+			t.Fatalf("input=%+v", input)
+		}
+		return &ec2.DescribeVpcPeeringConnectionsOutput{VpcPeeringConnections: []types.VpcPeeringConnection{
+			{
+				VpcPeeringConnectionId: aws.String("pcx-exact"),
+				RequesterVpcInfo:       &types.VpcPeeringConnectionVpcInfo{OwnerId: aws.String("123456789012"), Region: aws.String("us-east-1"), VpcId: aws.String("vpc-a"), CidrBlock: aws.String("10.0.0.0/16")},
+				AccepterVpcInfo:        &types.VpcPeeringConnectionVpcInfo{OwnerId: aws.String("210987654321"), Region: aws.String("ap-northeast-2"), VpcId: aws.String("vpc-b"), CidrBlock: aws.String("10.1.0.0/16")},
+				Status:                 &types.VpcPeeringConnectionStateReason{Code: types.VpcPeeringConnectionStateReasonCodeActive},
+				Tags:                   []types.Tag{{Key: aws.String("Name"), Value: aws.String("inter-region")}},
+			},
+			{
+				VpcPeeringConnectionId: aws.String("pcx-unresolved"),
+				RequesterVpcInfo:       &types.VpcPeeringConnectionVpcInfo{OwnerId: aws.String("123456789012"), Region: aws.String("us-east-1"), VpcId: aws.String("vpc-c")},
+				AccepterVpcInfo:        &types.VpcPeeringConnectionVpcInfo{OwnerId: aws.String("210987654321"), VpcId: aws.String("vpc-d")},
+			},
+		}}, nil
+	}}
+	executor, _ := NewEC2QueryExecutor(client, fixedClock())
+	sink := &captureSink{}
+	if err := executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeVpcPeeringConnections, nil), sink); err != nil {
+		t.Fatal(err)
+	}
+	resources := sink.pages[0].Resources()
+	if len(resources) != 2 || resources[0].Key.AccountID != "123456789012" || resources[0].Key.Region != "us-east-1" {
+		t.Fatalf("resources=%+v", resources)
+	}
+	fields := resources[0].Observation.Fields()
+	if fields["name"] != "inter-region" || fields["status"] != "active" || fields["requester_resolution"] != "exact" || fields["accepter_resolution"] != "exact" {
+		t.Fatalf("fields=%+v", fields)
+	}
+	wantTargets := map[string]string{"ec2.vpc/vpc-a": "us-east-1", "ec2.vpc/vpc-b": "us-east-1"}
+	if got := exactRelationTargets(t, resources[0]); !reflect.DeepEqual(got, wantTargets) {
+		t.Fatalf("targets=%+v want=%+v", got, wantTargets)
+	}
+	unresolved := resources[1].Observation.Fields()
+	if unresolved["accepter_resolution"] != "unresolved:missing-region" || len(unresolved["relations"].([]any)) != 1 {
+		t.Fatalf("unresolved=%+v", unresolved)
+	}
+	assertMappedOnly(t, fields)
+	assertMappedOnly(t, unresolved)
 }
 
 func TestEC2SecurityGroupRulesDirectionIsFilteredLocally(t *testing.T) {

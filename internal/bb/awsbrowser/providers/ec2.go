@@ -25,7 +25,7 @@ var errInvalidEC2Query = errors.New("invalid EC2 provider query")
 
 var iamInstanceProfileNameRE = regexp.MustCompile(`^[A-Za-z0-9_+=,.@-]+$`)
 
-// EC2QueryExecutor owns construction, pagination, and mapping for the seven
+// EC2QueryExecutor owns construction, pagination, and mapping for the allowed
 // frozen EC2 reads. It never accepts SDK inputs or operation options.
 type EC2QueryExecutor struct {
 	client awsbrowser.EC2API
@@ -72,6 +72,8 @@ func (executor *EC2QueryExecutor) Execute(ctx context.Context, key awsbrowser.Qu
 		err = executor.subnets(ctx, key, params, sink, &page)
 	case awsbrowser.OperationDescribeRouteTables:
 		err = executor.routeTables(ctx, key, params, sink, &page)
+	case awsbrowser.OperationDescribeVpcPeeringConnections:
+		err = executor.vpcPeeringConnections(ctx, key, params, sink, &page)
 	}
 	if err != nil {
 		return err
@@ -93,23 +95,25 @@ type ec2Params struct {
 }
 
 var ec2Selectors = map[string]string{
-	awsbrowser.OperationDescribeInstances:          "instance-id",
-	awsbrowser.OperationDescribeVolumes:            "volume-id",
-	awsbrowser.OperationDescribeSecurityGroups:     "group-id",
-	awsbrowser.OperationDescribeSecurityGroupRules: "security-group-rule-id",
-	awsbrowser.OperationDescribeVpcs:               "vpc-id",
-	awsbrowser.OperationDescribeSubnets:            "subnet-id",
-	awsbrowser.OperationDescribeRouteTables:        "route-table-id",
+	awsbrowser.OperationDescribeInstances:             "instance-id",
+	awsbrowser.OperationDescribeVolumes:               "volume-id",
+	awsbrowser.OperationDescribeSecurityGroups:        "group-id",
+	awsbrowser.OperationDescribeSecurityGroupRules:    "security-group-rule-id",
+	awsbrowser.OperationDescribeVpcs:                  "vpc-id",
+	awsbrowser.OperationDescribeSubnets:               "subnet-id",
+	awsbrowser.OperationDescribeRouteTables:           "route-table-id",
+	awsbrowser.OperationDescribeVpcPeeringConnections: "vpc-peering-connection-id",
 }
 
 var ec2FilterAllowlist = map[string]map[string]struct{}{
-	awsbrowser.OperationDescribeInstances:          allow("availability-zone", "architecture", "image-id", "instance-state-name", "instance-type", "instance.group-id", "private-ip-address", "subnet-id", "tag-key", "vpc-id"),
-	awsbrowser.OperationDescribeVolumes:            allow("attachment.instance-id", "availability-zone", "encrypted", "snapshot-id", "status", "tag-key", "volume-type"),
-	awsbrowser.OperationDescribeSecurityGroups:     allow("group-name", "owner-id", "tag-key", "vpc-id"),
-	awsbrowser.OperationDescribeSecurityGroupRules: allow("group-id", "tag-key"),
-	awsbrowser.OperationDescribeVpcs:               allow("cidr", "is-default", "owner-id", "state", "tag-key"),
-	awsbrowser.OperationDescribeSubnets:            allow("availability-zone", "cidr-block", "default-for-az", "state", "tag-key", "vpc-id"),
-	awsbrowser.OperationDescribeRouteTables:        allow("association.main", "association.subnet-id", "route.destination-cidr-block", "route.state", "tag-key", "vpc-id"),
+	awsbrowser.OperationDescribeInstances:             allow("availability-zone", "architecture", "image-id", "instance-state-name", "instance-type", "instance.group-id", "private-ip-address", "subnet-id", "tag-key", "vpc-id"),
+	awsbrowser.OperationDescribeVolumes:               allow("attachment.instance-id", "availability-zone", "encrypted", "snapshot-id", "status", "tag-key", "volume-type"),
+	awsbrowser.OperationDescribeSecurityGroups:        allow("group-name", "owner-id", "tag-key", "vpc-id"),
+	awsbrowser.OperationDescribeSecurityGroupRules:    allow("group-id", "tag-key"),
+	awsbrowser.OperationDescribeVpcs:                  allow("cidr", "is-default", "owner-id", "state", "tag-key"),
+	awsbrowser.OperationDescribeSubnets:               allow("availability-zone", "cidr-block", "default-for-az", "state", "tag-key", "vpc-id"),
+	awsbrowser.OperationDescribeRouteTables:           allow("association.main", "association.subnet-id", "route.destination-cidr-block", "route.state", "tag-key", "vpc-id"),
+	awsbrowser.OperationDescribeVpcPeeringConnections: allow("accepter-vpc-info.cidr-block", "accepter-vpc-info.owner-id", "accepter-vpc-info.vpc-id", "requester-vpc-info.cidr-block", "requester-vpc-info.owner-id", "requester-vpc-info.vpc-id", "status-code", "status-message", "tag-key"),
 }
 
 func allow(values ...string) map[string]struct{} {
@@ -540,6 +544,48 @@ func (executor *EC2QueryExecutor) routeTables(ctx context.Context, key awsbrowse
 	}
 }
 
+func (executor *EC2QueryExecutor) vpcPeeringConnections(ctx context.Context, key awsbrowser.QueryKey, params ec2Params, sink awsbrowser.QueryPageSink, page *uint64) error {
+	var token *string
+	guard := tokenGuard{}
+	found := map[string]bool{}
+	for {
+		if err := ctx.Err(); err != nil {
+			return providerFailure(err, key.Operation)
+		}
+		out, err := executor.client.DescribeVpcPeeringConnections(ctx, &ec2.DescribeVpcPeeringConnectionsInput{
+			VpcPeeringConnectionIds: params.ids, Filters: params.filters, MaxResults: maxFor(params.ids), NextToken: token,
+		})
+		if err != nil {
+			return providerFailure(err, key.Operation)
+		}
+		if out == nil {
+			return providerFailure(errInvalidEC2Query, key.Operation)
+		}
+		resources := make([]awsbrowser.ObservedResource, 0, len(out.VpcPeeringConnections))
+		for _, value := range out.VpcPeeringConnections {
+			if err := ctx.Err(); err != nil {
+				return providerFailure(err, key.Operation)
+			}
+			resource, mapErr := mapVpcPeeringConnection(key.Context, key.Operation, executor.now(), value)
+			if mapErr != nil || !targetMatch(params.ids, resource.Key.ID, found) {
+				return providerFailure(errInvalidEC2Query, key.Operation)
+			}
+			resources = append(resources, resource)
+		}
+		next, done, validateErr := validateEC2Page(&guard, token, out.NextToken, params.ids, found, key.Operation)
+		if validateErr != nil {
+			return validateErr
+		}
+		if err = executor.emit(ctx, key, sink, page, resources); err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+		token = next
+	}
+}
+
 func targetMatch(ids []string, id string, found map[string]bool) bool {
 	if len(ids) == 0 {
 		return true
@@ -917,6 +963,97 @@ func mapVpc(c awsbrowser.AWSContext, op string, at time.Time, v types.Vpc) (awsb
 		return awsbrowser.ObservedResource{}, err
 	}
 	return observed(c, op, "vpc", s(v.VpcId), at, map[string]any{"cidr_block": s(v.CidrBlock), "dhcp_options_id": s(v.DhcpOptionsId), "state": string(v.State), "is_default": b(v.IsDefault), "instance_tenancy": string(v.InstanceTenancy), "owner_id": s(v.OwnerId), "tags": mappedTags})
+}
+
+func mapVpcPeeringConnection(c awsbrowser.AWSContext, op string, at time.Time, value types.VpcPeeringConnection) (awsbrowser.ObservedResource, error) {
+	mappedTags, err := tags(value.Tags)
+	if err != nil {
+		return awsbrowser.ObservedResource{}, err
+	}
+	requester, requesterResolution, err := vpcPeeringEndpoint(c, value.RequesterVpcInfo, "requester")
+	if err != nil {
+		return awsbrowser.ObservedResource{}, err
+	}
+	accepter, accepterResolution, err := vpcPeeringEndpoint(c, value.AccepterVpcInfo, "accepter")
+	if err != nil {
+		return awsbrowser.ObservedResource{}, err
+	}
+	ownerAccount, ownerRegion := c.AccountID, c.Region
+	if value.RequesterVpcInfo != nil {
+		if account := strings.TrimSpace(s(value.RequesterVpcInfo.OwnerId)); account != "" {
+			ownerAccount = account
+		}
+		if region := strings.TrimSpace(s(value.RequesterVpcInfo.Region)); region != "" {
+			ownerRegion = region
+		}
+	}
+	source, err := awsbrowser.NewCanonicalResourceKey(c.Partition, ownerAccount, ownerRegion, "ec2.vpc-peering-connection", s(value.VpcPeeringConnectionId))
+	if err != nil {
+		return awsbrowser.ObservedResource{}, err
+	}
+	relations := []any{}
+	for _, endpoint := range []struct {
+		role       string
+		resolution string
+		key        *awsbrowser.ResourceKey
+	}{{"requester", requesterResolution, requester}, {"accepter", accepterResolution, accepter}} {
+		if endpoint.key == nil {
+			continue
+		}
+		relation, relationErr := relationBetween(c, op, "vpc peering "+endpoint.role+" vpc", source, *endpoint.key, awsbrowser.RelationAssociatedWith, "role="+endpoint.role, at)
+		if relationErr != nil {
+			return awsbrowser.ObservedResource{}, relationErr
+		}
+		relations = append(relations, relation)
+	}
+	statusCode, statusMessage := "", ""
+	if value.Status != nil {
+		statusCode = string(value.Status.Code)
+		statusMessage = s(value.Status.Message)
+	}
+	fields := map[string]any{
+		"name": mappedTags["Name"], "status": statusCode, "status_message": statusMessage,
+		"requester": vpcPeeringInfoFields(value.RequesterVpcInfo), "requester_resolution": requesterResolution,
+		"accepter": vpcPeeringInfoFields(value.AccepterVpcInfo), "accepter_resolution": accepterResolution,
+		"tags": mappedTags, "relations": relations,
+	}
+	observation, err := awsbrowser.NewResourceObservationForOperation(c, op, fields, at, true)
+	if err != nil {
+		return awsbrowser.ObservedResource{}, err
+	}
+	return awsbrowser.ObservedResource{Key: source, Observation: observation}, nil
+}
+
+func vpcPeeringEndpoint(c awsbrowser.AWSContext, info *types.VpcPeeringConnectionVpcInfo, role string) (*awsbrowser.ResourceKey, string, error) {
+	if info == nil {
+		return nil, "unresolved:missing-" + role + "-vpc-info", nil
+	}
+	account, region, id := strings.TrimSpace(s(info.OwnerId)), strings.TrimSpace(s(info.Region)), strings.TrimSpace(s(info.VpcId))
+	missing := make([]string, 0, 3)
+	if account == "" {
+		missing = append(missing, "owner-id")
+	}
+	if region == "" {
+		missing = append(missing, "region")
+	}
+	if id == "" {
+		missing = append(missing, "vpc-id")
+	}
+	if len(missing) != 0 {
+		return nil, "unresolved:missing-" + strings.Join(missing, "+"), nil
+	}
+	key, err := awsbrowser.NewCanonicalResourceKey(c.Partition, account, region, "ec2.vpc", id)
+	if err != nil {
+		return nil, "", err
+	}
+	return &key, "exact", nil
+}
+
+func vpcPeeringInfoFields(info *types.VpcPeeringConnectionVpcInfo) map[string]any {
+	if info == nil {
+		return map[string]any{}
+	}
+	return map[string]any{"owner_id": s(info.OwnerId), "region": s(info.Region), "vpc_id": s(info.VpcId), "cidr_block": s(info.CidrBlock)}
 }
 func mapSubnet(c awsbrowser.AWSContext, op string, at time.Time, v types.Subnet) (awsbrowser.ObservedResource, error) {
 	mappedTags, err := tags(v.Tags)

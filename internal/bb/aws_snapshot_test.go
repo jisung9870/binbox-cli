@@ -48,13 +48,84 @@ func (function awsSnapshotQueryCoreFunc) Query(ctx context.Context, request awsi
 
 func TestParseAWSSnapshotCommands(t *testing.T) {
 	syncRequest, jsonMode, err := parseAWSSnapshotSync([]string{"sg", "--group", "udg-prod", "--json"})
-	if err != nil || !jsonMode || syncRequest.Group != "udg-prod" {
+	if err != nil || !jsonMode || syncRequest.Group != "udg-prod" || syncRequest.Collection != "sg" {
 		t.Fatalf("sync request=%#v json=%v error=%v", syncRequest, jsonMode, err)
 	}
+	graphRequest, graphJSON, err := parseAWSSnapshotSync([]string{"graph", "--group", "udg-prod"})
+	if err != nil || graphJSON || graphRequest.Collection != "graph" || graphRequest.Group != "udg-prod" {
+		t.Fatalf("graph request=%#v json=%v error=%v", graphRequest, graphJSON, err)
+	}
 	refsRequest, jsonMode, err := parseAWSSnapshotRefs([]string{"sg", "sg-123abc", "--account", "123456789012", "--region", "ap-northeast-2", "--partition", "aws", "--json"})
-	want := awsSnapshotRefsRequest{Partition: "aws", AccountID: "123456789012", Region: "ap-northeast-2", GroupID: "sg-123abc"}
+	want := awsSnapshotRefsRequest{Partition: "aws", AccountID: "123456789012", Region: "ap-northeast-2", Kind: "sg", ResourceID: "sg-123abc"}
 	if err != nil || !jsonMode || refsRequest != want {
 		t.Fatalf("refs request=%#v json=%v error=%v", refsRequest, jsonMode, err)
+	}
+	vpcRequest, _, err := parseAWSSnapshotRefs([]string{"vpc", "vpc-abc123", "--account", "210987654321", "--region", "ap-northeast-2"})
+	if err != nil || vpcRequest.Kind != "vpc" || vpcRequest.ResourceID != "vpc-abc123" {
+		t.Fatalf("vpc request=%#v error=%v", vpcRequest, err)
+	}
+}
+
+func TestProductionAWSGraphSnapshotCollectsVpcPeeringAndRemoteCoverage(t *testing.T) {
+	ctx := context.Background()
+	at := time.Date(2026, 8, 28, 7, 0, 0, 0, time.UTC)
+	awsContext, err := awsbrowser.NewAWSContext(
+		awsbrowser.ContextSpec{Mode: awsbrowser.ContextModeNamedProfile, Profile: "dev", Region: "us-east-1"},
+		awsbrowser.VerifiedIdentity{Partition: "aws", AccountID: "123456789012", PrincipalARN: "arn:aws:iam::123456789012:role/read", CredentialGeneration: 1}, "read",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peering, _ := awsbrowser.NewRegionalResourceKey(awsContext, "ec2.vpc-peering-connection", "pcx-123")
+	requester, _ := awsbrowser.NewRegionalResourceKey(awsContext, "ec2.vpc", "vpc-requester")
+	accepter, _ := awsbrowser.NewCanonicalResourceKey("aws", "210987654321", "ap-northeast-2", "ec2.vpc", "vpc-accepter")
+	requesterRelation := testAWSSnapshotRelation(t, awsContext, peering, requester, awsbrowser.RelationAssociatedWith, "role=requester", awsbrowser.OperationDescribeVpcPeeringConnections, at)
+	accepterRelation := testAWSSnapshotRelation(t, awsContext, peering, accepter, awsbrowser.RelationAssociatedWith, "role=accepter", awsbrowser.OperationDescribeVpcPeeringConnections, at)
+	resources := map[string][]awsbrowser.ObservedResource{
+		awsbrowser.OperationDescribeSecurityGroups:     {},
+		awsbrowser.OperationDescribeSecurityGroupRules: {},
+		awsbrowser.OperationDescribeInstances:          {},
+		awsbrowser.OperationDescribeVpcPeeringConnections: {
+			testAWSSnapshotObserved(t, awsContext, peering, awsbrowser.OperationDescribeVpcPeeringConnections, map[string]any{
+				"name": "cross-account", "relations": []any{testAWSSnapshotMappedRelation(requesterRelation), testAWSSnapshotMappedRelation(accepterRelation)},
+			}, at),
+		},
+	}
+	core := awsSnapshotQueryCoreFunc(func(_ context.Context, request awsintegration.Request) (awsintegration.Result, error) {
+		values, ok := resources[request.Operation]
+		if !ok || request.Provider != awsbrowser.ProviderEC2 || request.Profile != "dev" || request.Region != "us-east-1" {
+			t.Fatalf("unexpected request=%#v", request)
+		}
+		return testAWSSnapshotQueryResult(t, awsContext, request.Operation, values, at), nil
+	})
+	path := filepath.Join(t.TempDir(), "aws", "snapshot.db")
+	syncService := &productionAWSSnapshotSyncService{
+		core: core, groups: []awsbrowser.ContextGroup{{Name: "udg", Profiles: []string{"dev"}, Regions: []string{"us-east-1"}}},
+		path: path, now: func() time.Time { return at },
+	}
+	run, coverage, err := syncService.Sync(ctx, awsSnapshotSyncRequest{Collection: "graph", Group: "udg"})
+	if err != nil || run.ID == "" || len(coverage) != 10 {
+		t.Fatalf("run=%#v coverage=%#v error=%v", run, coverage, err)
+	}
+	var participantCoverage bool
+	for _, item := range coverage {
+		if item.AccountID == "210987654321" && item.Region == "ap-northeast-2" && item.Service == "ec2-vpc-peering-participant" && item.Status == snapshot.CoverageNotObserved {
+			participantCoverage = item.ErrorKind == "participant-account-not-searched"
+		}
+	}
+	if !participantCoverage {
+		t.Fatalf("remote participant coverage missing: %#v", coverage)
+	}
+	execution, err := (&productionAWSSnapshotReadService{path: path}).Refs(ctx, awsSnapshotRefsRequest{
+		Partition: "aws", AccountID: "210987654321", Region: "ap-northeast-2", Kind: "vpc", ResourceID: "vpc-accepter",
+	})
+	if err != nil || len(execution.Edges) != 1 || execution.Edges[0].Relation.Type != awsbrowser.RelationAssociatedWith ||
+		execution.Edges[0].Relation.Confidence != awsbrowser.RelationIDExact || execution.Edges[0].Relation.Condition != "role=accepter" {
+		t.Fatalf("execution=%#v error=%v", execution, err)
+	}
+	normalized, err := normalizeAWSSnapshotRefs(execution, at.Add(time.Minute))
+	if err != nil || len(normalized.References) != 1 || normalized.References[0].RelationType != "associated-with" || normalized.Coverage.VpcPeeringComplete {
+		t.Fatalf("normalized=%#v error=%v", normalized, err)
 	}
 }
 
@@ -108,7 +179,7 @@ func TestAWSSnapshotSyncJSONEnvelope(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &document); err != nil {
 		t.Fatal(err)
 	}
-	if !document.OK || service.request.Group != "udg" || document.Data.Run.AgeSeconds != 10 || document.Data.Coverage.Complete ||
+	if !document.OK || service.request.Collection != "sg" || service.request.Group != "udg" || document.Data.Collection != "sg" || document.Data.Run.AgeSeconds != 10 || document.Data.Coverage.Complete ||
 		!document.Data.Coverage.RuleReferencesComplete || document.Data.Coverage.AttachmentsComplete || len(document.Warnings) != 1 {
 		t.Fatalf("document=%#v request=%#v", document, service.request)
 	}
@@ -268,7 +339,7 @@ func TestProductionAWSSnapshotSyncAndRefsVerticalSlice(t *testing.T) {
 		t.Fatalf("run=%#v coverage=%#v error=%v", run, coverage, err)
 	}
 	readService := &productionAWSSnapshotReadService{path: path}
-	execution, err := readService.Refs(ctx, awsSnapshotRefsRequest{Partition: "aws", AccountID: "123456789012", Region: "ap-northeast-2", GroupID: "sg-target"})
+	execution, err := readService.Refs(ctx, awsSnapshotRefsRequest{Partition: "aws", AccountID: "123456789012", Region: "ap-northeast-2", Kind: "sg", ResourceID: "sg-target"})
 	if err != nil || !execution.ResourceObserved || len(execution.Edges) != 2 || execution.Run.ID != run.ID {
 		t.Fatalf("execution=%#v error=%v", execution, err)
 	}
@@ -319,7 +390,7 @@ func TestAWSSnapshotRefsReadsPreviousRunWhileSyncCollects(t *testing.T) {
 	readContext, cancelRead := context.WithTimeout(ctx, time.Second)
 	defer cancelRead()
 	execution, err := (&productionAWSSnapshotReadService{path: path}).Refs(readContext, awsSnapshotRefsRequest{
-		Partition: target.Partition, AccountID: target.AccountID, Region: target.Region, GroupID: target.ID,
+		Partition: target.Partition, AccountID: target.AccountID, Region: target.Region, Kind: "sg", ResourceID: target.ID,
 	})
 	if err != nil || execution.Run.ID != initial.ID || !execution.ResourceObserved {
 		t.Fatalf("execution=%#v error=%v", execution, err)

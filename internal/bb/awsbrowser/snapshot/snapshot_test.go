@@ -127,6 +127,36 @@ func TestCoordinatorSyncCommitsPartialCoverageDuplicateObservationsAndReverseEdg
 	}
 }
 
+func TestCoordinatorDeduplicatesIdenticalSupplementalCoverageAcrossScopes(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 8, 28, 1, 30, 0, 0, time.UTC)
+	remote := Coverage{
+		Profile: "primary", AccountID: "222222222222", Region: "eu-west-1",
+		Service: "ec2-vpc-peering-participant", Status: CoverageNotObserved,
+		ErrorKind: "participant-account-not-searched",
+	}
+	collector := fixtureCollector{results: map[string]Collection{
+		"primary/ap-northeast-2": {AccountID: "111111111111", Coverage: []Coverage{remote}},
+		"primary/us-east-1":      {AccountID: "111111111111", Coverage: []Coverage{remote}},
+	}}
+	input, err := (Coordinator{Collector: collector, Now: (&stepClock{next: at}).Now}).Collect(context.Background(), []Scope{
+		{Profile: "primary", Region: "ap-northeast-2", Service: "ec2-vpc-peering"},
+		{Profile: "primary", Region: "us-east-1", Service: "ec2-vpc-peering"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteCount := 0
+	for _, item := range input.Coverage {
+		if item == remote {
+			remoteCount++
+		}
+	}
+	if len(input.Coverage) != 3 || remoteCount != 1 {
+		t.Fatalf("coverage=%#v", input.Coverage)
+	}
+}
+
 func TestResourceRefKeyRoundTripRejectsNonCanonicalInput(t *testing.T) {
 	t.Parallel()
 	want := ref("111111111111", testRegion, "ec2.security-group", "sg-123")

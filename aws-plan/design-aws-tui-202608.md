@@ -253,8 +253,11 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 
 ### B4-B — 멀티계정 network relation collector
 
-- VPC peering, TGW, PrivateLink relation과 unresolved target 계약을 추가한다.
+- B4-B1 완료 상태: 2026-08-28 fixture 검증 완료. `bb aws sync graph --group <name>`이 기존 SG와 VPC Peering을 한 atomic run에 저장하고 `bb aws refs vpc`가 incoming peering participant edge를 조회한다.
+- B4-B1 정확성: requester account/region을 peering canonical identity로 사용하며 requester/accepter VPC는 API ID 기반 exact edge다. endpoint identity가 불완전하면 provider projection에 `unresolved:missing-*`을 남기고 edge를 만들지 않는다. context group에서 직접 검색하지 않은 remote participant account/region은 `not-observed/participant-account-not-searched` coverage다.
+- 남은 B4-B2/B4-B3: TGW와 PrivateLink relation collector를 추가한다. `graph`는 두 미구현 service를 `not-observed/collector-not-implemented`로 표시한다.
 - 완료 판정: 소유 account와 사용 account coverage를 분리하고 exact/inferred/unresolved를 표시한다.
+- 증거: [B4-B1 VPC Peering](B4B1-VPC-PEERING.md)
 
 ### B4-C — shortcut query 확장과 diff
 

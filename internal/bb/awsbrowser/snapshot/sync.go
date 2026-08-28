@@ -83,10 +83,15 @@ func (coordinator Coordinator) Collect(ctx context.Context, scopes []Scope) (Run
 	if coordinator.Collector == nil || len(scopes) == 0 {
 		return RunInput{}, ErrInvalidInput
 	}
+	seenScopes := make(map[Scope]struct{}, len(scopes))
 	for _, scope := range scopes {
 		if err := scope.validate(); err != nil {
 			return RunInput{}, err
 		}
+		if _, exists := seenScopes[scope]; exists {
+			return RunInput{}, ErrInvalidInput
+		}
+		seenScopes[scope] = struct{}{}
 	}
 	now := coordinator.Now
 	if now == nil {
@@ -163,8 +168,7 @@ func (coordinator Coordinator) Collect(ctx context.Context, scopes []Scope) (Run
 		coverage.AccountID = collection.AccountID
 		input.Coverage = append(input.Coverage, coverage)
 		for _, supplemental := range collection.Coverage {
-			if supplemental.Profile != scope.Profile || supplemental.AccountID != collection.AccountID ||
-				supplemental.Region != scope.Region || supplemental.Service == scope.Service {
+			if supplemental.Profile != scope.Profile || supplemental.Service == scope.Service || supplemental.validate() != nil {
 				return RunInput{}, ErrInvalidInput
 			}
 		}
@@ -187,6 +191,20 @@ func (coordinator Coordinator) Collect(ctx context.Context, scopes []Scope) (Run
 			})
 		}
 	}
+	coverageSeen := make(map[string]Coverage, len(input.Coverage))
+	coverage := make([]Coverage, 0, len(input.Coverage))
+	for _, item := range input.Coverage {
+		key := strings.Join([]string{item.Profile, item.AccountID, item.Region, item.Service}, "\x00")
+		if previous, exists := coverageSeen[key]; exists {
+			if previous != item {
+				return RunInput{}, ErrInvalidInput
+			}
+			continue
+		}
+		coverageSeen[key] = item
+		coverage = append(coverage, item)
+	}
+	input.Coverage = coverage
 	input.CompletedAt = now().UTC()
 	return input, nil
 }

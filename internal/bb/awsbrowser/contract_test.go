@@ -129,6 +129,7 @@ func TestInterfacesExposeOnlyApprovedOperations(t *testing.T) {
 				"DescribeSecurityGroups",
 				"DescribeSubnets",
 				"DescribeVolumes",
+				"DescribeVpcPeeringConnections",
 				"DescribeVpcs",
 			},
 		},

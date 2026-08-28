@@ -116,11 +116,11 @@
 ## AWS live and snapshot graph decision
 
 - Live Browse remains the default source for Service→Resource→Summary→Detail and exact linked-resource verification. It continues to use the existing AWS SDK providers and in-memory session store.
-- B4-A wires the explicit-only, versioned SQLite snapshot store to `bb aws sync sg` and `bb aws refs sg`. `whois`, `diff`, network collectors, and TUI snapshot switching remain later B4 work. The store contains normalized resource identity, observation, relation, and succeeded/failed/not-observed coverage, but no credentials or unbounded provider `raw_json` payloads.
+- B4-A wires the explicit-only, versioned SQLite snapshot store to `bb aws sync sg` and `bb aws refs sg`. B4-B1 adds `bb aws sync graph` and `bb aws refs vpc` for exact VPC Peering participant edges without replacing the active run with a separate network-only snapshot. Unsearched participant accounts remain explicit `not-observed` coverage. TGW, PrivateLink, `whois`, `diff`, and TUI snapshot switching remain later B4 work. The store contains normalized resource identity, observation, relation, and succeeded/failed/not-observed coverage, but no credentials or unbounded provider `raw_json` payloads.
 - Snapshot-backed screens must always show snapshot age plus successful, failed, and not-observed account/region coverage. A graph result is never presented as live data.
 - Opening a snapshot node transitions to an exact live read in that node's observed profile/account/region context when the current credentials can verify it.
 - Both paths share canonical `ResourceKey`, relationship confidence/evidence, provider normalization, and a Go query service. The TUI never shells out to a bb CLI command to obtain its own data.
-- `modernc.org/sqlite v1.57.0` is accepted for the optional snapshot store after the B3 100k-resource/500k-relation PoC, atomic-run, retention, and corruption-recovery tests. It is now linked into the release binary for the two B4-A commands, but remains outside the live TUI and is not a prerequisite for full-screen navigation. See `aws-plan/B3-SNAPSHOT-GRAPH-POC.md`, `aws-plan/ADR-002-SQLITE-SNAPSHOT-GRAPH.md`, and `aws-plan/B4A-SG-SNAPSHOT-REFS.md`.
+- `modernc.org/sqlite v1.57.0` is accepted for the optional snapshot store after the B3 100k-resource/500k-relation PoC, atomic-run, retention, and corruption-recovery tests. It remains outside the live TUI and is not a prerequisite for full-screen navigation. See `aws-plan/B3-SNAPSHOT-GRAPH-POC.md`, `aws-plan/ADR-002-SQLITE-SNAPSHOT-GRAPH.md`, `aws-plan/B4A-SG-SNAPSHOT-REFS.md`, and `aws-plan/B4B1-VPC-PEERING.md`.
 
 ## Open questions
 

@@ -18,13 +18,14 @@ const (
 	ProviderELBV2      = "elbv2"
 	ProviderS3         = "s3"
 
-	OperationDescribeInstances          = "DescribeInstances"
-	OperationDescribeVolumes            = "DescribeVolumes"
-	OperationDescribeSecurityGroups     = "DescribeSecurityGroups"
-	OperationDescribeSecurityGroupRules = "DescribeSecurityGroupRules"
-	OperationDescribeVpcs               = "DescribeVpcs"
-	OperationDescribeSubnets            = "DescribeSubnets"
-	OperationDescribeRouteTables        = "DescribeRouteTables"
+	OperationDescribeInstances             = "DescribeInstances"
+	OperationDescribeVolumes               = "DescribeVolumes"
+	OperationDescribeSecurityGroups        = "DescribeSecurityGroups"
+	OperationDescribeSecurityGroupRules    = "DescribeSecurityGroupRules"
+	OperationDescribeVpcs                  = "DescribeVpcs"
+	OperationDescribeSubnets               = "DescribeSubnets"
+	OperationDescribeRouteTables           = "DescribeRouteTables"
+	OperationDescribeVpcPeeringConnections = "DescribeVpcPeeringConnections"
 
 	OperationListRoles                = "ListRoles"
 	OperationGetInstanceProfile       = "GetInstanceProfile"
@@ -53,6 +54,7 @@ var providerOperations = map[string]map[string]struct{}{
 		OperationDescribeInstances, OperationDescribeVolumes, OperationDescribeSecurityGroups,
 		OperationDescribeSecurityGroupRules, OperationDescribeVpcs, OperationDescribeSubnets,
 		OperationDescribeRouteTables,
+		OperationDescribeVpcPeeringConnections,
 	),
 	ProviderIAM: operationSet(
 		OperationListRoles, OperationGetInstanceProfile, OperationGetRole,

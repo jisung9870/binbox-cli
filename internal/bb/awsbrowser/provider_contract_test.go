@@ -14,6 +14,8 @@ func TestProviderOperationContractAcceptsOnlyOwnedOperations(t *testing.T) {
 		{ProviderRoute53, OperationListHostedZones},
 		{ProviderRoute53, OperationListResourceRecordSets},
 		{ProviderCloudFront, OperationListDistributions},
+		{ProviderELBV2, OperationDescribeLoadBalancers},
+		{ProviderELBV2, OperationDescribeTargetHealth},
 		{ProviderS3, OperationGetBucketLocation},
 	} {
 		if err := ValidateProviderOperation(pair[0], pair[1]); err != nil {
@@ -26,6 +28,7 @@ func TestProviderOperationContractAcceptsOnlyOwnedOperations(t *testing.T) {
 		{ProviderRoute53, OperationListRoles},
 		{ProviderCloudFront, OperationGetBucketLocation},
 		{ProviderS3, OperationListDistributions},
+		{ProviderELBV2, OperationDescribeInstances},
 		{ProviderEC2, "describe-instances"},
 		{"unknown", "Unknown"},
 	} {

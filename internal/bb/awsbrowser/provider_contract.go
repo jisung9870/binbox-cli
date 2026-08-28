@@ -15,6 +15,7 @@ const (
 	ProviderIAM        = "iam"
 	ProviderRoute53    = "route53"
 	ProviderCloudFront = "cloudfront"
+	ProviderELBV2      = "elbv2"
 	ProviderS3         = "s3"
 
 	OperationDescribeInstances          = "DescribeInstances"
@@ -38,8 +39,13 @@ const (
 	OperationListHostedZonesByName  = "ListHostedZonesByName"
 	OperationListResourceRecordSets = "ListResourceRecordSets"
 
-	OperationListDistributions = "ListDistributions"
-	OperationGetBucketLocation = "GetBucketLocation"
+	OperationListDistributions     = "ListDistributions"
+	OperationDescribeLoadBalancers = "DescribeLoadBalancers"
+	OperationDescribeListeners     = "DescribeListeners"
+	OperationDescribeRules         = "DescribeRules"
+	OperationDescribeTargetGroups  = "DescribeTargetGroups"
+	OperationDescribeTargetHealth  = "DescribeTargetHealth"
+	OperationGetBucketLocation     = "GetBucketLocation"
 )
 
 var providerOperations = map[string]map[string]struct{}{
@@ -57,7 +63,11 @@ var providerOperations = map[string]map[string]struct{}{
 		OperationListHostedZones, OperationListHostedZonesByName, OperationListResourceRecordSets,
 	),
 	ProviderCloudFront: operationSet(OperationListDistributions),
-	ProviderS3:         operationSet(OperationGetBucketLocation),
+	ProviderELBV2: operationSet(
+		OperationDescribeLoadBalancers, OperationDescribeListeners, OperationDescribeRules,
+		OperationDescribeTargetGroups, OperationDescribeTargetHealth,
+	),
+	ProviderS3: operationSet(OperationGetBucketLocation),
 }
 
 // ValidateProviderOperation rejects unknown and cross-service combinations.

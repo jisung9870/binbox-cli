@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -340,6 +341,41 @@ type guardedS3 struct {
 	client rawS3API
 }
 
+type guardedELBV2 struct {
+	guard  *readGuard
+	client rawELBV2API
+}
+
+func (c guardedELBV2) DescribeLoadBalancers(ctx context.Context, input *elasticloadbalancingv2.DescribeLoadBalancersInput) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error) {
+		return c.client.DescribeLoadBalancers(ctx, input)
+	})
+}
+
+func (c guardedELBV2) DescribeListeners(ctx context.Context, input *elasticloadbalancingv2.DescribeListenersInput) (*elasticloadbalancingv2.DescribeListenersOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*elasticloadbalancingv2.DescribeListenersOutput, error) {
+		return c.client.DescribeListeners(ctx, input)
+	})
+}
+
+func (c guardedELBV2) DescribeRules(ctx context.Context, input *elasticloadbalancingv2.DescribeRulesInput) (*elasticloadbalancingv2.DescribeRulesOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*elasticloadbalancingv2.DescribeRulesOutput, error) {
+		return c.client.DescribeRules(ctx, input)
+	})
+}
+
+func (c guardedELBV2) DescribeTargetGroups(ctx context.Context, input *elasticloadbalancingv2.DescribeTargetGroupsInput) (*elasticloadbalancingv2.DescribeTargetGroupsOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*elasticloadbalancingv2.DescribeTargetGroupsOutput, error) {
+		return c.client.DescribeTargetGroups(ctx, input)
+	})
+}
+
+func (c guardedELBV2) DescribeTargetHealth(ctx context.Context, input *elasticloadbalancingv2.DescribeTargetHealthInput) (*elasticloadbalancingv2.DescribeTargetHealthOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*elasticloadbalancingv2.DescribeTargetHealthOutput, error) {
+		return c.client.DescribeTargetHealth(ctx, input)
+	})
+}
+
 func (c guardedS3) GetBucketLocation(ctx context.Context, input *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*s3.GetBucketLocationOutput, error) {
 		return c.client.GetBucketLocation(ctx, input)
@@ -352,5 +388,6 @@ var (
 	_ IAMAPI        = guardedIAM{}
 	_ Route53API    = guardedRoute53{}
 	_ CloudFrontAPI = guardedCloudFront{}
+	_ ELBV2API      = guardedELBV2{}
 	_ S3API         = guardedS3{}
 )

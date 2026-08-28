@@ -46,5 +46,6 @@ type RuntimeContext interface {
 	IAM() IAMAPI
 	Route53() Route53API
 	CloudFront() CloudFrontAPI
+	ELBV2() ELBV2API
 	S3() S3API
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -171,6 +172,24 @@ func (cloudFrontStub) ListDistributions(context.Context, *cloudfront.ListDistrib
 	return &cloudfront.ListDistributionsOutput{}, nil
 }
 
+type elbv2Stub struct{}
+
+func (elbv2Stub) DescribeLoadBalancers(context.Context, *elasticloadbalancingv2.DescribeLoadBalancersInput, ...func(*elasticloadbalancingv2.Options)) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error) {
+	return &elasticloadbalancingv2.DescribeLoadBalancersOutput{}, nil
+}
+func (elbv2Stub) DescribeListeners(context.Context, *elasticloadbalancingv2.DescribeListenersInput, ...func(*elasticloadbalancingv2.Options)) (*elasticloadbalancingv2.DescribeListenersOutput, error) {
+	return &elasticloadbalancingv2.DescribeListenersOutput{}, nil
+}
+func (elbv2Stub) DescribeRules(context.Context, *elasticloadbalancingv2.DescribeRulesInput, ...func(*elasticloadbalancingv2.Options)) (*elasticloadbalancingv2.DescribeRulesOutput, error) {
+	return &elasticloadbalancingv2.DescribeRulesOutput{}, nil
+}
+func (elbv2Stub) DescribeTargetGroups(context.Context, *elasticloadbalancingv2.DescribeTargetGroupsInput, ...func(*elasticloadbalancingv2.Options)) (*elasticloadbalancingv2.DescribeTargetGroupsOutput, error) {
+	return &elasticloadbalancingv2.DescribeTargetGroupsOutput{}, nil
+}
+func (elbv2Stub) DescribeTargetHealth(context.Context, *elasticloadbalancingv2.DescribeTargetHealthInput, ...func(*elasticloadbalancingv2.Options)) (*elasticloadbalancingv2.DescribeTargetHealthOutput, error) {
+	return &elasticloadbalancingv2.DescribeTargetHealthOutput{}, nil
+}
+
 type s3Stub struct{}
 
 func (s3Stub) GetBucketLocation(context.Context, *s3.GetBucketLocationInput, ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error) {
@@ -191,6 +210,7 @@ func fakeSDKRuntime(provider *CredentialProvider, identity func(int) *sts.GetCal
 		iam:              iamStub{},
 		route53:          route53Stub{},
 		cloudfront:       cloudFrontStub{},
+		elbv2:            elbv2Stub{},
 		s3:               s3Stub{},
 	}, stsClient
 }

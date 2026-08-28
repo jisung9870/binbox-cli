@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -28,6 +29,7 @@ type sdkRuntime struct {
 	iam              rawIAMAPI
 	route53          rawRoute53API
 	cloudfront       rawCloudFrontAPI
+	elbv2            rawELBV2API
 	s3               rawS3API
 }
 
@@ -90,6 +92,12 @@ func newSDKRuntime(ctx context.Context, region string, provider *CredentialProvi
 		cloudfront: cloudfront.NewFromConfig(cfg, func(options *cloudfront.Options) {
 			options.BaseEndpoint = nil
 			options.EndpointResolverV2 = cloudfront.NewDefaultEndpointResolverV2()
+			options.RetryMaxAttempts = 0
+			options.Retryer = newStandardRetryer()
+		}),
+		elbv2: elasticloadbalancingv2.NewFromConfig(cfg, func(options *elasticloadbalancingv2.Options) {
+			options.BaseEndpoint = nil
+			options.EndpointResolverV2 = elasticloadbalancingv2.NewDefaultEndpointResolverV2()
 			options.RetryMaxAttempts = 0
 			options.Retryer = newStandardRetryer()
 		}),

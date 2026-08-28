@@ -342,6 +342,12 @@ func (multiplexer *runtimeMultiplexer) Execute(ctx context.Context, key awsbrows
 			break
 		}
 		executor, err = providers.NewCloudFront(client, multiplexer.clock)
+	case awsbrowser.ProviderELBV2:
+		client := runtime.ELBV2()
+		if nilInterface(client) {
+			break
+		}
+		executor, err = providers.NewELBV2(client, multiplexer.clock)
 	case awsbrowser.ProviderS3:
 		client := runtime.S3()
 		if nilInterface(client) {

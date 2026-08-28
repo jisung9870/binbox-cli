@@ -330,6 +330,32 @@ func TestRoute53CloudFrontAliasBecomesNavigableExactTarget(t *testing.T) {
 	}
 }
 
+func TestRoute53ELBV2AliasBecomesRegionalNavigableTarget(t *testing.T) {
+	fake := &route53Fake{listRecordSets: func(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
+		return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []types.ResourceRecordSet{{
+			Name: aws.String("api.example.com."), Type: types.RRTypeA,
+			AliasTarget: &types.AliasTarget{
+				HostedZoneId:         aws.String("ZWKZPGTI48KDX"),
+				DNSName:              aws.String("dualstack.api-public-123456.ap-northeast-2.elb.amazonaws.com."),
+				EvaluateTargetHealth: true,
+			},
+		}}}, nil
+	}}
+	sink := &collectingSink{}
+	if err := newRoute53ForTest(t, fake).Execute(context.Background(), route53Key(t, awsbrowser.OperationListResourceRecordSets, map[string]string{"hosted-zone-id": "Z1"}), sink); err != nil {
+		t.Fatal(err)
+	}
+	resource := sink.pages[0].Resources()[0]
+	target, ok := resource.Observation.Fields()["alias_relation"].(map[string]any)["target"].(awsbrowser.ResourceKey)
+	if !ok || target.Type != "elbv2.load-balancer-dns" || target.ID != "dualstack.api-public-123456.ap-northeast-2.elb.amazonaws.com" || target.Region != "ap-northeast-2" {
+		t.Fatalf("target=%+v", target)
+	}
+	projection := awsbrowser.ProjectResourceFields(resource.Key, resource.Observation.Fields())
+	if len(projection.Relations) != 2 || projection.Relations[0].Target != "elbv2.load-balancer-dns:dualstack.api-public-123456.ap-northeast-2.elb.amazonaws.com" {
+		t.Fatalf("projection=%+v", projection)
+	}
+}
+
 func TestRoute53RecordKeyIsStableWhenMutableRoutingValuesChange(t *testing.T) {
 	call := 0
 	fake := &route53Fake{listRecordSets: func(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {

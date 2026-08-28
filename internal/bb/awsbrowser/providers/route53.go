@@ -486,6 +486,16 @@ func mapRecordSets(ctx context.Context, key awsbrowser.QueryKey, zoneID string, 
 					return nil, false, err
 				}
 				aliasRelation["target"] = target
+			} else if region, ok := awsbrowser.ELBV2RegionFromDNS(key.Context.Partition, aliasName); ok {
+				regionalContext, err := contextInRegion(key.Context, region)
+				if err != nil {
+					return nil, false, err
+				}
+				target, err := awsbrowser.NewRegionalResourceKey(regionalContext, "elbv2.load-balancer-dns", strings.TrimSuffix(aliasName, "."))
+				if err != nil {
+					return nil, false, err
+				}
+				aliasRelation["target"] = target
 			}
 			fields["alias_relation"] = aliasRelation
 		}
@@ -496,6 +506,17 @@ func mapRecordSets(ctx context.Context, key awsbrowser.QueryKey, zoneID string, 
 		resources = append(resources, awsbrowser.ObservedResource{Key: resourceKey, Observation: observation})
 	}
 	return resources, leftTarget, nil
+}
+
+func contextInRegion(context awsbrowser.AWSContext, region string) (awsbrowser.AWSContext, error) {
+	return awsbrowser.NewAWSContext(
+		awsbrowser.ContextSpec{Mode: context.Mode, Profile: context.Profile, Region: region},
+		awsbrowser.VerifiedIdentity{
+			Partition: context.Partition, AccountID: context.AccountID, PrincipalARN: context.PrincipalARN,
+			CredentialGeneration: context.CredentialGen,
+		},
+		context.RoleName,
+	)
 }
 
 func relationFields(relationType awsbrowser.RelationType, condition string, kind awsbrowser.RelationKind, reason, operation string, observedAt time.Time) (map[string]any, error) {

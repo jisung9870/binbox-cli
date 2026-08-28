@@ -3,6 +3,7 @@ package awsbrowser
 import (
 	"context"
 	"errors"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -734,8 +735,75 @@ func TestRoute53CloudFrontS3TracePreservesPathCategories(t *testing.T) {
 	}
 }
 
-func TestCloudFrontAndS3ExactTargetsPromoteToSummary(t *testing.T) {
-	for _, target := range []string{"cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net", "s3.bucket:udg-kr-game-binary"} {
+func TestRoute53ELBV2TraceUsesDirectK9sResourceCategories(t *testing.T) {
+	awsContext := testStoreContext(t, "lg-udg-ops", "123456789012", "ap-northeast-2", 1)
+	const (
+		loadBalancerARN = "arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:loadbalancer/app/api/111"
+		listenerARN     = "arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:listener/app/api/111/222"
+		targetGroupARN  = "arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:targetgroup/api/333"
+	)
+
+	recordKey, _ := NewGlobalResourceKey(awsContext, "resource-record-set", "api-record")
+	loadBalancerDNS, _ := NewRegionalResourceKey(awsContext, "elbv2.load-balancer-dns", "dualstack.api-123.ap-northeast-2.elb.amazonaws.com")
+	record := ProjectResourceFields(recordKey, map[string]any{"name": "api.example.com.", "alias_relation": map[string]any{
+		"target": loadBalancerDNS, "relation_type": "alias-to", "direction": "outgoing", "condition": "A alias", "kind": "api-exact",
+	}})
+	groups := relationGroups(record)
+	if len(groups) != 1 || groups[0].Key != "alias-targets" || !directRelationGroup(groups[0]) {
+		t.Fatalf("record groups=%+v", groups)
+	}
+
+	loadBalancerKey, _ := NewRegionalResourceKey(awsContext, "elbv2.load-balancer", loadBalancerARN)
+	loadBalancer := ProjectResourceFields(loadBalancerKey, map[string]any{"name": "api", "state": "active"})
+	groups = relationGroups(loadBalancer)
+	if len(groups) != 1 || groups[0].Key != "listeners" || !directRelationGroup(groups[0]) || groups[0].Relations[0].Target != "elbv2.listeners:"+loadBalancerARN {
+		t.Fatalf("load balancer groups=%+v", groups)
+	}
+
+	listenerKey, _ := NewRegionalResourceKey(awsContext, "elbv2.listener", listenerARN)
+	targetGroupKey, _ := NewRegionalResourceKey(awsContext, "elbv2.target-group", targetGroupARN)
+	listener := ProjectResourceFields(listenerKey, map[string]any{
+		"name": "HTTPS 443",
+		"relations": []any{map[string]any{
+			"target": targetGroupKey, "label": "api", "relation_type": "routes-to", "direction": "outgoing",
+			"condition": "default; action-order=1", "kind": "api-exact",
+		}},
+	})
+	groups = relationGroups(listener)
+	if len(groups) != 2 || groups[0].Key != "listener-rules" || groups[1].Key != "target-groups" || !directRelationGroup(groups[0]) || !directRelationGroup(groups[1]) {
+		t.Fatalf("listener groups=%+v", groups)
+	}
+
+	targetGroup := ProjectResourceFields(targetGroupKey, map[string]any{"name": "api", "target_type": "instance"})
+	groups = relationGroups(targetGroup)
+	if len(groups) != 1 || groups[0].Key != "targets" || !directRelationGroup(groups[0]) {
+		t.Fatalf("target group groups=%+v", groups)
+	}
+	_, targetQuery, _ := strings.Cut(groups[0].Relations[0].Target, ":")
+	values, err := url.ParseQuery(targetQuery)
+	if err != nil || values.Get("target-group-arn") != targetGroupARN || values.Get("target-type") != "instance" {
+		t.Fatalf("target query=%q values=%v error=%v", targetQuery, values, err)
+	}
+
+	targetKey, _ := NewRegionalResourceKey(awsContext, "elbv2.target", "target-id=i-123&target-group=api")
+	instanceKey, _ := NewRegionalResourceKey(awsContext, "ec2.instance", "i-123")
+	target := ProjectResourceFields(targetKey, map[string]any{"target_id": "i-123", "health_state": "healthy", "relations": []any{map[string]any{
+		"target": instanceKey, "relation_type": "routes-to", "direction": "outgoing", "condition": "target-type=instance", "kind": "api-exact",
+	}}})
+	groups = relationGroups(target)
+	if target.Title != "i-123" || len(groups) != 1 || groups[0].Key != "instances" || groups[0].Relations[0].Target != "ec2.instance:i-123" {
+		t.Fatalf("target=%+v groups=%+v", target, groups)
+	}
+}
+
+func TestExactRelationTargetsPromoteToSummary(t *testing.T) {
+	for _, target := range []string{
+		"cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net",
+		"elbv2.load-balancer-dns:api-123.ap-northeast-2.elb.amazonaws.com",
+		"elbv2.load-balancer:arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:loadbalancer/app/api/111",
+		"elbv2.target-group:arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:targetgroup/api/333",
+		"s3.bucket:udg-kr-game-binary",
+	} {
 		t.Run(target, func(t *testing.T) {
 			m := NewModel(context.Background(), Config{NoColor: true}, nil)
 			m.history = []routeFrame{{mode: routeList, generation: 1, intent: Intent{Kind: IntentOpen, Target: target}}}

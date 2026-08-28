@@ -964,7 +964,8 @@ func singletonDetailTarget(target string) bool {
 	case "ec2.instance", "ec2.volume", "ec2.security-group", "ec2.security-group-rule",
 		"ec2.vpc", "ec2.subnet", "ec2.route-table", "iam.role", "iam.instance-profile",
 		"iam.managed-policy", "iam.inline-policy", "iam.managed-policy-version",
-		"cloudfront.distribution-domain", "s3.bucket":
+		"cloudfront.distribution-domain", "elbv2.load-balancer-dns", "elbv2.load-balancer",
+		"elbv2.target-group", "s3.bucket":
 		return true
 	default:
 		return false
@@ -975,7 +976,8 @@ func directRelationGroup(group relationGroup) bool {
 	return len(group.Relations) == 1 && group.Relations[0].Target != "" &&
 		(group.Key == "inbound-rules" || group.Key == "outbound-rules" ||
 			group.Key == "attached-policies" || group.Key == "inline-policies" ||
-			group.Key == "policy-document" || group.Key == "dns-records" || group.Key == "alias-targets")
+			group.Key == "policy-document" || group.Key == "dns-records" || group.Key == "alias-targets" ||
+			group.Key == "listeners" || group.Key == "listener-rules" || group.Key == "target-groups" || group.Key == "targets")
 }
 
 func (m Model) pushAndDispatch(intent Intent, label string, inherited *AWSContext) (tea.Model, tea.Cmd) {
@@ -1347,6 +1349,10 @@ type relationGroup struct {
 
 var relationGroupOrder = []struct{ Key, Label string }{
 	{Key: "alias-targets", Label: "Alias target"},
+	{Key: "listeners", Label: "Listeners"},
+	{Key: "listener-rules", Label: "Listener rules"},
+	{Key: "target-groups", Label: "Target groups"},
+	{Key: "targets", Label: "Registered targets"},
 	{Key: "origins", Label: "Origins"},
 	{Key: "inbound-rules", Label: "Inbound rules"},
 	{Key: "outbound-rules", Label: "Outbound rules"},
@@ -1389,8 +1395,16 @@ func relationGroupKey(relation ProjectionRelation) string {
 	}
 	targetType, _, _ := strings.Cut(relation.Target, ":")
 	switch targetType {
-	case "cloudfront.distribution-domain":
+	case "cloudfront.distribution-domain", "elbv2.load-balancer-dns":
 		return "alias-targets"
+	case "elbv2.listeners":
+		return "listeners"
+	case "elbv2.rules":
+		return "listener-rules"
+	case "elbv2.target-group":
+		return "target-groups"
+	case "elbv2.targets":
+		return "targets"
 	case "s3.bucket":
 		return "origins"
 	case "ec2.security-group-rules-inbound":

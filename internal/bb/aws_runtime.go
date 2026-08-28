@@ -3,6 +3,7 @@ package bb
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -278,6 +279,31 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 			request.Provider, request.Operation, request.Params["hosted-zone-id"] = awsbrowser.ProviderRoute53, awsbrowser.OperationListResourceRecordSets, id
 		case "cloudfront.distribution-domain":
 			request.Provider, request.Operation, request.Params["distribution-domain"] = awsbrowser.ProviderCloudFront, awsbrowser.OperationListDistributions, id
+		case "elbv2.load-balancer-dns":
+			region, ok := awsbrowser.ELBV2RegionFromDNS("aws", id)
+			if !ok {
+				region, ok = awsbrowser.ELBV2RegionFromDNS("aws-cn", id)
+			}
+			if !ok {
+				return awsintegration.Request{}, false
+			}
+			request.Region = region
+			request.Provider, request.Operation, request.Params["load-balancer-dns"] = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, id
+		case "elbv2.load-balancer":
+			request.Provider, request.Operation, request.Params["load-balancer-arn"] = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, id
+		case "elbv2.listeners":
+			request.Provider, request.Operation, request.Params["load-balancer-arn"] = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeListeners, id
+		case "elbv2.rules":
+			request.Provider, request.Operation, request.Params["listener-arn"] = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeRules, id
+		case "elbv2.target-group":
+			request.Provider, request.Operation, request.Params["target-group-arn"] = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeTargetGroups, id
+		case "elbv2.targets":
+			values, err := url.ParseQuery(id)
+			if err != nil || len(values["target-group-arn"]) != 1 || len(values["target-type"]) != 1 || len(values) != 2 {
+				return awsintegration.Request{}, false
+			}
+			request.Provider, request.Operation = awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeTargetHealth
+			request.Params["target-group-arn"], request.Params["target-type"] = values.Get("target-group-arn"), values.Get("target-type")
 		case "s3.bucket":
 			request.Provider, request.Operation, request.Params["bucket"] = awsbrowser.ProviderS3, awsbrowser.OperationGetBucketLocation, id
 		default:

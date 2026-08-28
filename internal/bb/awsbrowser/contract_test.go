@@ -23,6 +23,7 @@ func TestProviderInterfacesAcceptNoSDKOperationOptions(t *testing.T) {
 		{name: "IAM", typeOf: reflect.TypeOf((*awsbrowser.IAMAPI)(nil)).Elem()},
 		{name: "Route53", typeOf: reflect.TypeOf((*awsbrowser.Route53API)(nil)).Elem()},
 		{name: "CloudFront", typeOf: reflect.TypeOf((*awsbrowser.CloudFrontAPI)(nil)).Elem()},
+		{name: "ELBV2", typeOf: reflect.TypeOf((*awsbrowser.ELBV2API)(nil)).Elem()},
 		{name: "S3", typeOf: reflect.TypeOf((*awsbrowser.S3API)(nil)).Elem()},
 	}
 
@@ -50,6 +51,7 @@ func (contractRuntime) EC2() awsbrowser.EC2API                  { return nil }
 func (contractRuntime) IAM() awsbrowser.IAMAPI                  { return nil }
 func (contractRuntime) Route53() awsbrowser.Route53API          { return nil }
 func (contractRuntime) CloudFront() awsbrowser.CloudFrontAPI    { return nil }
+func (contractRuntime) ELBV2() awsbrowser.ELBV2API              { return nil }
 func (contractRuntime) S3() awsbrowser.S3API                    { return nil }
 
 type contractFactory struct {
@@ -110,7 +112,7 @@ func TestInterfacesExposeOnlyApprovedOperations(t *testing.T) {
 		{
 			name:   "RuntimeContext",
 			typeOf: reflect.TypeOf((*awsbrowser.RuntimeContext)(nil)).Elem(),
-			want:   []string{"CloudFront", "EC2", "IAM", "Identity", "Route53", "S3", "STS"},
+			want:   []string{"CloudFront", "EC2", "ELBV2", "IAM", "Identity", "Route53", "S3", "STS"},
 		},
 		{
 			name:   "STS",
@@ -157,6 +159,17 @@ func TestInterfacesExposeOnlyApprovedOperations(t *testing.T) {
 			name:   "CloudFront",
 			typeOf: reflect.TypeOf((*awsbrowser.CloudFrontAPI)(nil)).Elem(),
 			want:   []string{"ListDistributions"},
+		},
+		{
+			name:   "ELBV2",
+			typeOf: reflect.TypeOf((*awsbrowser.ELBV2API)(nil)).Elem(),
+			want: []string{
+				"DescribeListeners",
+				"DescribeLoadBalancers",
+				"DescribeRules",
+				"DescribeTargetGroups",
+				"DescribeTargetHealth",
+			},
 		},
 		{
 			name:   "S3",

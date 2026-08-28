@@ -17,6 +17,8 @@ import (
 	cloudfronttypes "github.com/aws/aws-sdk-go-v2/service/cloudfront/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
@@ -69,6 +71,7 @@ type fakeRuntime struct {
 	iam        awsbrowser.IAMAPI
 	route53    awsbrowser.Route53API
 	cloudfront awsbrowser.CloudFrontAPI
+	elbv2      awsbrowser.ELBV2API
 	s3         awsbrowser.S3API
 }
 
@@ -87,6 +90,7 @@ func (runtime *fakeRuntime) EC2() awsbrowser.EC2API               { return runti
 func (runtime *fakeRuntime) IAM() awsbrowser.IAMAPI               { return runtime.iam }
 func (runtime *fakeRuntime) Route53() awsbrowser.Route53API       { return runtime.route53 }
 func (runtime *fakeRuntime) CloudFront() awsbrowser.CloudFrontAPI { return runtime.cloudfront }
+func (runtime *fakeRuntime) ELBV2() awsbrowser.ELBV2API           { return runtime.elbv2 }
 func (runtime *fakeRuntime) S3() awsbrowser.S3API                 { return runtime.s3 }
 
 type fakeSTS struct{ awsbrowser.STSAPI }
@@ -139,6 +143,18 @@ func (client *fakeCloudFront) ListDistributions(ctx context.Context, input *clou
 type fakeS3 struct {
 	awsbrowser.S3API
 	getBucketLocation func(context.Context, *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error)
+}
+
+type fakeELBV2 struct {
+	awsbrowser.ELBV2API
+	describeLoadBalancers func(context.Context, *elasticloadbalancingv2.DescribeLoadBalancersInput) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error)
+}
+
+func (client *fakeELBV2) DescribeLoadBalancers(ctx context.Context, input *elasticloadbalancingv2.DescribeLoadBalancersInput) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error) {
+	if client.describeLoadBalancers == nil {
+		panic("unexpected ELBV2 call")
+	}
+	return client.describeLoadBalancers(ctx, input)
 }
 
 func (client *fakeS3) GetBucketLocation(ctx context.Context, input *s3.GetBucketLocationInput) (*s3.GetBucketLocationOutput, error) {
@@ -408,6 +424,35 @@ func TestCloudFrontAndS3QueriesReachNarrowedProviders(t *testing.T) {
 	})
 	if err != nil || !s3Result.Update.Coverage.Completed || s3Result.Update.Snapshot.ResourceCount() != 1 || cloudFrontCalls != 1 || s3Calls != 1 {
 		t.Fatalf("S3 result=%+v error=%v calls=%d/%d", s3Result, err, cloudFrontCalls, s3Calls)
+	}
+}
+
+func TestELBV2QueryReachesNarrowedReadProvider(t *testing.T) {
+	const loadBalancerARN = "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/api/123"
+	calls := 0
+	runtime := completeRuntime(testIdentity(1), nil, nil, nil)
+	runtime.elbv2 = &fakeELBV2{describeLoadBalancers: func(_ context.Context, input *elasticloadbalancingv2.DescribeLoadBalancersInput) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error) {
+		calls++
+		if len(input.LoadBalancerArns) != 1 || input.LoadBalancerArns[0] != loadBalancerARN {
+			t.Fatalf("input=%+v", input)
+		}
+		return &elasticloadbalancingv2.DescribeLoadBalancersOutput{LoadBalancers: []elbv2types.LoadBalancer{{
+			LoadBalancerArn: aws.String(loadBalancerARN), LoadBalancerName: aws.String("api"),
+			DNSName: aws.String("api-123.us-east-1.elb.amazonaws.com"), Type: elbv2types.LoadBalancerTypeEnumApplication,
+			Scheme: elbv2types.LoadBalancerSchemeEnumInternetFacing, IpAddressType: elbv2types.IpAddressTypeIpv4,
+			State: &elbv2types.LoadBalancerState{Code: elbv2types.LoadBalancerStateEnumActive},
+		}}}, nil
+	}}
+	core, err := NewWithRuntimeFactory(&fakeFactory{runtime: runtime}, nil, func() time.Time { return fixedNow }, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := core.Query(context.Background(), Request{
+		Region: "us-east-1", Provider: awsbrowser.ProviderELBV2, Operation: awsbrowser.OperationDescribeLoadBalancers,
+		Params: map[string]string{"load-balancer-arn": loadBalancerARN},
+	})
+	if err != nil || calls != 1 || result.Update.Snapshot.ResourceCount() != 1 || !result.Update.Coverage.Completed {
+		t.Fatalf("calls=%d resources=%d coverage=%+v error=%v", calls, result.Update.Snapshot.ResourceCount(), result.Update.Coverage, err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -44,6 +45,10 @@ func (function awsIntentSearchFunc) Stream(ctx context.Context, request awsinteg
 }
 
 func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
+	lbARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/api/123"
+	listenerARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/api/123/456"
+	targetGroupARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/api/789"
+	targetsID := url.Values{"target-group-arn": []string{targetGroupARN}, "target-type": []string{"instance"}}.Encode()
 	tests := []struct {
 		target    string
 		provider  string
@@ -73,6 +78,12 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 		{"hosted-zone:Z123", awsbrowser.ProviderRoute53, awsbrowser.OperationListResourceRecordSets, map[string]string{"hosted-zone-id": "Z123"}},
 		{"route53.records:Z123", awsbrowser.ProviderRoute53, awsbrowser.OperationListResourceRecordSets, map[string]string{"hosted-zone-id": "Z123"}},
 		{"cloudfront.distribution-domain:d24odq2ocbsmjd.cloudfront.net", awsbrowser.ProviderCloudFront, awsbrowser.OperationListDistributions, map[string]string{"distribution-domain": "d24odq2ocbsmjd.cloudfront.net"}},
+		{"elbv2.load-balancer-dns:api-123.us-east-1.elb.amazonaws.com", awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-dns": "api-123.us-east-1.elb.amazonaws.com"}},
+		{"elbv2.load-balancer:" + lbARN, awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-arn": lbARN}},
+		{"elbv2.listeners:" + lbARN, awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeListeners, map[string]string{"load-balancer-arn": lbARN}},
+		{"elbv2.rules:" + listenerARN, awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeRules, map[string]string{"listener-arn": listenerARN}},
+		{"elbv2.target-group:" + targetGroupARN, awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeTargetGroups, map[string]string{"target-group-arn": targetGroupARN}},
+		{"elbv2.targets:" + targetsID, awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeTargetHealth, map[string]string{"target-group-arn": targetGroupARN, "target-type": "instance"}},
 		{"s3.bucket:udg-kr-game-binary", awsbrowser.ProviderS3, awsbrowser.OperationGetBucketLocation, map[string]string{"bucket": "udg-kr-game-binary"}},
 	}
 	for _, test := range tests {
@@ -91,6 +102,9 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 }
 
 func TestAWSNavigableRelationContractHasRuntimeMapping(t *testing.T) {
+	lbARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/api/123"
+	listenerARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/api/123/456"
+	targetGroupARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/api/789"
 	tests := map[string]string{
 		"ec2.instance": "i-1", "ec2.volume": "vol-1", "ec2.security-group": "sg-1",
 		"ec2.security-group-rule": "sgr-1", "ec2.security-group-rules-inbound": "sg-1",
@@ -103,6 +117,12 @@ func TestAWSNavigableRelationContractHasRuntimeMapping(t *testing.T) {
 		"hosted-zone":                    "Z1",
 		"route53.records":                "Z1",
 		"cloudfront.distribution-domain": "d24odq2ocbsmjd.cloudfront.net",
+		"elbv2.load-balancer-dns":        "api-123.us-east-1.elb.amazonaws.com",
+		"elbv2.load-balancer":            lbARN,
+		"elbv2.listeners":                lbARN,
+		"elbv2.rules":                    listenerARN,
+		"elbv2.target-group":             targetGroupARN,
+		"elbv2.targets":                  url.Values{"target-group-arn": []string{targetGroupARN}, "target-type": []string{"instance"}}.Encode(),
 		"s3.bucket":                      "udg-kr-game-binary",
 	}
 	for resourceType, id := range tests {

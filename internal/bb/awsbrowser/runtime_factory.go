@@ -81,7 +81,7 @@ func (f *runtimeFactory) Resolve(ctx context.Context, spec ContextSpec) (Runtime
 		return nil, err
 	}
 	if runtime == nil || runtime.credentials == nil || runtime.credentialSource != provider || runtime.sts == nil ||
-		runtime.ec2 == nil || runtime.iam == nil || runtime.route53 == nil || runtime.cloudfront == nil || runtime.s3 == nil {
+		runtime.ec2 == nil || runtime.iam == nil || runtime.route53 == nil || runtime.cloudfront == nil || runtime.elbv2 == nil || runtime.s3 == nil {
 		return nil, errors.New("AWS SDK runtime is incomplete")
 	}
 
@@ -132,6 +132,7 @@ type verifiedRuntime struct {
 	iam        IAMAPI
 	route53    Route53API
 	cloudfront CloudFrontAPI
+	elbv2      ELBV2API
 	s3         S3API
 }
 
@@ -146,6 +147,7 @@ func newVerifiedRuntime(runtime *sdkRuntime, identity VerifiedIdentity) *verifie
 		iam:        guardedIAM{guard: guard, client: runtime.iam},
 		route53:    guardedRoute53{guard: guard, client: runtime.route53},
 		cloudfront: guardedCloudFront{guard: guard, client: runtime.cloudfront},
+		elbv2:      guardedELBV2{guard: guard, client: runtime.elbv2},
 		s3:         guardedS3{guard: guard, client: runtime.s3},
 	}
 }
@@ -156,4 +158,5 @@ func (r *verifiedRuntime) EC2() EC2API                { return r.ec2 }
 func (r *verifiedRuntime) IAM() IAMAPI                { return r.iam }
 func (r *verifiedRuntime) Route53() Route53API        { return r.route53 }
 func (r *verifiedRuntime) CloudFront() CloudFrontAPI  { return r.cloudfront }
+func (r *verifiedRuntime) ELBV2() ELBV2API            { return r.elbv2 }
 func (r *verifiedRuntime) S3() S3API                  { return r.s3 }

@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.40
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.70.1
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.324.0
+	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.60.1
 	github.com/aws/aws-sdk-go-v2/service/iam v1.60.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.66.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.109.1

@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudfront"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -54,6 +55,14 @@ type mutatingCloudFront interface {
 	CreateDistribution(context.Context, *cloudfront.CreateDistributionInput, ...func(*cloudfront.Options)) (*cloudfront.CreateDistributionOutput, error)
 }
 
+type optionBearingELBV2 interface {
+	DescribeLoadBalancers(context.Context, *elasticloadbalancingv2.DescribeLoadBalancersInput, ...func(*elasticloadbalancingv2.Options)) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error)
+}
+
+type mutatingELBV2 interface {
+	CreateLoadBalancer(context.Context, *elasticloadbalancingv2.CreateLoadBalancerInput, ...func(*elasticloadbalancingv2.Options)) (*elasticloadbalancingv2.CreateLoadBalancerOutput, error)
+}
+
 type optionBearingS3 interface {
 	GetBucketLocation(context.Context, *s3.GetBucketLocationInput, ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
 }
@@ -76,6 +85,7 @@ func TestSDKRuntimeHasNoPublicEscapeHatches(t *testing.T) {
 
 	approved := map[string]bool{
 		"EC2":        true,
+		"ELBV2":      true,
 		"CloudFront": true,
 		"IAM":        true,
 		"Identity":   true,
@@ -152,6 +162,14 @@ func TestRuntimeContextReturnsOnlyNarrowPrivateAdapters(t *testing.T) {
 			contract:      reflect.TypeOf((*CloudFrontAPI)(nil)).Elem(),
 			optionBearing: func(value any) bool { _, ok := value.(optionBearingCloudFront); return ok },
 			mutating:      func(value any) bool { _, ok := value.(mutatingCloudFront); return ok },
+		},
+		{
+			name:          "ELBV2",
+			value:         runtime.ELBV2(),
+			concrete:      reflect.TypeOf((*elasticloadbalancingv2.Client)(nil)),
+			contract:      reflect.TypeOf((*ELBV2API)(nil)).Elem(),
+			optionBearing: func(value any) bool { _, ok := value.(optionBearingELBV2); return ok },
+			mutating:      func(value any) bool { _, ok := value.(mutatingELBV2); return ok },
 		},
 		{
 			name:          "S3",

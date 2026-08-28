@@ -230,9 +230,10 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 
 ### B2 — domain에서 compute target까지 live chain 완성
 
-- Route 53→ALB/NLB→listener/rule→target group→target을 existing live coordinator에 추가한다.
-- listener rule과 target type의 condition/evidence를 보존하고 IP target을 임의 EC2로 연결하지 않는다.
-- 완료 판정: exact domain에서 최종 target 또는 unresolved 이유까지 같은 route stack에서 도달하고 reverse evidence도 fixture로 재구성된다.
+- 완료 상태: 2026-08-28 fixture 검증 완료. Route 53→ALB/NLB→listener/rule→target group→target을 existing live coordinator에 추가했다.
+- relation 계약: listener priority, host/path condition, action order/weight, target type을 보존하고 IP target을 임의 EC2로 연결하지 않는다.
+- 완료 판정: exact domain fixture에서 최종 instance 또는 IP unresolved 이유까지 같은 route stack으로 도달하고 raw source/target evidence로 reverse edge를 재구성했다. 2026-08-28 `lg-udg-ops` smoke는 `elasticloadbalancing:DescribeLoadBalancers` explicit deny로 차단되어 read 권한이 있는 profile의 운영 인계 gate로 남긴다.
+- 증거: [B2 ELBv2 ingress trace 기준선](B2-ELBV2-TRACE.md)
 
 ### B3 — SG reverse를 이용한 snapshot graph PoC
 

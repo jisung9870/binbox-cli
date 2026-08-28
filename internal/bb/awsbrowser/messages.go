@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -302,6 +303,28 @@ func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProje
 			Type: string(RelationContains), Direction: string(RelationOutgoing),
 			Kind: "scoped-query", Reason: "record sets in hosted zone", Scope: GlobalRegion,
 		})
+	case "elbv2.load-balancer":
+		relations = append(relations, ProjectionRelation{
+			Label: "Listeners", Target: "elbv2.listeners:" + key.ID,
+			Type: string(RelationContains), Direction: string(RelationOutgoing),
+			Kind: "scoped-query", Reason: "listeners attached to load balancer", Scope: key.Region,
+		})
+	case "elbv2.listener":
+		relations = append(relations, ProjectionRelation{
+			Label: "Listener rules", Target: "elbv2.rules:" + key.ID,
+			Type: string(RelationContains), Direction: string(RelationOutgoing),
+			Kind: "scoped-query", Reason: "ordered rules attached to listener", Scope: key.Region,
+		})
+	case "elbv2.target-group":
+		if targetType, ok := fields["target_type"].(string); ok && strings.TrimSpace(targetType) != "" {
+			targetID := url.Values{"target-group-arn": []string{key.ID}, "target-type": []string{targetType}}.Encode()
+			relations = append(relations, ProjectionRelation{
+				Label: "Registered targets", Target: "elbv2.targets:" + targetID,
+				Type: string(RelationContains), Direction: string(RelationOutgoing),
+				Condition: "target-type=" + safeIntentText(targetType), Kind: "scoped-query",
+				Reason: "target health for target group", Scope: key.Region,
+			})
+		}
 	}
 	return ResourceProjection{
 		Target: key.Type + ":" + key.ID, Title: title, Subtitle: subtitle,
@@ -374,7 +397,7 @@ func projectionTitle(key ResourceKey, fields map[string]any) string {
 			return safeIntentText(value)
 		}
 	}
-	for _, name := range []string{"name", "role_name", "instance_profile_name", "policy_name", "dns_name", "record_name", "domain_name", "bucket_name", "distribution_id"} {
+	for _, name := range []string{"name", "target_id", "role_name", "instance_profile_name", "policy_name", "dns_name", "record_name", "domain_name", "bucket_name", "distribution_id"} {
 		if value, ok := fields[name].(string); ok && strings.TrimSpace(value) != "" {
 			return safeIntentText(value)
 		}
@@ -555,7 +578,8 @@ func NavigableRelationTargetType(resourceType string) bool {
 		"ec2.vpc", "ec2.subnet", "ec2.route-table", "iam.role", "iam.instance-profile",
 		"iam.role-attached-policies", "iam.role-inline-policies", "iam.managed-policy", "iam.inline-policy",
 		"iam.managed-policy-version", "hosted-zone", "route53.records",
-		"cloudfront.distribution-domain", "s3.bucket":
+		"cloudfront.distribution-domain", "elbv2.load-balancer-dns", "elbv2.load-balancer",
+		"elbv2.listeners", "elbv2.rules", "elbv2.target-group", "elbv2.targets", "s3.bucket":
 		return true
 	default:
 		return false

@@ -49,6 +49,7 @@ func (*registryRuntimeFake) EC2() EC2API               { return nil }
 func (*registryRuntimeFake) IAM() IAMAPI               { return nil }
 func (*registryRuntimeFake) Route53() Route53API       { return nil }
 func (*registryRuntimeFake) CloudFront() CloudFrontAPI { return nil }
+func (*registryRuntimeFake) ELBV2() ELBV2API           { return nil }
 func (*registryRuntimeFake) S3() S3API                 { return nil }
 
 func TestContextRegistryIsLazyAndMemoized(t *testing.T) {

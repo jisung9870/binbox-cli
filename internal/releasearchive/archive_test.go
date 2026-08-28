@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,47 @@ func TestWriteArchiveIsDeterministicAndCanonical(t *testing.T) {
 	}
 	if content.String() != "binary bytes\n" {
 		t.Fatalf("content=%q", content.String())
+	}
+}
+
+func TestWriteArchiveWithNoticeIncludesCanonicalNotice(t *testing.T) {
+	directory := t.TempDir()
+	input := filepath.Join(directory, "input")
+	notice := filepath.Join(directory, "notice")
+	if err := os.WriteFile(input, []byte("binary\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notice, []byte("license\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(directory, "archive.tar.gz")
+	stamp := time.Unix(1_700_000_000, 0).UTC()
+	if err := WriteArchiveWithNotice(input, output, "bb", notice, stamp); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := tar.NewReader(compressed)
+	first, err := archive.Next()
+	if err != nil || first.Name != "bb" || first.Mode != 0o755 {
+		t.Fatalf("first=%+v error=%v", first, err)
+	}
+	if _, err := io.Copy(io.Discard, archive); err != nil {
+		t.Fatal(err)
+	}
+	second, err := archive.Next()
+	if err != nil || second.Name != "THIRD_PARTY_NOTICES.md" || second.Mode != 0o644 || !second.ModTime.Equal(stamp) {
+		t.Fatalf("second=%+v error=%v", second, err)
+	}
+	content := new(bytes.Buffer)
+	if _, err := content.ReadFrom(archive); err != nil || content.String() != "license\n" {
+		t.Fatalf("notice=%q error=%v", content.String(), err)
 	}
 }
 

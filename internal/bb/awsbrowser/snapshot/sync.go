@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,7 +18,7 @@ type Scope struct {
 }
 
 func (scope Scope) validate() error {
-	if !validText(scope.Profile, 256) || !accountPattern.MatchString(scope.AccountID) ||
+	if !validText(scope.Profile, 256) || scope.AccountID != "" && !accountPattern.MatchString(scope.AccountID) ||
 		!validRegion(scope.Region) || !validText(scope.Service, 128) ||
 		!validOptionalText(scope.NotObservedReason, 256) || scope.NotObserved != (scope.NotObservedReason != "") {
 		return ErrInvalidInput
@@ -26,8 +27,10 @@ func (scope Scope) validate() error {
 }
 
 type Collection struct {
+	AccountID string
 	Resources []Resource
 	Relations []Relation
+	Coverage  []Coverage
 }
 
 type Collector interface {
@@ -54,20 +57,35 @@ func (err *CollectionError) Unwrap() error {
 }
 
 type Coordinator struct {
-	Store     *Store
-	Collector Collector
-	Now       func() time.Time
+	Store       *Store
+	Collector   Collector
+	Now         func() time.Time
+	Concurrency int
 }
 
 // Sync is the only collection entry point. Nothing in this package starts a
 // timer, goroutine, daemon, or background refresh.
 func (coordinator Coordinator) Sync(ctx context.Context, scopes []Scope) (Run, error) {
-	if coordinator.Store == nil || coordinator.Collector == nil || len(scopes) == 0 {
+	if coordinator.Store == nil {
 		return Run{}, ErrInvalidInput
+	}
+	input, err := coordinator.Collect(ctx, scopes)
+	if err != nil {
+		return Run{}, err
+	}
+	return coordinator.Store.CommitRun(ctx, input)
+}
+
+// Collect performs bounded external reads without opening a database
+// transaction. Callers may keep the previous active run readable and acquire
+// the snapshot write lock only for CommitRun.
+func (coordinator Coordinator) Collect(ctx context.Context, scopes []Scope) (RunInput, error) {
+	if coordinator.Collector == nil || len(scopes) == 0 {
+		return RunInput{}, ErrInvalidInput
 	}
 	for _, scope := range scopes {
 		if err := scope.validate(); err != nil {
-			return Run{}, err
+			return RunInput{}, err
 		}
 	}
 	now := coordinator.Now
@@ -76,10 +94,39 @@ func (coordinator Coordinator) Sync(ctx context.Context, scopes []Scope) (Run, e
 	}
 	startedAt := now().UTC()
 	input := RunInput{StartedAt: startedAt}
-	for _, scope := range scopes {
-		if err := ctx.Err(); err != nil {
-			return Run{}, err
+	type collectionResult struct {
+		collection Collection
+		err        error
+	}
+	results := make([]collectionResult, len(scopes))
+	concurrency := coordinator.Concurrency
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	semaphore := make(chan struct{}, concurrency)
+	var wait sync.WaitGroup
+	for index, scope := range scopes {
+		if scope.NotObserved {
+			continue
 		}
+		wait.Add(1)
+		go func(index int, scope Scope) {
+			defer wait.Done()
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				results[index].err = ctx.Err()
+				return
+			}
+			results[index].collection, results[index].err = coordinator.Collector.Collect(ctx, scope)
+		}(index, scope)
+	}
+	wait.Wait()
+	if err := ctx.Err(); err != nil {
+		return RunInput{}, err
+	}
+	for index, scope := range scopes {
 		if scope.NotObserved {
 			input.Coverage = append(input.Coverage, Coverage{
 				Profile: scope.Profile, AccountID: scope.AccountID, Region: scope.Region, Service: scope.Service,
@@ -87,7 +134,7 @@ func (coordinator Coordinator) Sync(ctx context.Context, scopes []Scope) (Run, e
 			})
 			continue
 		}
-		collection, err := coordinator.Collector.Collect(ctx, scope)
+		collection, err := results[index].collection, results[index].err
 		coverage := Coverage{
 			Profile:   scope.Profile,
 			AccountID: scope.AccountID,
@@ -97,29 +144,51 @@ func (coordinator Coordinator) Sync(ctx context.Context, scopes []Scope) (Run, e
 		}
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return Run{}, ctxErr
+				return RunInput{}, ctxErr
+			}
+			if collection.AccountID != "" {
+				if !accountPattern.MatchString(collection.AccountID) || scope.AccountID != "" && scope.AccountID != collection.AccountID {
+					return RunInput{}, ErrInvalidInput
+				}
+				coverage.AccountID = collection.AccountID
 			}
 			coverage.Status = CoverageFailed
 			coverage.ErrorKind = collectionErrorKind(err)
 			input.Coverage = append(input.Coverage, coverage)
 			continue
 		}
+		if !accountPattern.MatchString(collection.AccountID) || scope.AccountID != "" && scope.AccountID != collection.AccountID {
+			return RunInput{}, ErrInvalidInput
+		}
+		coverage.AccountID = collection.AccountID
 		input.Coverage = append(input.Coverage, coverage)
+		for _, supplemental := range collection.Coverage {
+			if supplemental.Profile != scope.Profile || supplemental.AccountID != collection.AccountID ||
+				supplemental.Region != scope.Region || supplemental.Service == scope.Service {
+				return RunInput{}, ErrInvalidInput
+			}
+		}
+		input.Coverage = append(input.Coverage, collection.Coverage...)
 		input.Resources = append(input.Resources, collection.Resources...)
-		input.Relations = append(input.Relations, collection.Relations...)
 		observedAt := now().UTC()
+		for _, relation := range collection.Relations {
+			relation.Profile = scope.Profile
+			relation.AccountID = collection.AccountID
+			relation.Region = scope.Region
+			input.Relations = append(input.Relations, relation)
+		}
 		for _, resource := range collection.Resources {
 			input.Observations = append(input.Observations, Observation{
 				Resource:   resource.Ref,
 				Profile:    scope.Profile,
-				AccountID:  scope.AccountID,
+				AccountID:  collection.AccountID,
 				Region:     scope.Region,
 				ObservedAt: observedAt,
 			})
 		}
 	}
 	input.CompletedAt = now().UTC()
-	return coordinator.Store.CommitRun(ctx, input)
+	return input, nil
 }
 
 func collectionErrorKind(err error) string {

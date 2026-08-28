@@ -154,7 +154,7 @@ func TestEC2ExecutorSelectsOperationBuildsInputAndMapsRelations(t *testing.T) {
 	wantSemantics := map[string]string{
 		"ec2.vpc/vpc-1":                    "member-of|",
 		"ec2.subnet/subnet-1":              "member-of|",
-		"ec2.security-group/sg-1":          "uses|network interface",
+		"ec2.security-group/sg-1":          "uses|network-interface=unknown",
 		"ec2.volume/vol-1":                 "attached-to|/dev/xvda",
 		"iam.instance-profile/web-profile": "uses|",
 	}
@@ -344,15 +344,51 @@ func TestEC2ExecutorCancellationAndExternalSecurityGroupTargets(t *testing.T) {
 	}
 
 	client.rules = func(context.Context, *ec2.DescribeSecurityGroupRulesInput) (*ec2.DescribeSecurityGroupRulesOutput, error) {
-		return &ec2.DescribeSecurityGroupRulesOutput{SecurityGroupRules: []types.SecurityGroupRule{{SecurityGroupRuleId: aws.String("sgr-1"), GroupId: aws.String("sg-1"), CidrIpv4: aws.String("0.0.0.0/0"), ReferencedGroupInfo: &types.ReferencedSecurityGroup{GroupId: aws.String("sg-external"), UserId: aws.String("999999999999"), VpcId: aws.String("vpc-external")}}}}, nil
+		return &ec2.DescribeSecurityGroupRulesOutput{SecurityGroupRules: []types.SecurityGroupRule{{
+			SecurityGroupRuleId: aws.String("sgr-1"), GroupId: aws.String("sg-1"), IpProtocol: aws.String("tcp"),
+			FromPort: aws.Int32(443), ToPort: aws.Int32(443), Description: aws.String("partner api"),
+			ReferencedGroupInfo: &types.ReferencedSecurityGroup{GroupId: aws.String("sg-external"), UserId: aws.String("999999999999"), VpcId: aws.String("vpc-external")},
+		}}}, nil
 	}
 	sink = &captureSink{}
 	if e = executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeSecurityGroupRules, nil), sink); e != nil {
 		t.Fatal(e)
 	}
 	fields := sink.pages[0].Resources()[0].Observation.Fields()
-	if fields["cidr_ipv4"] != "0.0.0.0/0" || len(fields["relations"].([]any)) != 1 || fields["usage_scope"] != "EC2 only" {
+	if len(fields["relations"].([]any)) != 2 || fields["usage_scope"] != "EC2 only" {
 		t.Fatalf("fields=%+v", fields)
+	}
+	relations, err := awsbrowser.RelationsFromMappedFields(fields)
+	if err != nil || len(relations) != 2 {
+		t.Fatalf("relations=%#v error=%v", relations, err)
+	}
+	reference := relations[1]
+	if reference.Source.Type != "ec2.security-group" || reference.Source.ID != "sg-1" ||
+		reference.Target.AccountID != "999999999999" || reference.Target.ID != "sg-external" ||
+		reference.Semantics.Type != awsbrowser.RelationReferences ||
+		reference.Semantics.Condition != "description=partner+api&direction=ingress&from-port=443&protocol=tcp&rule-id=sgr-1&source-account=999999999999&source-group=sg-external&to-port=443" {
+		t.Fatalf("reference=%#v", reference)
+	}
+}
+
+func TestEC2InstanceSecurityGroupRelationPreservesNetworkInterfaceID(t *testing.T) {
+	client := &fakeEC2{instances: func(context.Context, *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+		return &ec2.DescribeInstancesOutput{Reservations: []types.Reservation{{Instances: []types.Instance{{
+			InstanceId: aws.String("i-eni"),
+			NetworkInterfaces: []types.InstanceNetworkInterface{{
+				NetworkInterfaceId: aws.String("eni-123"),
+				Groups:             []types.GroupIdentifier{{GroupId: aws.String("sg-eni")}},
+			}},
+		}}}}}, nil
+	}}
+	executor, _ := NewEC2QueryExecutor(client, fixedClock())
+	sink := &captureSink{}
+	if err := executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeInstances, nil), sink); err != nil {
+		t.Fatal(err)
+	}
+	relations, err := awsbrowser.RelationsFromMappedFields(sink.pages[0].Resources()[0].Observation.Fields())
+	if err != nil || len(relations) != 1 || relations[0].Target.ID != "sg-eni" || relations[0].Semantics.Condition != "network-interface=eni-123" {
+		t.Fatalf("relations=%#v error=%v", relations, err)
 	}
 }
 

@@ -19,8 +19,8 @@ var (
 )
 
 const (
-	SchemaVersion = 1
-	GlobalRegion  = "GLOBAL"
+	SchemaVersion = 2
+	GlobalRegion  = awsbrowser.GlobalRegion
 )
 
 var (
@@ -91,6 +91,35 @@ func (ref ResourceRef) Key() (string, error) {
 	return values.Encode(), nil
 }
 
+func ParseResourceRefKey(value string) (ResourceRef, error) {
+	values, err := url.ParseQuery(value)
+	if err != nil || len(values) != 5 {
+		return ResourceRef{}, ErrInvalidInput
+	}
+	read := func(name string) (string, bool) {
+		items, ok := values[name]
+		returnValue := ""
+		if ok && len(items) == 1 {
+			returnValue = items[0]
+		}
+		return returnValue, ok && len(items) == 1
+	}
+	accountID, accountOK := read("account")
+	id, idOK := read("id")
+	partition, partitionOK := read("partition")
+	region, regionOK := read("region")
+	resourceType, typeOK := read("type")
+	if !accountOK || !idOK || !partitionOK || !regionOK || !typeOK {
+		return ResourceRef{}, ErrInvalidInput
+	}
+	ref := ResourceRef{Partition: partition, AccountID: accountID, Region: region, Type: resourceType, ID: id}
+	canonical, err := ref.Key()
+	if err != nil || canonical != value {
+		return ResourceRef{}, ErrInvalidInput
+	}
+	return ref, nil
+}
+
 type Resource struct {
 	Ref  ResourceRef
 	Name string
@@ -129,7 +158,8 @@ type Coverage struct {
 }
 
 func (coverage Coverage) validate() error {
-	if !validText(coverage.Profile, 256) || !accountPattern.MatchString(coverage.AccountID) ||
+	accountValid := accountPattern.MatchString(coverage.AccountID) || coverage.Status != CoverageSucceeded && coverage.AccountID == ""
+	if !validText(coverage.Profile, 256) || !accountValid ||
 		!validRegion(coverage.Region) || !validText(coverage.Service, 128) ||
 		!coverage.Status.valid() || !validOptionalText(coverage.ErrorKind, 256) {
 		return ErrInvalidInput
@@ -153,9 +183,12 @@ type Relation struct {
 	Operation  string
 	Scope      string
 	ObservedAt time.Time
+	Profile    string
+	AccountID  string
+	Region     string
 }
 
-func RelationsFromBrowser(relation awsbrowser.Relation) ([]Relation, error) {
+func RelationsFromBrowser(relation awsbrowser.Relation, profile string) ([]Relation, error) {
 	source, err := RefFromKey(relation.Source)
 	if err != nil {
 		return nil, err
@@ -174,6 +207,7 @@ func RelationsFromBrowser(relation awsbrowser.Relation) ([]Relation, error) {
 			Source: source, Target: target, Type: relation.Semantics.Type, Direction: relation.Semantics.Direction,
 			Confidence: item.Kind, Condition: relation.Semantics.Condition, Reason: item.Reason,
 			Operation: item.Operation, Scope: item.Scope, ObservedAt: item.ObservedAt,
+			Profile: profile, AccountID: source.AccountID, Region: source.Region,
 		}
 	}
 	return result, nil
@@ -182,7 +216,8 @@ func RelationsFromBrowser(relation awsbrowser.Relation) ([]Relation, error) {
 func (relation Relation) validate() error {
 	if relation.Source.Validate() != nil || relation.Target.Validate() != nil || relation.ObservedAt.IsZero() ||
 		!validOptionalText(relation.Condition, 4096) || !validText(relation.Reason, 1024) ||
-		!validText(relation.Operation, 256) || !validText(relation.Scope, 128) {
+		!validText(relation.Operation, 256) || !validText(relation.Scope, 128) ||
+		!validText(relation.Profile, 256) || !accountPattern.MatchString(relation.AccountID) || !validRegion(relation.Region) {
 		return ErrInvalidInput
 	}
 	semantics, err := awsbrowser.NewRelationSemantics(relation.Type, relation.Direction, relation.Condition)
@@ -233,10 +268,16 @@ func (input RunInput) validate() error {
 			return err
 		}
 	}
+	coverageKeys := make(map[string]struct{}, len(input.Coverage))
 	for _, coverage := range input.Coverage {
 		if err := coverage.validate(); err != nil {
 			return err
 		}
+		key := strings.Join([]string{coverage.Profile, coverage.AccountID, coverage.Region, coverage.Service}, "\x00")
+		if _, exists := coverageKeys[key]; exists {
+			return ErrInvalidInput
+		}
+		coverageKeys[key] = struct{}{}
 	}
 	return nil
 }
@@ -255,6 +296,14 @@ type Edge struct {
 	Relation   Relation
 	SourceName string
 	TargetName string
+	Observers  []Observer
+}
+
+type Observer struct {
+	Profile    string
+	AccountID  string
+	Region     string
+	ObservedAt time.Time
 }
 
 func validText(value string, limit int) bool {

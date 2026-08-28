@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -594,6 +595,13 @@ func relation(context awsbrowser.AWSContext, operation, reason, targetType, targ
 	if e != nil {
 		return nil, e
 	}
+	return relationTo(context, operation, reason, target, relationType, condition, at)
+}
+
+func relationTo(context awsbrowser.AWSContext, operation, reason string, target awsbrowser.ResourceKey, relationType awsbrowser.RelationType, condition string, at time.Time) (map[string]any, error) {
+	if target.Validate() != nil {
+		return nil, errInvalidEC2Query
+	}
 	evidence, e := awsbrowser.NewRelationEvidence(awsbrowser.RelationIDExact, reason, operation, context.Region, at)
 	if e != nil {
 		return nil, e
@@ -603,6 +611,15 @@ func relation(context awsbrowser.AWSContext, operation, reason, targetType, targ
 		return nil, e
 	}
 	return map[string]any{"target": target, "relation_type": string(semantics.Type), "direction": string(semantics.Direction), "condition": semantics.Condition, "kind": string(evidence.Kind), "reason": evidence.Reason, "operation": evidence.Operation, "scope": evidence.Scope, "observed_at": evidence.ObservedAt}, nil
+}
+
+func relationBetween(context awsbrowser.AWSContext, operation, reason string, source, target awsbrowser.ResourceKey, relationType awsbrowser.RelationType, condition string, at time.Time) (map[string]any, error) {
+	relation, err := relationTo(context, operation, reason, target, relationType, condition, at)
+	if err != nil || source.Validate() != nil {
+		return nil, errInvalidEC2Query
+	}
+	relation["source"] = source
+	return relation, nil
 }
 
 func globalRelation(context awsbrowser.AWSContext, operation, reason, targetType, targetID string, relationType awsbrowser.RelationType, condition string, at time.Time) (map[string]any, error) {
@@ -688,15 +705,34 @@ func mapInstance(c awsbrowser.AWSContext, op string, at time.Time, v types.Insta
 		return awsbrowser.ObservedResource{}, e
 	}
 	groups := []awsbrowser.ResourceKey{}
-	for _, g := range v.SecurityGroups {
-		if s(g.GroupId) != "" {
-			k, e := awsbrowser.NewRegionalResourceKey(c, "ec2.security-group", s(g.GroupId))
-			if e != nil {
-				return awsbrowser.ObservedResource{}, e
+	seenGroups := map[string]bool{}
+	addGroup := func(groupID, condition string) error {
+		if groupID == "" {
+			return nil
+		}
+		if !seenGroups[groupID] {
+			key, err := awsbrowser.NewRegionalResourceKey(c, "ec2.security-group", groupID)
+			if err != nil {
+				return err
 			}
-			groups = append(groups, k)
-			if e = addRelation(c, op, "instance security group id", "security-group", s(g.GroupId), awsbrowser.RelationUses, "network interface", at, &rel); e != nil {
-				return awsbrowser.ObservedResource{}, e
+			groups = append(groups, key)
+			seenGroups[groupID] = true
+		}
+		return addRelation(c, op, "instance network interface security group id", "security-group", groupID, awsbrowser.RelationUses, condition, at, &rel)
+	}
+	if len(v.NetworkInterfaces) != 0 {
+		for _, networkInterface := range v.NetworkInterfaces {
+			condition := "network-interface=" + s(networkInterface.NetworkInterfaceId)
+			for _, group := range networkInterface.Groups {
+				if err := addGroup(s(group.GroupId), condition); err != nil {
+					return awsbrowser.ObservedResource{}, err
+				}
+			}
+		}
+	} else {
+		for _, group := range v.SecurityGroups {
+			if err := addGroup(s(group.GroupId), "network-interface=unknown"); err != nil {
+				return awsbrowser.ObservedResource{}, err
 			}
 		}
 	}
@@ -827,23 +863,52 @@ func mapSecurityGroupRule(c awsbrowser.AWSContext, op string, at time.Time, v ty
 	if err = addRelation(c, op, "security group rule group id", "security-group", s(v.GroupId), awsbrowser.RelationMemberOf, "", at, &rel); err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
-	reference := map[string]any{}
-	if v.ReferencedGroupInfo != nil {
-		reference = map[string]any{"group_id": s(v.ReferencedGroupInfo.GroupId), "account_id": s(v.ReferencedGroupInfo.UserId), "vpc_id": s(v.ReferencedGroupInfo.VpcId)}
-		if (s(v.ReferencedGroupInfo.UserId) == "" || s(v.ReferencedGroupInfo.UserId) == c.AccountID) && s(v.ReferencedGroupInfo.VpcId) != "" && s(v.ReferencedGroupInfo.VpcPeeringConnectionId) == "" {
-			condition := "ingress"
-			if b(v.IsEgress) {
-				condition = "egress"
-			}
-			if err = addRelation(c, op, "security group rule referenced group id", "security-group", s(v.ReferencedGroupInfo.GroupId), awsbrowser.RelationReferences, condition, at, &rel); err != nil {
-				return awsbrowser.ObservedResource{}, err
-			}
-		}
-	}
 	if err = bindRelationSources(c, "security-group-rule", s(v.SecurityGroupRuleId), rel); err != nil {
 		return awsbrowser.ObservedResource{}, err
 	}
+	reference := map[string]any{}
+	if v.ReferencedGroupInfo != nil {
+		reference = map[string]any{"group_id": s(v.ReferencedGroupInfo.GroupId), "account_id": s(v.ReferencedGroupInfo.UserId), "vpc_id": s(v.ReferencedGroupInfo.VpcId)}
+		accountID := s(v.ReferencedGroupInfo.UserId)
+		if accountID == "" {
+			accountID = c.AccountID
+		}
+		target, targetErr := awsbrowser.NewCanonicalResourceKey(c.Partition, accountID, c.Region, "ec2.security-group", s(v.ReferencedGroupInfo.GroupId))
+		source, sourceErr := awsbrowser.NewRegionalResourceKey(c, "ec2.security-group", s(v.GroupId))
+		if targetErr == nil && sourceErr == nil {
+			condition := securityGroupRuleCondition(v, accountID)
+			referenceRelation, relationErr := relationBetween(c, op, "security group rule referenced group id", source, target, awsbrowser.RelationReferences, condition, at)
+			if relationErr != nil {
+				return awsbrowser.ObservedResource{}, relationErr
+			}
+			rel = append(rel, referenceRelation)
+		}
+	}
 	return observed(c, op, "security-group-rule", s(v.SecurityGroupRuleId), at, map[string]any{"group_id": s(v.GroupId), "is_egress": b(v.IsEgress), "protocol": s(v.IpProtocol), "from_port": i32(v.FromPort), "to_port": i32(v.ToPort), "cidr_ipv4": s(v.CidrIpv4), "cidr_ipv6": s(v.CidrIpv6), "prefix_list_id": s(v.PrefixListId), "referenced_group": reference, "description": s(v.Description), "tags": mappedTags, "usage_scope": "EC2 only", "relations": rel})
+}
+
+func securityGroupRuleCondition(rule types.SecurityGroupRule, accountID string) string {
+	values := url.Values{}
+	values.Set("direction", "ingress")
+	if b(rule.IsEgress) {
+		values.Set("direction", "egress")
+	}
+	values.Set("protocol", s(rule.IpProtocol))
+	values.Set("rule-id", s(rule.SecurityGroupRuleId))
+	values.Set("source-account", accountID)
+	if rule.ReferencedGroupInfo != nil {
+		values.Set("source-group", s(rule.ReferencedGroupInfo.GroupId))
+	}
+	if rule.FromPort != nil {
+		values.Set("from-port", strconv.FormatInt(int64(i32(rule.FromPort)), 10))
+	}
+	if rule.ToPort != nil {
+		values.Set("to-port", strconv.FormatInt(int64(i32(rule.ToPort)), 10))
+	}
+	if description := s(rule.Description); description != "" {
+		values.Set("description", description)
+	}
+	return values.Encode()
 }
 
 func mapVpc(c awsbrowser.AWSContext, op string, at time.Time, v types.Vpc) (awsbrowser.ObservedResource, error) {

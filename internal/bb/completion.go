@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+
+	"github.com/jisung9870/binbox-cli/internal/bb/awsbrowser"
 )
 
 const zshCompletion = `
@@ -128,7 +130,7 @@ _bb() {
       ;;
     aws)
       if (( CURRENT == 3 )); then
-        _bb_static 'AWS command' 'browse:browse read-only AWS resources' 'query:run a scoped read-only query' 'sso:log in to an SSO session' 'assume:apply profile credentials'
+		_bb_static 'AWS command' 'browse:browse read-only AWS resources' 'query:run a scoped read-only query' 'sync:collect an explicit AWS snapshot' 'refs:find snapshot references' 'sso:log in to an SSO session' 'assume:apply profile credentials'
       elif [[ "${words[3]}" == query ]]; then
         if (( CURRENT == 4 )); then
           _bb_static 'AWS query' 'ec2:query EC2 resources' 'domain:find an exact domain' 'role:find an exact IAM role'
@@ -152,7 +154,25 @@ _bb() {
             esac
           fi
         fi
-      elif [[ "${words[3]}" == browse ]]; then
+	  elif [[ "${words[3]}" == sync ]]; then
+		if (( CURRENT == 4 )); then
+		  _bb_static 'snapshot resource' 'sg:security groups'
+		elif [[ "${words[4]}" == sg ]]; then
+		  case "${words[CURRENT-1]}" in
+			--group) _bb_dynamic 'AWS context group' aws-context-group ;;
+			*) _bb_static 'sync option' '--group:configured context group' '--json:stable JSON envelope' ;;
+		  esac
+		fi
+	  elif [[ "${words[3]}" == refs ]]; then
+		if (( CURRENT == 4 )); then
+		  _bb_static 'snapshot resource' 'sg:security groups'
+		elif [[ "${words[4]}" == sg && CURRENT >= 6 ]]; then
+		  case "${words[CURRENT-1]}" in
+			--account|--region|--partition) ;;
+			*) _bb_static 'refs option' '--account:12-digit AWS account ID' '--region:AWS region' '--partition:AWS partition' '--json:stable JSON envelope' ;;
+		  esac
+		fi
+	  elif [[ "${words[3]}" == browse ]]; then
         case "${words[CURRENT-1]}" in
           --profile) _bb_dynamic 'AWS profile' profile ;;
           --region) ;;
@@ -321,6 +341,20 @@ func (a *App) completionCandidates(kind string, parent []string) ([]string, erro
 			return nil, err
 		}
 		return ssoSessionNames(data), nil
+	case "aws-context-group":
+		configRoot, _, err := a.paths()
+		if err != nil {
+			return nil, err
+		}
+		groups, err := awsbrowser.LoadContextGroups(filepath.Join(configRoot, awsbrowser.AWSContextGroupsFilename))
+		if err != nil {
+			return nil, err
+		}
+		values := make([]string, len(groups))
+		for index, group := range groups {
+			values[index] = group.Name
+		}
+		return values, nil
 	case "secret-service":
 		data, err := a.readSecrets()
 		if err != nil {

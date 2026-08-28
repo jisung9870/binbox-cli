@@ -29,9 +29,14 @@ type awsIntentSearch interface {
 	Stream(context.Context, awsintegration.SearchRequest) (<-chan awsintegration.SearchUpdate, error)
 }
 
+type awsSnapshotQueryCore interface {
+	Query(context.Context, awsintegration.Request) (awsintegration.Result, error)
+}
+
 type awsRuntime struct {
-	core   awsIntentCore
-	search awsIntentSearch
+	core         awsIntentCore
+	search       awsIntentSearch
+	snapshotCore awsSnapshotQueryCore
 }
 
 // lazyAWSRuntime is shared by browse and query. Merely constructing App,
@@ -75,7 +80,7 @@ func (runtime *lazyAWSRuntime) initialize() (*awsRuntime, error) {
 			runtime.err = unavailable("AWS browser search is unavailable")
 			return
 		}
-		runtime.runtime = &awsRuntime{core: core, search: search}
+		runtime.runtime = &awsRuntime{core: core, search: search, snapshotCore: core}
 	})
 	return runtime.runtime, runtime.err
 }
@@ -130,6 +135,27 @@ func (runtime *lazyAWSRuntime) QueryService() (awsQueryService, error) {
 		return nil, err
 	}
 	return &productionAWSQueryService{search: binding.search}, nil
+}
+
+func (runtime *lazyAWSRuntime) SnapshotSyncService() (awsSnapshotSyncService, error) {
+	groups, err := runtime.contextGroups()
+	if err != nil {
+		return nil, unavailable("AWS context groups are invalid")
+	}
+	_, stateRoot, err := runtime.app.paths()
+	if err != nil {
+		return nil, err
+	}
+	return &productionAWSSnapshotSyncService{
+		coreFactory: func() (awsSnapshotQueryCore, error) {
+			binding, err := runtime.initialize()
+			if err != nil {
+				return nil, err
+			}
+			return binding.snapshotCore, nil
+		},
+		groups: groups, path: awsSnapshotPath(stateRoot), now: runtime.app.now,
+	}, nil
 }
 
 type awsIntentDispatcher struct {

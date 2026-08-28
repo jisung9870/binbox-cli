@@ -243,9 +243,22 @@ AWS > binary.example.com > Relations                    SNAPSHOT · 18m old
 - 결정: optional store는 `modernc.org/sqlite v1.57.0`을 채택하고 기본 retention은 complete run 2개로 둔다. live browser 기본 경로와 public sync/query는 변경하지 않는다.
 - 증거: [B3 PoC 결과](B3-SNAPSHOT-GRAPH-POC.md) · [ADR-002](ADR-002-SQLITE-SNAPSHOT-GRAPH.md)
 
-### B4 — shortcut query와 diff
+### B4-A — SG snapshot sync와 incoming refs
 
-- VPC peering/TGW/PrivateLink 관계와 `refs`, `whois`, resource graph `path`, snapshot diff.
+- 완료 상태: 2026-08-28 fixture·release gate 검증 완료. `bb aws sync sg --group <name>`이 지정된 context group의 profile×region만 foreground에서 수집하고, `bb aws refs sg <sg-id> --account <id> --region <region>`이 active run의 incoming `references`·`uses`를 조회한다.
+- 수집 범위: `DescribeSecurityGroups`, `DescribeSecurityGroupRules`, `DescribeInstances`만 허용한다. ELBv2, RDS, Lambda, ECS, VPC endpoint attachment는 `not-observed/ec2-only` coverage로 남긴다.
+- 정확성: relation observer를 profile/account/region별로 보존하고, rule ID·방향·protocol·port·상대 SG/account·description과 instance ENI ID를 condition에 포함한다. 빈 결과는 complete coverage와 incomplete coverage에서 다른 문구를 사용한다.
+- 운영 경계: sync는 명시적 실행만 제공하며 background refresh와 TUI source 변경은 없다. sync-owner lock은 중복 수집만 막고, 짧은 commit 구간과 refs만 snapshot lock을 사용하므로 수집 중에도 이전 active run을 조회할 수 있다. refs는 AWS CLI를 초기화하지 않는다.
+- 증거: [B4-A SG snapshot refs](B4A-SG-SNAPSHOT-REFS.md)
+
+### B4-B — 멀티계정 network relation collector
+
+- VPC peering, TGW, PrivateLink relation과 unresolved target 계약을 추가한다.
+- 완료 판정: 소유 account와 사용 account coverage를 분리하고 exact/inferred/unresolved를 표시한다.
+
+### B4-C — shortcut query 확장과 diff
+
+- `whois`, resource graph `path`, snapshot diff와 TUI snapshot source를 단계별로 추가한다.
 - packet reachability는 별도 `network path` 설계와 protocol/port 입력이 준비될 때만 제공한다.
 - 완료 판정: 결과가 exact/inferred/unresolved와 not-searched/denied를 구분한다.
 

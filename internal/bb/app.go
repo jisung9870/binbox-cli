@@ -35,6 +35,8 @@ type App struct {
 	awsBrowserTerminal   func() awsbrowser.Terminal
 	awsBrowserDispatcher awsbrowser.IntentDispatcher
 	awsQueryService      awsQueryServiceFactory
+	awsSnapshotSync      awsSnapshotSyncServiceFactory
+	awsSnapshotRead      awsSnapshotReadServiceFactory
 }
 
 func New(out, err io.Writer, env []string) *App {
@@ -67,6 +69,8 @@ func New(out, err io.Writer, env []string) *App {
 	runtime := newLazyAWSRuntime(a)
 	a.awsBrowserDispatcher = runtime
 	a.awsQueryService = runtime.QueryService
+	a.awsSnapshotSync = runtime.SnapshotSyncService
+	a.awsSnapshotRead = a.localSnapshotReadService
 	return a
 }
 
@@ -170,7 +174,7 @@ Commands:
   gx ...                 Explicit Git workflow compatibility adapter
   kx ...                 Explicit kubectl workflow compatibility adapter
   assm ...               Explicit AWS SSM session adapter
-  aws browse|query|sso|assume ...  Browse/query resources or authenticate/apply credentials
+  aws browse|query|sync|refs|sso|assume ...  Browse/query/snapshot resources or authenticate
   assume ...             Compatibility alias for "bb aws assume"
   profile ...            Compatibility profile configuration surface
   wenv ...               Manage and apply declarative environment presets

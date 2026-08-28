@@ -148,6 +148,26 @@ func NewGlobalResourceKey(context AWSContext, resourceType, id string) (Resource
 	return newResourceKey(context, GlobalRegion, resourceType, id)
 }
 
+// NewCanonicalResourceKey constructs a credential-independent resource
+// identity for persistent exact references, including a known cross-account
+// target. It carries no profile, principal, or credential generation.
+func NewCanonicalResourceKey(partition, accountID, region, resourceType, id string) (ResourceKey, error) {
+	key := ResourceKey{
+		Partition: strings.TrimSpace(partition),
+		AccountID: strings.TrimSpace(accountID),
+		Region:    strings.TrimSpace(region),
+		Type:      strings.TrimSpace(resourceType),
+		ID:        strings.TrimSpace(id),
+	}
+	if !partitionRE.MatchString(key.Partition) || !accountIDRE.MatchString(key.AccountID) ||
+		(key.Region != GlobalRegion && !regionNameRE.MatchString(key.Region)) ||
+		!validIdentifier(key.Type) || !validResourceID(key.ID) {
+		return ResourceKey{}, ErrInvalidResourceKey
+	}
+	key.seal = key.identitySeal()
+	return key, nil
+}
+
 func newResourceKey(context AWSContext, region, resourceType, id string) (ResourceKey, error) {
 	if err := context.Validate(); err != nil || !validIdentifier(resourceType) || !validResourceID(id) ||
 		(region != GlobalRegion && region != context.Region) {

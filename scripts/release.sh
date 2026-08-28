@@ -64,7 +64,7 @@ for TARGET in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   chmod 0755 "$STAGE/bb"
   "$PACKAGER" archive --input "$STAGE/bb" \
     --output "$DIST/bb_${VERSION}_${OS}_${ARCH}.tar.gz" \
-    --name bb --epoch "$SOURCE_DATE_EPOCH"
+    --name bb --notice "$ROOT/THIRD_PARTY_NOTICES.md" --epoch "$SOURCE_DATE_EPOCH"
 done
 
 "$PACKAGER" checksums --output "$DIST/checksums.txt" "$DIST"/bb_"$VERSION"_*.tar.gz

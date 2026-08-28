@@ -93,7 +93,9 @@ tool.
   and exposes only typed EC2/IAM/Route 53 read interfaces. The dedicated TUI
   starts with a zero-call Home, loads selected routes progressively, and runs
   bounded cross-profile searches only after explicit submit. There is no CLI
-  resource fallback, persistent inventory, custom endpoint, or mutation path.
+  resource fallback, authoritative inventory, custom endpoint, or mutation path.
+  The optional B4-A snapshot is an explicit foreground-built, local, rebuildable
+  relationship cache; it never replaces live reads or runs continuously.
 - The bb-owned TUI writes UI to stderr and keeps stdout machine/eval-safe.
   Printable input filters immediately; results expose only safe metadata and a
   stable value; destructive non-Git confirmations default to Cancel. Non-TTY
@@ -139,8 +141,9 @@ the binary never embeds or silently clones the configuration.
 
 ## Explicit non-goals
 
-No persistent dashboard or inventory database; no AWS resource mutation; no MCP
+No persistent authoritative dashboard or inventory database; no AWS resource mutation; no MCP
 proxy/server lifecycle/automatic install; no credential store; no shell
 evaluation; no generic legacy script forwarding; and no Orca
 agent/worktree/scheduler/DAG implementation. A command-scoped read-only resource
-inspector is allowed when it retains no provider state.
+inspector and an explicit, rebuildable local relationship snapshot are allowed;
+neither owns provider state.

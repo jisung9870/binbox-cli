@@ -199,6 +199,22 @@ cp docs/examples/aws-contexts.udg.json ~/.config/bb/aws-contexts.json
 chmod 600 ~/.config/bb/aws-contexts.json
 ```
 
+The optional SG relationship snapshot is built only when explicitly requested.
+It does not change the live Browse source:
+
+```sh
+bb aws sync sg --group udg
+bb aws refs sg sg-0123456789abcdef0 \
+  --account 123456789012 \
+  --region ap-northeast-2
+```
+
+`refs` reports snapshot age, the profiles that observed each incoming SG-rule
+or EC2-instance edge, and succeeded/failed/not-observed coverage. A zero result
+is conclusive only for the displayed coverage. Results above 10,000 edges are
+explicitly marked truncated. Add `--json` to either command for the schema-v1
+envelope. The rebuildable store is `${XDG_STATE_HOME:-~/.local/state}/bb/aws/snapshot.db`.
+
 bb-owned structured reads are formatted as human-readable labels and tables by
 default. Add `--json` for automation and the stable schema-v1 envelope:
 

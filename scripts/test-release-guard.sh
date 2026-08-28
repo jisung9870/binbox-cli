@@ -20,9 +20,10 @@ make_repo() {
   cp "$ROOT/scripts/release.sh" "$repo/scripts/release.sh"
   cp "$ROOT/cmd/releasearchive/main.go" "$repo/cmd/releasearchive/main.go"
   cp "$ROOT/internal/releasearchive/archive.go" "$repo/internal/releasearchive/archive.go"
+	cp "$ROOT/THIRD_PARTY_NOTICES.md" "$repo/THIRD_PARTY_NOTICES.md"
   git -C "$repo" config user.name 'bb release guard test'
   git -C "$repo" config user.email 'bb-release-guard@example.invalid'
-  git -C "$repo" add scripts/release.sh cmd/releasearchive internal/releasearchive
+  git -C "$repo" add scripts/release.sh cmd/releasearchive internal/releasearchive THIRD_PARTY_NOTICES.md
   # Keep every fixture on a fresh commit even when the cloned script already
   # matches HEAD (the normal case when this test runs from a release tag).
   git -C "$repo" commit --allow-empty -qm 'test release guard'

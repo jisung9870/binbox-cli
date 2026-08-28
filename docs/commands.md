@@ -17,7 +17,7 @@ AWS gates are pending.
 | Git | `gx root/branch/log` | Direct Git reads plus explicit branch mutations |
 | Kubernetes | `kx context/namespace/log/exec/port-forward` | Direct kubectl argv with explicit context, namespace, pod, and ports |
 | AWS SSM | `assm shell/port-forward` | Direct AWS CLI Session Manager invocation with explicit instance and ports |
-| AWS resources | `aws browse [--profile NAME] [--region REGION]`; `aws query ec2 instances`; `aws query domain <fqdn>`; `aws query role <exact-name>` | Full-terminal, local-first progressive TUI plus scoped human/JSON query; `:` opens k9s-style resource/action aliases, `/` focuses local filtering, and `Ctrl-o`/`Ctrl-i` move through browser history; profile-less browse starts with the local configured-profile selector while explicit `--profile` starts at Home; typing locally filters loaded resources, tags, profiles, groups, and regions without AWS calls; Right/Enter opens and Left returns one screen; resources open on compact Summary and full fields open through Detail; exact linked singleton reads skip `Resources (1)`; `c` changes profile/current region/current-or-all-group scope and verifies derived account/principal through STS; optional groups come from `$XDG_CONFIG_HOME/bb/aws-contexts.json` or the OS user-config fallback (`~/.config/bb` on WSL/Linux); grouped EC2/VPC reads merge bounded per-region results while IAM/Route 53/CloudFront remain global and linked resources pin their observed region; rows prefer `Name`, then native name, then ID; Tags open in a dedicated category; Security Group Summary opens inbound/outbound rules, IAM Role Summary opens attached/inline policies and policy documents, Route 53 Hosted Zone Summary opens DNS records, and a CloudFront Alias traces through path-aware origins to an S3 bucket region; typed SDK EC2/IAM/Route 53/CloudFront/S3 reads and explicit-submit cross-profile search; browse is interactive and has no `--json` |
+| AWS resources | `aws browse [--profile NAME] [--region REGION]`; `aws query ec2 instances`; `aws query domain <fqdn>`; `aws query role <exact-name>`; `aws sync sg --group <name>`; `aws refs sg <sg-id> --account <id> --region <region>` | Full-terminal, local-first progressive TUI plus scoped human/JSON query; `:` opens k9s-style resource/action aliases, `/` focuses local filtering, and `Ctrl-o`/`Ctrl-i` move through browser history; profile-less browse starts with the local configured-profile selector while explicit `--profile` starts at Home; typing locally filters loaded resources, tags, profiles, groups, and regions without AWS calls; Right/Enter opens and Left returns one screen; resources open on compact Summary and full fields open through Detail; exact linked singleton reads skip `Resources (1)`; `c` changes profile/current region/current-or-all-group scope and verifies derived account/principal through STS; optional groups come from `$XDG_CONFIG_HOME/bb/aws-contexts.json` or the OS user-config fallback (`~/.config/bb` on WSL/Linux); grouped EC2/VPC reads merge bounded per-region results while IAM/Route 53/CloudFront remain global and linked resources pin their observed region; rows prefer `Name`, then native name, then ID; Tags open in a dedicated category; Security Group Summary opens inbound/outbound rules, IAM Role Summary opens attached/inline policies and policy documents, Route 53 Hosted Zone Summary opens DNS records, and a CloudFront Alias traces through path-aware origins to an S3 bucket region; typed SDK EC2/IAM/Route 53/CloudFront/S3 reads and explicit-submit cross-profile search; browse is interactive and has no `--json`; explicit foreground SG sync writes a rebuildable local snapshot and refs returns at most 10,000 incoming edges with truncation, age, observer, and coverage metadata |
 | AWS SSO | `aws sso [session]`, `aws sso list` | Search-first SSO-session login; AWS CLI owns browser authentication and the token cache |
 | AWS credentials | `aws assume [profile]/list/current/unset/exec` | Search-first account/role profile selection; AWS CLI resolves credentials; bb stores none and emits them only to the shell pipe or a scoped child process |
 | AWS compatibility | `profile ...`, `assume ...` | Existing profile configuration and assume commands remain available as compatibility surfaces |
@@ -69,6 +69,7 @@ streams retain the owning CLI's format.
   config directory (`~/Library/Application Support/bb` on macOS and commonly
   `~/.config/bb` on Linux)
 - State and journals: `${XDG_STATE_HOME:-~/.local/state}/bb`
+- Optional AWS relationship snapshot: `${XDG_STATE_HOME:-~/.local/state}/bb/aws/snapshot.db`
 - AWS profiles: the AWS CLI's existing `~/.aws/config`
 - Secret store: the existing binbox age key/ciphertext paths
 - MCP registry: config `mcp.json`, containing server metadata and environment
@@ -88,7 +89,8 @@ a missing service or field cannot produce a partially applied environment.
 
 ## Deliberate exclusions
 
-`bb` does not implement an agent scheduler, worktree manager, persistent
+`bb` does not implement an agent scheduler, worktree manager, authoritative
 dashboard/inventory database, AWS resource mutation, MCP proxy/server lifecycle,
 automatic MCP installer, generic shell dispatcher, or self-mutating checkout
-updater. It also does not store AWS credentials or SSO cache data.
+updater. The explicit local AWS relationship snapshot is rebuildable and is not
+an authoritative inventory. `bb` also does not store AWS credentials or SSO cache data.

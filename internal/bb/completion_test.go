@@ -41,6 +41,10 @@ func TestZshCompletionMatchesAWSBrowseAndQueryGrammar(t *testing.T) {
 		"--scope) _bb_static 'query scope' 'current:current context only' 'all:all configured profiles'",
 		"'--profile:AWS profile' '--region:AWS region' '--json:stable JSON envelope'",
 		"'--profile:AWS profile' '--region:AWS region' '--scope:search scope' '--json:stable JSON envelope'",
+		"'sync:collect an explicit AWS snapshot'",
+		"'refs:find snapshot references'",
+		"--group) _bb_dynamic 'AWS context group' aws-context-group",
+		"'--account:12-digit AWS account ID' '--region:AWS region' '--partition:AWS partition' '--json:stable JSON envelope'",
 	} {
 		if !strings.Contains(completion, want) {
 			t.Fatalf("AWS completion missing %q", want)
@@ -92,6 +96,10 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 	if err := a.Run([]string{"mcp", "add", "jira", "--http", "https://jira.example.test/mcp"}); err != nil {
 		t.Fatal(err)
 	}
+	contextGroups := filepath.Join(config, "bb", "aws-contexts.json")
+	if err := os.WriteFile(contextGroups, []byte(`{"version":1,"groups":[{"name":"udg","profiles":["dev"],"regions":["ap-northeast-2"]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		kind string
 		want []string
@@ -101,6 +109,7 @@ func TestCompletionCandidatesUseSafeLocalMetadata(t *testing.T) {
 		{kind: "sso-session", want: []string{"corp"}},
 		{kind: "project", want: []string{"demo", projectID(projectPath)}},
 		{kind: "mcp", want: []string{"jira"}},
+		{kind: "aws-context-group", want: []string{"udg"}},
 	} {
 		out.Reset()
 		if err := a.Run([]string{"completion", "candidates", tc.kind}); err != nil {

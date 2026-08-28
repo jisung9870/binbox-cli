@@ -27,6 +27,7 @@ func run(args []string) error {
 		input := flags.String("input", "", "input executable")
 		output := flags.String("output", "", "output tar.gz")
 		name := flags.String("name", "bb", "archive entry name")
+		notice := flags.String("notice", "", "optional third-party notice")
 		epoch := flags.String("epoch", "", "source date epoch")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
@@ -35,7 +36,7 @@ func run(args []string) error {
 		if err != nil || *input == "" || *output == "" || flags.NArg() != 0 {
 			return fmt.Errorf("usage: releasearchive archive --input PATH --output PATH --epoch UNIX")
 		}
-		return releasearchive.WriteArchive(*input, *output, *name, time.Unix(seconds, 0))
+		return releasearchive.WriteArchiveWithNotice(*input, *output, *name, *notice, time.Unix(seconds, 0))
 	case "checksums":
 		flags := flag.NewFlagSet("checksums", flag.ContinueOnError)
 		output := flags.String("output", "", "output manifest")

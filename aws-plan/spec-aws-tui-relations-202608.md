@@ -119,7 +119,7 @@ Security Group
 
 현재 EC2 provider에 ENI attachment coverage가 없으므로 `EC2 instances only`를 전체 attachment로 표현하지 않는다. ELB, RDS, Lambda, endpoint 등 서비스별 attachment가 추가될 때 coverage를 확장한다.
 
-2026-08-28 B3는 이 계약의 persistent storage, atomic run, reverse index, coverage와 2 profile × 2 region fixture를 완료했다. 기존 EC2 live extractor를 snapshot sync에 연결하고 full SG rule condition을 투영하는 작업은 B4 public `sync` 이전에 남아 있다. 근거는 [B3 PoC 결과](B3-SNAPSHOT-GRAPH-POC.md)와 [ADR-002](ADR-002-SQLITE-SNAPSHOT-GRAPH.md)다.
+2026-08-28 B3는 persistent storage, atomic run, reverse index와 coverage를 완료했다. B4-A는 기존 EC2 extractor를 public snapshot sync에 연결하고 full SG rule condition, ENI ID, cross-account exact target, observer provenance를 저장한 뒤 incoming `refs` CLI까지 연결했다. 근거는 [B3 PoC 결과](B3-SNAPSHOT-GRAPH-POC.md), [B4-A 결과](B4A-SG-SNAPSHOT-REFS.md), [ADR-002](ADR-002-SQLITE-SNAPSHOT-GRAPH.md)다.
 
 완료 조건:
 

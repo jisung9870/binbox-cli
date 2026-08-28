@@ -15,6 +15,10 @@ func (a *App) aws(args []string) error {
   bb aws query domain <fqdn> [--profile NAME] [--region REGION] [--scope current|all] [--json]
   bb aws query role <exact-name> [--profile NAME] [--region REGION] [--scope current|all] [--json]
                                   Run one scoped read-only AWS query
+  bb aws sync sg --group NAME [--json]
+                                  Collect an explicit EC2 security-group snapshot
+  bb aws refs sg <sg-id> --account ID --region REGION [--partition PARTITION] [--json]
+                                  Find observed incoming SG references in the active snapshot
   bb aws sso [session]             Select or log in to an AWS SSO session
   bb aws sso list                  List configured AWS SSO sessions
   bb aws assume [profile]          Select or apply AWS CLI-resolved credentials
@@ -31,6 +35,10 @@ an AWS account, role, and region. The AWS CLI owns tokens and credentials.
 		return a.awsBrowse(args[1:])
 	case "query":
 		return a.awsQuery(args[1:])
+	case "sync":
+		return a.awsSnapshotSyncCommand(args[1:])
+	case "refs":
+		return a.awsSnapshotRefsCommand(args[1:])
 	case "sso":
 		return a.awsSSO(args[1:])
 	case "assume":

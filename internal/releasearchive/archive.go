@@ -19,20 +19,27 @@ import (
 // WriteArchive packages one executable with fully specified tar and gzip
 // metadata so the result does not depend on the host tar implementation.
 func WriteArchive(inputPath, outputPath, entryName string, modTime time.Time) error {
+	return WriteArchiveWithNotice(inputPath, outputPath, entryName, "", modTime)
+}
+
+// WriteArchiveWithNotice packages the executable and, when provided, the
+// distribution notice required by linked third-party dependencies.
+func WriteArchiveWithNotice(inputPath, outputPath, entryName, noticePath string, modTime time.Time) error {
 	if entryName == "" || filepath.Base(entryName) != entryName || entryName == "." {
 		return fmt.Errorf("archive entry name must be a base name: %q", entryName)
 	}
-	input, err := os.Open(inputPath)
+	input, err := openArchiveInput(inputPath)
 	if err != nil {
-		return fmt.Errorf("open archive input: %w", err)
+		return err
 	}
 	defer input.Close()
-	info, err := input.Stat()
-	if err != nil {
-		return fmt.Errorf("inspect archive input: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("archive input is not a regular file: %s", inputPath)
+	var notice *os.File
+	if noticePath != "" {
+		notice, err = openArchiveInput(noticePath)
+		if err != nil {
+			return err
+		}
+		defer notice.Close()
 	}
 
 	stamp := modTime.UTC().Truncate(time.Second)
@@ -44,21 +51,13 @@ func WriteArchive(inputPath, outputPath, entryName string, modTime time.Time) er
 		compressed.Header.ModTime = stamp
 		compressed.Header.OS = 255
 		archive := tar.NewWriter(compressed)
-		header := &tar.Header{
-			Name:     entryName,
-			Mode:     0o755,
-			Uid:      0,
-			Gid:      0,
-			Size:     info.Size(),
-			ModTime:  stamp,
-			Typeflag: tar.TypeReg,
-			Format:   tar.FormatUSTAR,
+		if err := writeArchiveEntry(archive, input, entryName, 0o755, stamp); err != nil {
+			return err
 		}
-		if err := archive.WriteHeader(header); err != nil {
-			return fmt.Errorf("write tar header: %w", err)
-		}
-		if _, err := io.Copy(archive, input); err != nil {
-			return fmt.Errorf("write tar content: %w", err)
+		if notice != nil {
+			if err := writeArchiveEntry(archive, notice, "THIRD_PARTY_NOTICES.md", 0o644, stamp); err != nil {
+				return err
+			}
 		}
 		if err := archive.Close(); err != nil {
 			return fmt.Errorf("close tar writer: %w", err)
@@ -68,6 +67,41 @@ func WriteArchive(inputPath, outputPath, entryName string, modTime time.Time) er
 		}
 		return nil
 	})
+}
+
+func openArchiveInput(path string) (*os.File, error) {
+	input, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open archive input: %w", err)
+	}
+	info, err := input.Stat()
+	if err != nil {
+		input.Close()
+		return nil, fmt.Errorf("inspect archive input: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		input.Close()
+		return nil, fmt.Errorf("archive input is not a regular file: %s", path)
+	}
+	return input, nil
+}
+
+func writeArchiveEntry(archive *tar.Writer, input *os.File, name string, mode int64, stamp time.Time) error {
+	info, err := input.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect archive input: %w", err)
+	}
+	header := &tar.Header{
+		Name: name, Mode: mode, Uid: 0, Gid: 0, Size: info.Size(), ModTime: stamp,
+		Typeflag: tar.TypeReg, Format: tar.FormatUSTAR,
+	}
+	if err := archive.WriteHeader(header); err != nil {
+		return fmt.Errorf("write tar header: %w", err)
+	}
+	if _, err := io.Copy(archive, input); err != nil {
+		return fmt.Errorf("write tar content: %w", err)
+	}
+	return nil
 }
 
 // WriteChecksums writes the conventional two-space SHA-256 manifest ordered by

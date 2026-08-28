@@ -24,6 +24,7 @@ type plainFrame struct {
 	context       *AWSContext
 	detail        *ResourceProjection
 	coverage      *SearchCoverage
+	graph         *GraphSnapshot
 	staged        refreshStage
 	status        string
 	search        bool
@@ -598,7 +599,7 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 		state := update.Query.Snapshot.State
 		successfulRefresh := state == LoadReady || state == LoadEmpty
 		if successfulRefresh {
-			frame.staged.promote(&frame.context, &frame.coverage, &frame.projection)
+			frame.staged.promote(&frame.context, &frame.coverage, &frame.graph, &frame.projection)
 		}
 		status := queryStatus(update.Query, len(frame.projection.Resources))
 		if terminalLoadState(state) && !successfulRefresh {
@@ -638,6 +639,9 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 	if update.Coverage != nil {
 		frame.coverage = cloneSearchCoverage(update.Coverage)
 	}
+	if update.Graph != nil {
+		frame.graph = cloneGraphSnapshot(update.Graph)
+	}
 	replace := len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty
 	if replace {
 		frame.projection = projection
@@ -645,6 +649,8 @@ func (p Plain) applyPlainUpdate(out io.Writer, frame *plainFrame, refreshing boo
 	status := queryStatus(update.Query, len(frame.projection.Resources))
 	if frame.coverage != nil {
 		status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+	} else if frame.graph != nil {
+		status = graphSnapshotStatus(frame.graph, len(frame.projection.Resources), state)
 	}
 	frame.status = status
 	if _, err := fmt.Fprintln(out, status); err != nil {

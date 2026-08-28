@@ -630,6 +630,46 @@ func TestSecurityGroupDetailOpensDirectionalRuleLists(t *testing.T) {
 	}
 }
 
+func TestIncomingRelationsCategoryDispatchesAutomaticSnapshotIntent(t *testing.T) {
+	awsContext := testStoreContext(t, "dev", "123456789012", "ap-northeast-2", 1)
+	resourceKey, err := NewRegionalResourceKey(awsContext, "ec2.security-group", "sg-abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := ProjectResourceFields(resourceKey, map[string]any{"name": "web-sg"})
+	dispatcher := new(recordingDispatcher)
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher)
+	m.history = []routeFrame{{mode: routeDetail, detail: resource, context: &awsContext, relationSelected: 2}}
+	if !viewLineContainsAll(m.View().Content, "Incoming relations", "-", "AUTO") {
+		t.Fatalf("automatic category missing:\n%s", m.View().Content)
+	}
+	model, command := m.Update(key(tea.KeyRight))
+	updated := model.(Model)
+	current := updated.current()
+	if command == nil || current == nil || current.intent.Kind != IntentIncoming || current.intent.Target != "ec2.security-group:sg-abc123" ||
+		current.intent.ExpectedPartition != "aws" || current.intent.ExpectedAccountID != "123456789012" {
+		t.Fatalf("incoming intent=%+v command=%v", current, command != nil)
+	}
+}
+
+func TestIncomingRelationsRefreshForcesAutomaticRecollection(t *testing.T) {
+	dispatcher := new(recordingDispatcher)
+	m := NewModel(context.Background(), Config{NoColor: true}, dispatcher)
+	m.history = []routeFrame{{
+		mode: routeList, target: "ec2.security-group:sg-abc123",
+		intent:     Intent{Kind: IntentIncoming, Target: "ec2.security-group:sg-abc123", Profile: "dev", Region: "ap-northeast-2", ExpectedPartition: "aws", ExpectedAccountID: "123456789012"},
+		projection: IntentProjection{Resources: []ResourceProjection{{Title: "web"}}},
+	}}
+	_, command := m.Update(ctrl('r'))
+	if command == nil {
+		t.Fatal("incoming refresh did not dispatch")
+	}
+	_ = command()
+	if len(dispatcher.intents) != 1 || dispatcher.intents[0].Kind != IntentIncoming || !dispatcher.intents[0].Force || dispatcher.intents[0].ExpectedAccountID != "123456789012" {
+		t.Fatalf("refresh intent=%+v", dispatcher.intents)
+	}
+}
+
 func TestIAMAndRoute53SummariesExposePolicyAndDNSCategories(t *testing.T) {
 	awsContext := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
 	roleKey, err := NewGlobalResourceKey(awsContext, "iam.role", "reader")
@@ -1010,6 +1050,7 @@ func TestTagsCategoryOpensAndFiltersLocally(t *testing.T) {
 	}
 
 	model, _ := m.Update(key(tea.KeyDown))
+	model, _ = model.Update(key(tea.KeyDown))
 	model, command := model.Update(key(tea.KeyRight))
 	if command != nil || len(dispatcher.intents) != 0 {
 		t.Fatal("opening Tags dispatched an AWS request")

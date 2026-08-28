@@ -16,6 +16,7 @@ import (
 
 const awsSnapshotRetention = 2
 const awsSnapshotScopeTimeout = 3 * time.Minute
+const awsAutoSnapshotMaxAge = 5 * time.Minute
 
 var awsSnapshotUnobservedServices = []string{"elbv2", "rds", "lambda", "ecs", "vpc-endpoint"}
 
@@ -37,6 +38,155 @@ type awsSGSnapshotCollector struct {
 
 type awsSnapshotCollector struct {
 	core awsSnapshotQueryCore
+}
+
+type awsAutoSnapshotRequest struct {
+	Profile, Partition, AccountID, Region, Kind, ResourceID string
+	Force                                                   bool
+}
+
+type awsAutoSnapshotService struct {
+	sync   awsSnapshotSyncService
+	read   awsSnapshotReadService
+	groups []awsbrowser.ContextGroup
+	now    func() time.Time
+}
+
+func awsIncomingSnapshotRequestForIntent(intent awsbrowser.Intent) (awsAutoSnapshotRequest, bool) {
+	resourceType, resourceID, ok := strings.Cut(intent.Target, ":")
+	if !ok || awsbrowser.ValidateContextSelection(intent.Profile, intent.Region) != nil || intent.Profile == "" ||
+		!awsSnapshotPartitionRE.MatchString(intent.ExpectedPartition) || !awsSnapshotAccountRE.MatchString(intent.ExpectedAccountID) {
+		return awsAutoSnapshotRequest{}, false
+	}
+	kind := ""
+	switch resourceType {
+	case "ec2.security-group":
+		if awsSnapshotSGRE.MatchString(resourceID) {
+			kind = "sg"
+		}
+	case "ec2.vpc":
+		if awsSnapshotVPCRE.MatchString(resourceID) {
+			kind = "vpc"
+		}
+	}
+	if kind == "" {
+		return awsAutoSnapshotRequest{}, false
+	}
+	return awsAutoSnapshotRequest{
+		Profile: intent.Profile, Partition: intent.ExpectedPartition, AccountID: intent.ExpectedAccountID,
+		Region: intent.Region, Kind: kind, ResourceID: resourceID, Force: intent.Force,
+	}, true
+}
+
+func awsContextGroupForProfile(groups []awsbrowser.ContextGroup, profile string) (awsbrowser.ContextGroup, bool) {
+	for _, group := range groups {
+		for _, candidate := range group.Profiles {
+			if candidate == profile {
+				return group, true
+			}
+		}
+	}
+	return awsbrowser.ContextGroup{}, false
+}
+
+func (service *awsAutoSnapshotService) Resolve(ctx context.Context, request awsAutoSnapshotRequest) (awsSnapshotRefsExecution, awsbrowser.GraphSnapshot, error) {
+	if service == nil || service.sync == nil || service.read == nil || service.now == nil || ctx == nil {
+		return awsSnapshotRefsExecution{}, awsbrowser.GraphSnapshot{}, errors.New("invalid automatic snapshot service")
+	}
+	group, ok := awsContextGroupForProfile(service.groups, request.Profile)
+	if !ok {
+		return awsSnapshotRefsExecution{}, awsbrowser.GraphSnapshot{}, errors.New("AWS context group not found")
+	}
+	refsRequest := awsSnapshotRefsRequest{
+		Partition: request.Partition, AccountID: request.AccountID, Region: request.Region,
+		Kind: request.Kind, ResourceID: request.ResourceID,
+	}
+	if !request.Force {
+		if execution, err := service.read.Refs(ctx, refsRequest); err == nil && awsAutoSnapshotReusable(execution, group, request.Kind, service.now()) {
+			return execution, awsGraphSnapshot(execution, group.Name, service.now(), true), nil
+		}
+	}
+	if _, _, err := service.sync.Sync(ctx, awsSnapshotSyncRequest{Collection: "graph", Group: group.Name}); err != nil {
+		return awsSnapshotRefsExecution{}, awsbrowser.GraphSnapshot{}, err
+	}
+	execution, err := service.read.Refs(ctx, refsRequest)
+	if err != nil {
+		return awsSnapshotRefsExecution{}, awsbrowser.GraphSnapshot{}, err
+	}
+	return execution, awsGraphSnapshot(execution, group.Name, service.now(), false), nil
+}
+
+func awsAutoSnapshotReusable(execution awsSnapshotRefsExecution, group awsbrowser.ContextGroup, kind string, now time.Time) bool {
+	age := now.Sub(execution.Run.CompletedAt)
+	if execution.Run.CompletedAt.IsZero() || age < 0 || age > awsAutoSnapshotMaxAge {
+		return false
+	}
+	serviceName := "ec2-sg"
+	if kind == "vpc" {
+		serviceName = "ec2-vpc-peering"
+	}
+	covered := make(map[string]bool)
+	for _, item := range execution.Coverage {
+		if item.Service == serviceName && item.Status == snapshot.CoverageSucceeded {
+			covered[item.Profile+"\x00"+item.Region] = true
+		}
+	}
+	for _, profile := range group.Profiles {
+		for _, region := range group.Regions {
+			if !covered[profile+"\x00"+region] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func awsGraphSnapshot(execution awsSnapshotRefsExecution, group string, now time.Time, reused bool) awsbrowser.GraphSnapshot {
+	coverage := awsSnapshotCoverage(execution.Coverage)
+	age := now.Sub(execution.Run.CompletedAt)
+	if age < 0 {
+		age = 0
+	}
+	return awsbrowser.GraphSnapshot{
+		Group: group, CompletedAt: execution.Run.CompletedAt, AgeSeconds: int64(age / time.Second),
+		Succeeded: coverage.Succeeded, Failed: coverage.Failed, NotObserved: coverage.NotObserved, Reused: reused,
+	}
+}
+
+func projectAWSIncomingSnapshot(execution awsSnapshotRefsExecution, request awsAutoSnapshotRequest) (awsbrowser.IntentProjection, error) {
+	data, err := normalizeAWSSnapshotRefs(execution, execution.Run.CompletedAt)
+	if err != nil {
+		return awsbrowser.IntentProjection{}, err
+	}
+	resources := make([]awsbrowser.ResourceProjection, 0, len(data.References))
+	for _, edge := range data.References {
+		title := edge.Source.Name
+		if title == "" {
+			title = edge.Source.ID
+		}
+		target := ""
+		if edge.Source.AccountID == request.AccountID && edge.Source.Region == request.Region && awsbrowser.NavigableRelationTargetType(edge.Source.Type) {
+			target = edge.Source.Type + ":" + edge.Source.ID
+		}
+		profiles := make([]string, 0, len(edge.Observers))
+		for _, observer := range edge.Observers {
+			profiles = append(profiles, observer.Profile)
+		}
+		resources = append(resources, awsbrowser.ResourceProjection{
+			Target: target, Title: title,
+			Subtitle: strings.Join([]string{edge.RelationType, edge.Source.Type, edge.Source.AccountID, edge.Source.Region}, " · "),
+			Fields: []awsbrowser.ProjectionField{
+				{Label: "Resource ID", Value: edge.Source.ID}, {Label: "Resource type", Value: edge.Source.Type},
+				{Label: "Account", Value: edge.Source.AccountID}, {Label: "Region", Value: edge.Source.Region},
+				{Label: "Relation", Value: edge.RelationType}, {Label: "Condition", Value: edge.Condition},
+				{Label: "Confidence", Value: edge.Confidence}, {Label: "Reason", Value: edge.Reason},
+				{Label: "Operation", Value: edge.Operation}, {Label: "Observed at", Value: edge.ObservedAt.Format(time.RFC3339)},
+				{Label: "Observed via", Value: strings.Join(profiles, ", ")},
+			},
+			AvailableViaProfiles: profiles,
+		})
+	}
+	return awsbrowser.IntentProjection{Resources: resources}, nil
 }
 
 func awsSnapshotPath(stateRoot string) string {

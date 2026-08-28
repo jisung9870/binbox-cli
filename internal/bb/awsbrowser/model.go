@@ -61,6 +61,7 @@ type routeFrame struct {
 	terminalUpdate    bool
 	dispatchCancel    context.CancelFunc
 	coverage          *SearchCoverage
+	graph             *GraphSnapshot
 	staged            refreshStage
 	searchKind        int
 	searchScope       int
@@ -886,6 +887,14 @@ func (m Model) enterCurrent() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		category := categories[frame.relationSelected]
+		if category.Key == "incoming-relations" {
+			intent := Intent{Kind: IntentIncoming, Target: frame.detail.Target}
+			if frame.context != nil && frame.context.Validate() == nil {
+				intent.ExpectedPartition = frame.context.Partition
+				intent.ExpectedAccountID = frame.context.AccountID
+			}
+			return m.pushAndDispatch(intent, "Incoming relations", frame.context)
+		}
 		if category.Key == "detail" {
 			m.pushFrame(routeFrame{
 				mode: routeFields, target: frame.target, label: category.Label, context: frame.context, detail: frame.detail,
@@ -1070,7 +1079,9 @@ func (m Model) refreshCurrent() (tea.Model, tea.Cmd) {
 	frame.staged.clear()
 	frame.status = fmt.Sprintf("Showing cached %d · refreshing… · Esc cancel", len(frame.projection.Resources))
 	intent := frame.intent
-	if intent.Kind != IntentSearch || intent.Target != "cross-profile-search" {
+	if intent.Kind == IntentIncoming {
+		intent.Force = true
+	} else if intent.Kind != IntentSearch || intent.Target != "cross-profile-search" {
 		intent = Intent{Kind: IntentRefresh, Target: frame.target, Regions: frame.intent.Regions}
 		if frame.context != nil && frame.context.Validate() == nil {
 			intent.Profile, intent.Region = frame.context.Profile, frame.context.Region
@@ -1115,7 +1126,7 @@ func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
 		frame.staged.apply(update)
 		state := update.Query.Snapshot.State
 		if state == LoadReady || state == LoadEmpty {
-			frame.staged.promote(&frame.context, &frame.coverage, &frame.projection)
+			frame.staged.promote(&frame.context, &frame.coverage, &frame.graph, &frame.projection)
 			if frame.selected >= len(frame.projection.Resources) {
 				frame.selected = max(0, len(frame.projection.Resources)-1)
 			}
@@ -1153,6 +1164,9 @@ func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
 	if update.Coverage != nil {
 		frame.coverage = cloneSearchCoverage(update.Coverage)
 	}
+	if update.Graph != nil {
+		frame.graph = cloneGraphSnapshot(update.Graph)
+	}
 	replace := len(projection.Resources) != 0 || state == LoadReady || state == LoadEmpty
 	if replace {
 		frame.projection = projection
@@ -1163,6 +1177,8 @@ func (m *Model) applyIntentUpdate(frame *routeFrame, update IntentUpdate) {
 	frame.status = queryStatus(update.Query, len(frame.projection.Resources))
 	if frame.coverage != nil {
 		frame.status = searchCoverageStatus(frame.coverage, len(frame.projection.Resources), state)
+	} else if frame.graph != nil {
+		frame.status = graphSnapshotStatus(frame.graph, len(frame.projection.Resources), state)
 	}
 }
 
@@ -1170,6 +1186,7 @@ type refreshStage struct {
 	context    *AWSContext
 	coverage   *SearchCoverage
 	projection *IntentProjection
+	graph      *GraphSnapshot
 }
 
 func (stage *refreshStage) apply(update IntentUpdate) {
@@ -1183,6 +1200,9 @@ func (stage *refreshStage) apply(update IntentUpdate) {
 	if update.Coverage != nil {
 		stage.coverage = cloneSearchCoverage(update.Coverage)
 	}
+	if update.Graph != nil {
+		stage.graph = cloneGraphSnapshot(update.Graph)
+	}
 	projection := update.Projection
 	if len(projection.Resources) == 0 && update.Query.Snapshot.ResourceCount() != 0 {
 		projection = ProjectQueryUpdate(update.Query)
@@ -1194,13 +1214,16 @@ func (stage *refreshStage) apply(update IntentUpdate) {
 	}
 }
 
-func (stage *refreshStage) promote(awsContext **AWSContext, coverage **SearchCoverage, projection *IntentProjection) {
+func (stage *refreshStage) promote(awsContext **AWSContext, coverage **SearchCoverage, graph **GraphSnapshot, projection *IntentProjection) {
 	if stage.context != nil {
 		copy := *stage.context
 		*awsContext = &copy
 	}
 	if stage.coverage != nil {
 		*coverage = cloneSearchCoverage(stage.coverage)
+	}
+	if stage.graph != nil {
+		*graph = cloneGraphSnapshot(stage.graph)
 	}
 	if stage.projection != nil {
 		*projection = *stage.projection
@@ -1220,6 +1243,32 @@ func cloneSearchCoverage(coverage *SearchCoverage) *SearchCoverage {
 	copy := *coverage
 	copy.Profiles = append([]SearchProfileCoverage(nil), coverage.Profiles...)
 	return &copy
+}
+
+func cloneGraphSnapshot(snapshot *GraphSnapshot) *GraphSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	copy := *snapshot
+	return &copy
+}
+
+func graphSnapshotStatus(snapshot *GraphSnapshot, count int, state LoadState) string {
+	if snapshot == nil {
+		return queryStatus(QueryUpdate{Snapshot: QuerySnapshot{State: state}}, count)
+	}
+	if snapshot.Error || state.isFailure() {
+		return "! automatic relationship collection failed"
+	}
+	if snapshot.Collecting || state == LoadLoading || state == LoadQueued {
+		return "AUTO · collecting group " + safeIntentText(snapshot.Group) + "… · Esc cancel"
+	}
+	mode := "collected"
+	if snapshot.Reused {
+		mode = "cached"
+	}
+	return fmt.Sprintf("SNAPSHOT · %s · %ds old · %d references · coverage %d succeeded, %d failed, %d not observed",
+		mode, max(int64(0), snapshot.AgeSeconds), count, snapshot.Succeeded, snapshot.Failed, snapshot.NotObserved)
 }
 
 func searchCoverageStatus(coverage *SearchCoverage, count int, state LoadState) string {
@@ -1391,13 +1440,21 @@ type detailCategory struct {
 
 func detailCategories(resource ResourceProjection) []detailCategory {
 	groups := relationGroups(resource)
-	categories := make([]detailCategory, 0, len(groups)+1)
+	categories := make([]detailCategory, 0, len(groups)+3)
 	for _, group := range groups {
 		categories = append(categories, detailCategory{Key: group.Key, Label: group.Label, Count: len(group.Relations), Group: group})
+	}
+	if supportsIncomingRelations(resource.Target) {
+		categories = append(categories, detailCategory{Key: "incoming-relations", Label: "Incoming relations", Count: -1})
 	}
 	categories = append(categories, detailCategory{Key: "detail", Label: "Detail", Count: len(resource.Fields)})
 	categories = append(categories, detailCategory{Key: "tags", Label: "Tags", Count: len(resource.Tags)})
 	return categories
+}
+
+func supportsIncomingRelations(target string) bool {
+	resourceType, id, ok := strings.Cut(target, ":")
+	return ok && id != "" && (resourceType == "ec2.security-group" || resourceType == "ec2.vpc")
 }
 
 type relationGroup struct {

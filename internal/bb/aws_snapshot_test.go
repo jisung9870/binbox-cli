@@ -22,9 +22,11 @@ type fakeAWSSnapshotSyncService struct {
 	run      snapshot.Run
 	coverage []snapshot.Coverage
 	err      error
+	calls    int
 }
 
 func (service *fakeAWSSnapshotSyncService) Sync(_ context.Context, request awsSnapshotSyncRequest) (snapshot.Run, []snapshot.Coverage, error) {
+	service.calls++
 	service.request = request
 	return service.run, service.coverage, service.err
 }
@@ -38,6 +40,80 @@ type fakeAWSSnapshotReadService struct {
 func (service *fakeAWSSnapshotReadService) Refs(_ context.Context, request awsSnapshotRefsRequest) (awsSnapshotRefsExecution, error) {
 	service.request = request
 	return service.execution, service.err
+}
+
+type sequenceAWSSnapshotReadService struct {
+	executions []awsSnapshotRefsExecution
+	calls      int
+}
+
+func (service *sequenceAWSSnapshotReadService) Refs(_ context.Context, _ awsSnapshotRefsRequest) (awsSnapshotRefsExecution, error) {
+	index := service.calls
+	service.calls++
+	if index >= len(service.executions) {
+		return awsSnapshotRefsExecution{}, errors.New("unexpected snapshot read")
+	}
+	return service.executions[index], nil
+}
+
+func TestAutoSnapshotReusesFreshCompleteGroupCoverage(t *testing.T) {
+	now := time.Date(2026, 8, 28, 15, 0, 0, 0, time.UTC)
+	group := awsbrowser.ContextGroup{Name: "udg", Profiles: []string{"dev", "prod"}, Regions: []string{"ap-northeast-2", "us-east-1"}}
+	coverage := make([]snapshot.Coverage, 0, 4)
+	for _, profile := range group.Profiles {
+		for _, region := range group.Regions {
+			coverage = append(coverage, snapshot.Coverage{Profile: profile, AccountID: "123456789012", Region: region, Service: "ec2-sg", Status: snapshot.CoverageSucceeded})
+		}
+	}
+	execution := awsSnapshotRefsExecution{Run: snapshot.Run{CompletedAt: now.Add(-time.Minute)}, Coverage: coverage}
+	syncService := new(fakeAWSSnapshotSyncService)
+	readService := &fakeAWSSnapshotReadService{execution: execution}
+	service := &awsAutoSnapshotService{sync: syncService, read: readService, groups: []awsbrowser.ContextGroup{group}, now: func() time.Time { return now }}
+
+	_, graph, err := service.Resolve(context.Background(), awsAutoSnapshotRequest{
+		Profile: "dev", Partition: "aws", AccountID: "123456789012", Region: "ap-northeast-2", Kind: "sg", ResourceID: "sg-abc123",
+	})
+	if err != nil || !graph.Reused || graph.AgeSeconds != 60 || syncService.calls != 0 {
+		t.Fatalf("graph=%+v sync calls=%d error=%v", graph, syncService.calls, err)
+	}
+}
+
+func TestAutoSnapshotRefreshesStaleCoverageWithoutManualSync(t *testing.T) {
+	now := time.Date(2026, 8, 28, 15, 0, 0, 0, time.UTC)
+	group := awsbrowser.ContextGroup{Name: "udg", Profiles: []string{"dev"}, Regions: []string{"ap-northeast-2"}}
+	stale := awsSnapshotRefsExecution{Run: snapshot.Run{CompletedAt: now.Add(-10 * time.Minute)}}
+	fresh := awsSnapshotRefsExecution{
+		Run:      snapshot.Run{CompletedAt: now},
+		Coverage: []snapshot.Coverage{{Profile: "dev", AccountID: "123456789012", Region: "ap-northeast-2", Service: "ec2-vpc-peering", Status: snapshot.CoverageSucceeded}},
+	}
+	readService := &sequenceAWSSnapshotReadService{executions: []awsSnapshotRefsExecution{stale, fresh}}
+	syncService := new(fakeAWSSnapshotSyncService)
+	service := &awsAutoSnapshotService{sync: syncService, read: readService, groups: []awsbrowser.ContextGroup{group}, now: func() time.Time { return now }}
+
+	_, graph, err := service.Resolve(context.Background(), awsAutoSnapshotRequest{
+		Profile: "dev", Partition: "aws", AccountID: "123456789012", Region: "ap-northeast-2", Kind: "vpc", ResourceID: "vpc-abc123",
+	})
+	if err != nil || graph.Reused || syncService.calls != 1 || syncService.request != (awsSnapshotSyncRequest{Collection: "graph", Group: "udg"}) || readService.calls != 2 {
+		t.Fatalf("graph=%+v sync=%+v read calls=%d error=%v", graph, syncService, readService.calls, err)
+	}
+}
+
+func TestIncomingSnapshotProjectionPrefersNameAndFencesCrossAccountNavigation(t *testing.T) {
+	at := time.Date(2026, 8, 28, 15, 0, 0, 0, time.UTC)
+	target := snapshot.ResourceRef{Partition: "aws", AccountID: "123456789012", Region: "ap-northeast-2", Type: "ec2.security-group", ID: "sg-abc123"}
+	sameAccount := snapshot.ResourceRef{Partition: "aws", AccountID: target.AccountID, Region: target.Region, Type: "ec2.instance", ID: "i-abc123"}
+	crossAccount := snapshot.ResourceRef{Partition: "aws", AccountID: "210987654321", Region: target.Region, Type: "ec2.instance", ID: "i-def456"}
+	targetKey, _ := target.Key()
+	sameKey, _ := sameAccount.Key()
+	crossKey, _ := crossAccount.Key()
+	execution := awsSnapshotRefsExecution{Run: snapshot.Run{CompletedAt: at}, Target: target, Edges: []snapshot.Edge{
+		{SourceKey: sameKey, TargetKey: targetKey, SourceName: "web", Relation: snapshot.Relation{Type: awsbrowser.RelationUses, Direction: awsbrowser.RelationOutgoing, Confidence: awsbrowser.RelationIDExact, Reason: "fixture", Operation: "DescribeInstances", Scope: target.Region, ObservedAt: at}, Observers: []snapshot.Observer{{Profile: "dev", AccountID: sameAccount.AccountID, Region: sameAccount.Region, ObservedAt: at}}},
+		{SourceKey: crossKey, TargetKey: targetKey, SourceName: "batch", Relation: snapshot.Relation{Type: awsbrowser.RelationUses, Direction: awsbrowser.RelationOutgoing, Confidence: awsbrowser.RelationIDExact, Reason: "fixture", Operation: "DescribeInstances", Scope: target.Region, ObservedAt: at}, Observers: []snapshot.Observer{{Profile: "prod", AccountID: crossAccount.AccountID, Region: crossAccount.Region, ObservedAt: at}}},
+	}}
+	projection, err := projectAWSIncomingSnapshot(execution, awsAutoSnapshotRequest{AccountID: target.AccountID, Region: target.Region})
+	if err != nil || len(projection.Resources) != 2 || projection.Resources[0].Title != "web" || projection.Resources[0].Target != "ec2.instance:i-abc123" || projection.Resources[1].Target != "" {
+		t.Fatalf("projection=%+v error=%v", projection, err)
+	}
 }
 
 type awsSnapshotQueryCoreFunc func(context.Context, awsintegration.Request) (awsintegration.Result, error)

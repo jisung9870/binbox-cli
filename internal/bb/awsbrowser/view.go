@@ -432,13 +432,31 @@ func renderList(m Model, route routeFrame) string {
 		}
 		lines = append(lines, "")
 	}
+	if route.graph != nil && !route.graph.Collecting && !route.graph.CompletedAt.IsZero() {
+		cache := "new collection"
+		if route.graph.Reused {
+			cache = "cached"
+		}
+		lines = append(lines,
+			fit(styles.section.Render("Source")+styles.context.Render(" · SNAPSHOT · group "+safeIntentText(route.graph.Group)+" · "+cache), inner),
+			fit(styles.context.Render(fmt.Sprintf("Coverage · %d succeeded · %d failed · %d not observed", route.graph.Succeeded, route.graph.Failed, route.graph.NotObserved)), inner),
+			"",
+		)
+	}
 	lines = append(lines, fit(browserFilterLine(styles, route.filterValue, "type to filter loaded resources", route.filterActive), inner))
 	if m.height >= 16 {
 		lines = append(lines, "")
 	}
 	resources := filteredResources(route)
 	if len(route.projection.Resources) == 0 {
-		lines = append(lines, styles.muted.Render("No resource result has been loaded."))
+		empty := "No resource result has been loaded."
+		if route.graph != nil && !route.graph.Collecting && !route.graph.Error {
+			empty = "No incoming relations were observed."
+			if route.graph.Failed != 0 || route.graph.NotObserved != 0 {
+				empty += " Coverage is incomplete."
+			}
+		}
+		lines = append(lines, styles.muted.Render(empty))
 	} else if len(resources) == 0 {
 		lines = append(lines, styles.warning.Render("No matches for “"+safeIntentText(route.filterValue)+"”"))
 	} else {
@@ -491,7 +509,9 @@ func renderSummary(m Model, route routeFrame) string {
 	}
 	for index, category := range categories {
 		action := "OPEN"
-		if category.Key == "detail" {
+		if category.Key == "incoming-relations" {
+			action = "AUTO"
+		} else if category.Key == "detail" {
 			action = "VIEW"
 		} else if category.Key == "tags" {
 			action = "VIEW"
@@ -929,7 +949,11 @@ func categoryTableLayout(inner int) ([]string, []int) {
 }
 
 func categoryTableCells(headers []string, label string, count int, action string) []string {
-	return tableValues(headers, map[string]string{"CATEGORY": label, "COUNT": fmt.Sprintf("%d", count), "ACTION": action})
+	countLabel := fmt.Sprintf("%d", count)
+	if count < 0 {
+		countLabel = "-"
+	}
+	return tableValues(headers, map[string]string{"CATEGORY": label, "COUNT": countLabel, "ACTION": action})
 }
 
 func fieldTableLayout(inner int) ([]string, []int) {

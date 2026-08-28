@@ -34,9 +34,10 @@ func ValidateContextSelection(profile, region string) error {
 type IntentKind string
 
 const (
-	IntentOpen    IntentKind = "open"
-	IntentRefresh IntentKind = "refresh"
-	IntentSearch  IntentKind = "cross-profile-search"
+	IntentOpen     IntentKind = "open"
+	IntentRefresh  IntentKind = "refresh"
+	IntentSearch   IntentKind = "cross-profile-search"
+	IntentIncoming IntentKind = "incoming-relations"
 )
 
 // Intent is a credential-free request from a browser view. Target is either a
@@ -51,6 +52,11 @@ type Intent struct {
 	SearchKind string
 	Query      string
 	Scope      string
+	// ExpectedPartition and ExpectedAccountID fence snapshot-backed reverse
+	// lookups to the exact live resource identity shown in Summary.
+	ExpectedPartition string
+	ExpectedAccountID string
+	Force             bool
 }
 
 // ProjectionField and ProjectionRelation are safe, provider-independent view
@@ -118,6 +124,21 @@ type SearchCoverage struct {
 	Partial         bool
 }
 
+// GraphSnapshot identifies snapshot-backed relationship results. It is kept
+// separate from QuerySnapshot so the TUI never presents a graph cache as a
+// live provider response.
+type GraphSnapshot struct {
+	Group       string
+	CompletedAt time.Time
+	AgeSeconds  int64
+	Succeeded   int
+	Failed      int
+	NotObserved int
+	Reused      bool
+	Collecting  bool
+	Error       bool
+}
+
 // IntentUpdate is one progressive stream item. Query carries the exact store
 // snapshot and typed failure; Context is populated once identity resolution
 // succeeds. Done is optional because closing the stream is also terminal.
@@ -126,6 +147,7 @@ type IntentUpdate struct {
 	Query      QueryUpdate
 	Projection IntentProjection
 	Coverage   *SearchCoverage
+	Graph      *GraphSnapshot
 	Done       bool
 }
 

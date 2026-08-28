@@ -86,11 +86,87 @@ func (runtime *lazyAWSRuntime) initialize() (*awsRuntime, error) {
 }
 
 func (runtime *lazyAWSRuntime) Dispatch(ctx context.Context, intent awsbrowser.Intent) (awsbrowser.IntentStream, error) {
+	if intent.Kind == awsbrowser.IntentIncoming {
+		return runtime.dispatchIncomingRelations(ctx, intent)
+	}
 	binding, err := runtime.initialize()
 	if err != nil {
 		return nil, err
 	}
 	return (&awsIntentDispatcher{core: binding.core, search: binding.search}).Dispatch(ctx, intent)
+}
+
+func (runtime *lazyAWSRuntime) dispatchIncomingRelations(ctx context.Context, intent awsbrowser.Intent) (awsbrowser.IntentStream, error) {
+	request, ok := awsIncomingSnapshotRequestForIntent(intent)
+	if !ok || ctx == nil {
+		return nil, errUnsupportedAWSIntent
+	}
+	groups, err := runtime.contextGroups()
+	if err != nil {
+		return nil, unavailable("AWS context groups are invalid")
+	}
+	group, ok := awsContextGroupForProfile(groups, intent.Profile)
+	if !ok {
+		return nil, unavailable("automatic incoming relations require the selected profile in an AWS context group")
+	}
+	syncService, err := runtime.SnapshotSyncService()
+	if err != nil {
+		return nil, err
+	}
+	readService, err := runtime.app.localSnapshotReadService()
+	if err != nil {
+		return nil, err
+	}
+	service := &awsAutoSnapshotService{
+		sync: syncService, read: readService, groups: groups, now: runtime.app.now,
+	}
+	streamCtx, cancel := context.WithCancel(ctx)
+	updates := make(chan awsbrowser.IntentUpdate, 2)
+	go func() {
+		defer close(updates)
+		updates <- awsbrowser.IntentUpdate{
+			Query: awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: awsbrowser.LoadLoading}},
+			Graph: &awsbrowser.GraphSnapshot{Group: group.Name, Collecting: true},
+		}
+		execution, graph, resolveErr := service.Resolve(streamCtx, request)
+		if resolveErr != nil {
+			state := awsbrowser.LoadUnknown
+			if errors.Is(resolveErr, context.Canceled) {
+				state = awsbrowser.LoadCancelled
+			}
+			select {
+			case updates <- awsbrowser.IntentUpdate{
+				Query: awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: state}},
+				Graph: &awsbrowser.GraphSnapshot{Group: group.Name, Error: true}, Done: true,
+			}:
+			case <-streamCtx.Done():
+			}
+			return
+		}
+		projection, projectErr := projectAWSIncomingSnapshot(execution, request)
+		if projectErr != nil {
+			select {
+			case updates <- awsbrowser.IntentUpdate{
+				Query: awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: awsbrowser.LoadUnknown}},
+				Graph: &awsbrowser.GraphSnapshot{Group: group.Name, Error: true}, Done: true,
+			}:
+			case <-streamCtx.Done():
+			}
+			return
+		}
+		state := awsbrowser.LoadReady
+		if len(projection.Resources) == 0 {
+			state = awsbrowser.LoadEmpty
+		}
+		select {
+		case updates <- awsbrowser.IntentUpdate{
+			Query:      awsbrowser.QueryUpdate{Snapshot: awsbrowser.QuerySnapshot{State: state, FetchedAt: graph.CompletedAt}},
+			Projection: projection, Graph: &graph, Done: true,
+		}:
+		case <-streamCtx.Done():
+		}
+	}()
+	return &awsbrowser.ChannelIntentStream{C: updates, CancelFunc: cancel}, nil
 }
 
 func (runtime *lazyAWSRuntime) ListContexts(ctx context.Context) ([]awsbrowser.ContextChoice, error) {

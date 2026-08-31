@@ -499,11 +499,35 @@ func (m Model) updateKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m.enterCurrent()
 	default:
+		if frame != nil && frame.mode == routeDetail && (key == "1" || key == "2") {
+			return m.openOverviewPreviewTarget(int(key[0] - '1'))
+		}
 		if frame != nil && filterableRoute(frame.mode) && printableFilterInput(key) {
 			m.appendResourceFilter(frame, key)
 		}
 	}
 	return m, nil
+}
+
+func (m Model) openOverviewPreviewTarget(index int) (tea.Model, tea.Cmd) {
+	frame := m.current()
+	if frame == nil || frame.mode != routeDetail {
+		return m, nil
+	}
+	categories := detailCategories(frame.detail)
+	if frame.relationSelected < 0 || frame.relationSelected >= len(categories) {
+		return m, nil
+	}
+	category := categories[frame.relationSelected]
+	if category.Key == "target-trace" || index < 0 || index >= len(category.Group.Relations) || index > 1 {
+		frame.status = "No preview target for that shortcut."
+		return m, nil
+	}
+	relation := category.Group.Relations[index]
+	if relation.Target == "" {
+		return m.openRelationEvidence(relation)
+	}
+	return m.pushAndDispatch(Intent{Kind: IntentOpen, Target: relation.Target}, relation.Label, frame.context)
 }
 
 func (m Model) updateCommandKey(key string) (tea.Model, tea.Cmd) {

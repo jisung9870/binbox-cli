@@ -6,8 +6,24 @@
 │ Search  type to filter loaded resources                                                                              │
 │                                                                                                                      │
 │ Resources (1) · rows 1-1                                                                                             │
-│   NAME                                TYPE                ID                  STATUS      ACCOUNT       REGION       │
-│ > web-api                             ec2.instance        web-api             running     -             -            │
+│   NAME                     TYPE              ID                    STATUS     │ Quick Preview                        │
+│ > web-api                  ec2.instance      web-api               running    │ web-api                              │
+│                                                                               │ ec2.instance:-                       │
+│                                                                               │ web-api                              │
+│                                                                               │                                      │
+│                                                                               │ At a glance                          │
+│                                                                               │ Private IP  10.0.1.24                │
+│                                                                               │ Long value  metadata-metadata-metad… │
+│                                                                               │                                      │
+│                                                                               │ Relations                            │
+│                                                                               │ Security groups  sg-web              │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │ type or / filter  ↑↓ move  →/enter detail  ← back  : command  ^o/^i history                                          │

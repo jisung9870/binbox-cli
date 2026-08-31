@@ -443,7 +443,7 @@ func TestOverviewPreviewsRelationsAndOpensEachCategoryLocally(t *testing.T) {
 			t.Fatalf("detail missing category %q count %s:\n%s", want.label, want.count, view)
 		}
 	}
-	for _, preview := range []string{"sg-web · sg-ops", "vol-data", "vpc-main"} {
+	for _, preview := range []string{"1:sg-web · 2:sg-ops", "1:vol-data", "1:vpc-main"} {
 		if !strings.Contains(view, preview) {
 			t.Fatalf("overview missing relation preview %q:\n%s", preview, view)
 		}
@@ -1003,6 +1003,29 @@ func TestAliasOverviewDispatchesOneTargetTraceIntent(t *testing.T) {
 	current := model.(Model)
 	if current.current().intent.Kind != IntentTrace || current.current().intent.Target != resource.Relations[0].Target || current.current().label != "Target trace" {
 		t.Fatalf("trace frame=%+v", current.current())
+	}
+}
+
+func TestOverviewNumberShortcutOpensPreviewTargetDirectly(t *testing.T) {
+	stream := newTestIntentStream()
+	dispatcher := &recordingDispatcher{streams: []*testIntentStream{stream}}
+	resource := ResourceProjection{
+		Target: "ec2.instance:i-001", Title: "web-api",
+		Relations: []ProjectionRelation{
+			{Label: "web-sg", Target: "ec2.security-group:sg-web"},
+			{Label: "ops-sg", Target: "ec2.security-group:sg-ops"},
+		},
+	}
+	m := NewModel(context.Background(), Config{Profile: "dev", Region: "ap-northeast-2", NoColor: true}, dispatcher)
+	m.history = []routeFrame{{mode: routeDetail, detail: resource}}
+	model, command := m.Update(key('2'))
+	if command == nil {
+		t.Fatal("preview shortcut did not start target read")
+	}
+	currentModel := model.(Model)
+	current := currentModel.current()
+	if current.intent.Kind != IntentOpen || current.intent.Target != "ec2.security-group:sg-ops" || current.label != "ops-sg" {
+		t.Fatalf("preview shortcut frame=%+v", current)
 	}
 }
 

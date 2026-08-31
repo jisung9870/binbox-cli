@@ -146,7 +146,11 @@ without an AWS request. AWS resource rows prefer a non-blank `Name` tag, then a
 native resource name such as an SG group name, and finally the stable resource
 ID; when a name is used, the ID remains visible as secondary identity. Opening
 a resource lands on a service-aware Overview with key fields plus relation and
-Tags previews. Detail shows the full projected field set only when requested.
+Tags previews. At 120 columns and wider, resource lists also show a right-side
+Quick Preview for the selected row without another AWS request. Relation previews
+label their first two targets `1:` and `2:`; pressing that number opens the target
+directly, while Enter still opens the complete category. Detail shows the full
+projected field set only when requested.
 Relationships are grouped into categories such as Security groups
 and Volumes; opening a category is local-only and shows its related resources
 in a dedicated list before any linked-resource request runs. If that linked

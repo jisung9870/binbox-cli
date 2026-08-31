@@ -2,10 +2,10 @@ package awsbrowser
 
 import "strings"
 
-// ELBV2RegionFromDNS recognizes the name-id.elb.region partition suffix used
-// by Application and Network Load Balancers. It deliberately excludes the
-// Classic Load Balancer name-id.region.elb suffix; the ELBV2 provider still
-// confirms an accepted DNS name with DescribeLoadBalancers.
+// ELBV2RegionFromDNS recognizes both AWS ELB DNS layouts used by Application
+// and Network Load Balancers. This is only a regional lookup hint; the ELBV2
+// provider confirms the DNS name with DescribeLoadBalancers before promoting
+// it to a canonical resource.
 func ELBV2RegionFromDNS(partition, dnsName string) (string, bool) {
 	dnsName = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(dnsName)), ".")
 	dnsName = strings.TrimPrefix(dnsName, "dualstack.")
@@ -22,12 +22,18 @@ func ELBV2RegionFromDNS(partition, dnsName string) (string, bool) {
 		return "", false
 	}
 	prefix := strings.TrimSuffix(dnsName, suffix)
-	separator := strings.LastIndex(prefix, ".elb.")
-	if separator < 1 || separator+len(".elb.") == len(prefix) {
-		return "", false
+	resourceName, region := "", ""
+	if separator := strings.LastIndex(prefix, ".elb."); separator >= 1 && separator+len(".elb.") < len(prefix) {
+		resourceName = prefix[:separator]
+		region = prefix[separator+len(".elb."):]
+	} else if strings.HasSuffix(prefix, ".elb") {
+		withoutELB := strings.TrimSuffix(prefix, ".elb")
+		if separator := strings.LastIndex(withoutELB, "."); separator >= 1 && separator+1 < len(withoutELB) {
+			resourceName = withoutELB[:separator]
+			region = withoutELB[separator+1:]
+		}
 	}
-	region := prefix[separator+len(".elb."):]
-	if !regionNameRE.MatchString(region) || strings.TrimSpace(prefix[:separator]) == "" {
+	if !regionNameRE.MatchString(region) || strings.TrimSpace(resourceName) == "" {
 		return "", false
 	}
 	return region, true

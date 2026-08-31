@@ -3,9 +3,9 @@
 독자        binbox-cli 개발·운영자
 목적        ALB/NLB 직접 catalog와 Route 53 alias에서 compute target까지 이어지는 live read 경계·검증 근거를 고정한다.
 대상 환경   `bb aws browse`, AWS commercial 및 China partition의 지원 DNS 형식
-최종 검토   2026-08-28
+최종 검토   2026-08-31
 다음 검토   실제 `udg` account smoke 또는 ELBv2 API/DNS 형식 변경 시
-상태        직접 ALB/NLB catalog와 fixture 구현 완료, 실제 account ELBv2 smoke는 권한 gate로 차단
+상태        직접 ALB/NLB catalog, fixture, 실제 account ALB/NLB one-screen trace 검증 완료
 
 ## B2는 ALB/NLB를 직접 열고 ingress chain을 이어간다
 
@@ -30,7 +30,7 @@ IP target은 EC2 instance로 추측하지 않는다. TUI는 IP와 health 상태�
 
 가정:
 
-- Route 53이 반환한 ALB/NLB alias DNS는 `<name>.elb.<region>.amazonaws.com` 또는 China partition의 `.com.cn` 형식이며 선택적으로 `dualstack.` prefix를 갖는다. `<name>.<region>.elb.amazonaws.com`은 Classic Load Balancer 형식이므로 ELBv2 target으로 승격하지 않는다. 2026-08-28 확인 근거는 AWS의 [Application Load Balancer DNS](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html#load-balancer-dns-name)와 [Network Load Balancer DNS](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/network-load-balancers.html#load-balancer-dns) 문서다. 형식이 바뀌면 alias가 evidence-only로 남으므로 DNS recognizer를 재검토해야 한다.
+- Route 53이 반환한 ELB alias DNS는 NLB에서 관찰한 `<name>.elb.<region>.amazonaws.com`과 ALB에서 관찰한 `dualstack.<name>.<region>.elb.amazonaws.com` 두 배열을 사용하며 China partition은 `.com.cn` suffix를 갖는다. recognizer는 두 배열을 regional lookup hint로만 승인하고, `DescribeLoadBalancers`가 같은 region/account에서 DNS 또는 ARN을 확인한 뒤에만 ELBv2 canonical resource로 승격한다. 따라서 같은 배열의 Classic ELB는 ELBv2 API에서 확인되지 않아 empty/evidence 상태로 남는다.
 - listener rule API가 반환한 배열 순서는 AWS의 rule order다. provider는 이를 다시 정렬하지 않는다.
 
 ## 직접 catalog와 alias trace가 같은 ELBv2 provider를 사용한다
@@ -97,4 +97,12 @@ IP와 Lambda target은 type을 유지하되 소유 resource를 추측하지 않�
 - raw rule relation의 source/target으로 reverse edge를 재구성할 수 있다.
 - provider/unit/model/integration fixture가 credential-free로 반복 실행된다.
 
-2026-08-28 `lg-udg-ops` profile은 STS identity 확인에 성공했지만 `elasticloadbalancing:DescribeLoadBalancers`가 identity policy의 explicit deny로 차단됐다. 대표 ALB와 NLB domain smoke는 이 read 권한이 허용된 profile에서 다시 수행해 observed latency와 empty/cross-account 종료 문구를 확인한다. 결과가 fixture와 다르면 이 문서와 fixture를 함께 갱신한다.
+2026-08-28 `lg-udg-ops` profile은 STS identity 확인에 성공했지만 `elasticloadbalancing:DescribeLoadBalancers`가 identity policy의 explicit deny로 차단됐다.
+
+2026-08-31 `lg-udg-adm` profile/account `306612189751`, `ap-northeast-2`에서 조회 전용 smoke를 완료했다.
+
+- account에는 ALB 4개와 NLB 2개가 관찰됐고, UDG의 네 region 모두 `DescribeLoadBalancers`가 성공했다.
+- `mont.udg.line.games.`의 실제 ALB DNS 배열 `dualstack.<name>.ap-northeast-2.elb.amazonaws.com`을 regional target으로 인식했다.
+- ALB trace는 alias evidence, ALB, listener 2개, rule 6개, target group과 registered target을 포함한 19개 resource로 `Ready` 종료했다.
+- `pmm.udg.line.games.` NLB trace는 listener 2개와 target group을 지나 registered ALB target의 listener/rule까지 이어져 27개 resource로 `Ready` 종료했다.
+- 첫 실행에서 listener의 `member-of` parent LB를 다시 큐에 넣어 exact `DescribeLoadBalancers`를 중복 실행했고 AWS가 `ValidationError`를 반환했다. 이미 관찰된 canonical resource를 queue에서 제외하고 ARN exact read에서 catalog pagination option을 제거한 뒤 두 trace 모두 성공했다.

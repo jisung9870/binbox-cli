@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -353,6 +354,27 @@ func TestRoute53ELBV2AliasBecomesRegionalNavigableTarget(t *testing.T) {
 	projection := awsbrowser.ProjectResourceFields(resource.Key, resource.Observation.Fields())
 	if len(projection.Relations) != 2 || projection.Relations[0].Target != "elbv2.load-balancer-dns:m-nlb-udg-kr-pmm-24c45c678d7f8951.elb.ap-northeast-2.amazonaws.com" {
 		t.Fatalf("projection=%+v", projection)
+	}
+}
+
+func TestRoute53ALBAliasBecomesRegionalNavigableTarget(t *testing.T) {
+	const dnsName = "dualstack.r-alb-udg-kr-game-722267338.ap-northeast-2.elb.amazonaws.com."
+	fake := &route53Fake{listRecordSets: func(context.Context, *route53.ListResourceRecordSetsInput) (*route53.ListResourceRecordSetsOutput, error) {
+		return &route53.ListResourceRecordSetsOutput{ResourceRecordSets: []types.ResourceRecordSet{{
+			Name: aws.String("mont.udg.line.games."), Type: types.RRTypeA,
+			AliasTarget: &types.AliasTarget{
+				HostedZoneId: aws.String("ZWKZPGTI48KDX"), DNSName: aws.String(dnsName), EvaluateTargetHealth: true,
+			},
+		}}}, nil
+	}}
+	sink := &collectingSink{}
+	if err := newRoute53ForTest(t, fake).Execute(context.Background(), route53Key(t, awsbrowser.OperationListResourceRecordSets, map[string]string{"hosted-zone-id": "Z1"}), sink); err != nil {
+		t.Fatal(err)
+	}
+	resource := sink.pages[0].Resources()[0]
+	target, ok := resource.Observation.Fields()["alias_relation"].(map[string]any)["target"].(awsbrowser.ResourceKey)
+	if !ok || target.Type != "elbv2.load-balancer-dns" || target.ID != strings.TrimSuffix(dnsName, ".") || target.Region != "ap-northeast-2" {
+		t.Fatalf("target=%+v", target)
 	}
 }
 

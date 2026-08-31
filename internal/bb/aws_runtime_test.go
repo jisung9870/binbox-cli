@@ -85,6 +85,15 @@ func (fake *traceIntentCoreFake) Query(_ context.Context, request awsintegration
 		if keyErr != nil {
 			return awsintegration.Result{}, keyErr
 		}
+		if request.Operation == awsbrowser.OperationDescribeListeners {
+			loadBalancerKey, keyErr := awsbrowser.NewRegionalResourceKey(fake.context, "elbv2.load-balancer", "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/api/111")
+			if keyErr != nil {
+				return awsintegration.Result{}, keyErr
+			}
+			fields["relations"] = []any{map[string]any{
+				"target": loadBalancerKey, "relation_type": "member-of", "direction": "outgoing", "kind": "api-exact",
+			}}
+		}
 		observation, observationErr := awsbrowser.NewResourceObservationForOperation(fake.context, request.Operation, fields, when, true)
 		if observationErr != nil {
 			return awsintegration.Result{}, observationErr

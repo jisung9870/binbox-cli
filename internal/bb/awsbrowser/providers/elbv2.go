@@ -75,9 +75,11 @@ func (executor *ELBV2QueryExecutor) describeLoadBalancers(ctx context.Context, k
 	} else if !catalogQuery && !validELBV2ARN(key.Context, loadBalancerARN, "loadbalancer/") {
 		return awsbrowser.ErrInvalidQueryKey
 	}
-	input := &elasticloadbalancingv2.DescribeLoadBalancersInput{PageSize: aws.Int32(elbv2PageSize)}
+	input := &elasticloadbalancingv2.DescribeLoadBalancersInput{}
 	if loadBalancerARN != "" {
 		input.LoadBalancerArns = []string{loadBalancerARN}
+	} else {
+		input.PageSize = aws.Int32(elbv2PageSize)
 	}
 	seen := map[string]struct{}{}
 	var pageNumber uint64

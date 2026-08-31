@@ -3,9 +3,9 @@
 독자        저장소 소유자와 이후 AWS TUI 구현·검토 담당자  
 목적        Route 53 alias에서 실제 target까지 반복 진입하지 않고 한 화면에서 경로를 확인하게 한다  
 대상 환경   `bb aws browse`, Route 53 alias, ALB/NLB·CloudFront·S3·EC2 read-only provider  
-최종 검토   2026-08-29  
-다음 검토   DescribeLoadBalancers 권한이 있는 대표 ALB/NLB profile로 실제 경로를 검증한 뒤  
-상태        B4-E 자동 trace와 실패 화면 collapse 구현 완료
+최종 검토   2026-08-31
+다음 검토   AWS ELB relation/DNS contract 또는 trace 상한 변경 시
+상태        B4-E 자동 trace, 실패 화면 collapse, 실제 ALB/NLB 검증 완료
 
 ## 결론
 
@@ -23,7 +23,7 @@ Route 53 alias Overview의 `Target trace`는 한 번의 Enter로 지원되는 fo
 
 1. alias target DNS 또는 CloudFront domain을 depth 0 evidence row로 먼저 표시한다.
 2. verified profile·region을 상속해 exact provider request를 순차 실행한다.
-3. 각 projection의 지원되는 outgoing target을 queue에 추가하고 canonical target으로 deduplicate한다.
+3. 각 projection의 지원되는 outgoing target을 queue에 추가하되, 이미 조회했거나 이미 관찰된 canonical target은 다시 queue에 넣지 않는다.
 4. 완료 전에도 누적 projection을 stream으로 갱신한다.
 5. 모든 분기가 끝나면 Ready, 일부 실패면 성공 노드와 typed failure를 함께 표시한다.
 
@@ -41,5 +41,6 @@ Route 53 alias Overview의 `Target trace`는 한 번의 Enter로 지원되는 fo
 
 - model test가 Target trace category의 단일 intent dispatch와 failed child collapse를 검증한다.
 - runtime test가 DNS→ALB→Listener→Rule의 누적 순서, depth metadata, denied root evidence 보존을 검증한다.
-- `lg-udg-ops`의 `DescribeLoadBalancers` explicit deny 기록은 live target 확인의 권한 blocker다. 자동 trace는 조작 횟수를 줄이고 근거를 보존하지만 deny를 우회하지 않는다.
-- 실제 ALB/NLB branching latency와 결과 상한은 권한이 허용된 representative profile 검증 후 재검토한다.
+- `lg-udg-ops`의 `DescribeLoadBalancers` explicit deny 기록은 그대로 유효하다. 자동 trace는 조작 횟수를 줄이고 근거를 보존하지만 deny를 우회하지 않는다.
+- 2026-08-31 `lg-udg-adm`, `ap-northeast-2` 실계정 검증에서 `mont.udg.line.games.` ALB trace는 19개 resource, `pmm.udg.line.games.` NLB→ALB trace는 27개 resource로 각각 `Ready` 종료했다.
+- 실계정 첫 smoke에서 관찰된 parent LB 재조회 `ValidationError`는 observed-resource queue deduplication과 ARN exact-read pagination 제거로 수정했으며 같은 두 경로로 재검증했다.

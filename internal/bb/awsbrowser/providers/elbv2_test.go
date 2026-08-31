@@ -176,6 +176,28 @@ func TestELBV2DomainTraceFixturePreservesRuleConditionsAndTargetTypes(t *testing
 	}
 }
 
+func TestELBV2ExactLoadBalancerReadOmitsCatalogPagination(t *testing.T) {
+	fake := &elbv2Fake{}
+	fake.describeLoadBalancers = func(_ context.Context, input *elasticloadbalancingv2.DescribeLoadBalancersInput) (*elasticloadbalancingv2.DescribeLoadBalancersOutput, error) {
+		if len(input.LoadBalancerArns) != 1 || input.LoadBalancerArns[0] != testLoadBalancerARN || input.PageSize != nil {
+			t.Fatalf("exact load balancer input=%+v", input)
+		}
+		return &elasticloadbalancingv2.DescribeLoadBalancersOutput{LoadBalancers: []types.LoadBalancer{{
+			LoadBalancerArn: aws.String(testLoadBalancerARN), LoadBalancerName: aws.String("api-public"),
+			DNSName: aws.String("api-public-123.elb.ap-northeast-2.amazonaws.com"), Type: types.LoadBalancerTypeEnumApplication,
+			State: &types.LoadBalancerState{Code: types.LoadBalancerStateEnumActive},
+		}}}, nil
+	}
+	executor, err := NewELBV2(fake, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources := executeELBV2Fixture(t, executor, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-arn": testLoadBalancerARN})
+	if len(resources) != 1 || resources[0].Key.ID != testLoadBalancerARN {
+		t.Fatalf("resources=%+v", resources)
+	}
+}
+
 func TestELBV2CatalogListsAndFiltersALBAndNLB(t *testing.T) {
 	now := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
 	fake := &elbv2Fake{}

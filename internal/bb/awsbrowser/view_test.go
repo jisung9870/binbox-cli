@@ -146,7 +146,7 @@ func TestOverviewPrioritizesServiceFieldsAndCompactsPreviews(t *testing.T) {
 	view := m.View().Content
 	for _, want := range []string{
 		"AWS > web-api > Overview", "At a glance", "Instance Type", "m7i.large", "VPC Id", "vpc-main",
-		"web-sg · ops-sg · +1", "Name=web-api · Env=prod · +1",
+		"1:web-sg · 2:ops-sg · +1", "Name=web-api · Env=prod · +1",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("overview missing %q:\n%s", want, view)
@@ -154,6 +154,21 @@ func TestOverviewPrioritizesServiceFieldsAndCompactsPreviews(t *testing.T) {
 	}
 	if strings.Contains(view, "open Detail to see this") {
 		t.Fatalf("overview exposed a non-priority full-detail field:\n%s", view)
+	}
+}
+
+func TestWideResourceListShowsLocalQuickPreview(t *testing.T) {
+	resource := resourceProjection("web-api", "running")
+	resource.Relations = []ProjectionRelation{{Label: "web-sg", Target: "ec2.security-group:sg-web"}}
+	resource.Tags = []ProjectionTag{{Key: "Env", Value: "prod"}}
+	m := NewModel(context.Background(), Config{NoColor: true}, nil)
+	m.width, m.height = 120, 30
+	m.history = []routeFrame{{mode: routeList, label: "EC2", projection: IntentProjection{Resources: []ResourceProjection{resource}}}}
+	view := m.View().Content
+	for _, want := range []string{"Quick Preview", "At a glance", "Relations", "web-sg", "Tags", "Env=prod"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("quick preview missing %q:\n%s", want, view)
+		}
 	}
 }
 

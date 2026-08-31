@@ -589,7 +589,7 @@ func (dispatcher *awsIntentDispatcher) dispatchTrace(ctx context.Context, intent
 				)
 				projection.Resources = append(projection.Resources, resource)
 				for _, relation := range resource.Relations {
-					if !traceFollowTarget(relation.Target) || seenTargets[relation.Target] {
+					if !traceFollowTarget(relation.Target) || seenTargets[relation.Target] || seenResources[relation.Target] {
 						continue
 					}
 					profile, region := request.Profile, request.Region

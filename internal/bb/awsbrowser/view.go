@@ -461,7 +461,6 @@ func renderList(m Model, route routeFrame) string {
 	} else if len(resources) == 0 {
 		lines = append(lines, styles.warning.Render("No matches for “"+safeIntentText(route.filterValue)+"”"))
 	} else {
-		headers, widths := resourceTableLayout(inner)
 		available := max(1, m.height-2-len(lines)-3)
 		start := max(0, route.selected-available+1)
 		end := min(len(resources), start+available)
@@ -470,10 +469,33 @@ func renderList(m Model, route routeFrame) string {
 			count = fmt.Sprintf("Resources (%d/%d)", len(resources), len(route.projection.Resources))
 		}
 		lines = append(lines, styles.section.Render(count)+styles.muted.Render(fmt.Sprintf(" · rows %d-%d", start+1, end)))
-		lines = append(lines, tableHeader(styles, headers, widths, inner))
+		listWidth := inner
+		previewWidth := 0
+		if inner >= 116 {
+			listWidth = inner * 2 / 3
+			previewWidth = inner - listWidth - 3
+		}
+		headers, widths := resourceTableLayout(listWidth)
+		left := []string{tableHeader(styles, headers, widths, listWidth)}
 		for index := start; index < end; index++ {
 			resource := resources[index]
-			lines = append(lines, tableRow(styles, index == route.selected, resourceTableCells(resource, headers), widths, inner))
+			left = append(left, tableRow(styles, index == route.selected, resourceTableCells(resource, headers), widths, listWidth))
+		}
+		if previewWidth == 0 {
+			lines = append(lines, left...)
+		} else {
+			right := resourceQuickPreview(styles, resources[route.selected], previewWidth)
+			bodyHeight := min(max(len(left), len(right)), available+1)
+			for index := 0; index < bodyHeight; index++ {
+				leftLine, rightLine := "", ""
+				if index < len(left) {
+					leftLine = left[index]
+				}
+				if index < len(right) {
+					rightLine = right[index]
+				}
+				lines = append(lines, padRight(fit(leftLine, listWidth), listWidth)+styles.muted.Render(" │ ")+fit(rightLine, previewWidth))
+			}
 		}
 	}
 	if m.height >= 16 {
@@ -484,7 +506,53 @@ func renderList(m Model, route routeFrame) string {
 		footer = "type or / filter  ↑↓ move  →/enter live  e evidence  ← back  ^r refresh"
 	}
 	lines = append(lines, styles.footer.Render(footer))
-	return frameView(lines, m.width, min(m.height, max(14, len(lines)+2)), styles)
+	return frameView(lines, m.width, m.height, styles)
+}
+
+func resourceQuickPreview(styles browserStyles, resource ResourceProjection, width int) []string {
+	resourceType, resourceID, _ := strings.Cut(resource.Target, ":")
+	lines := []string{
+		styles.section.Render("Quick Preview"),
+		fit(resource.Title, width),
+		fit(stringsJoinNonEmpty(resourceType, projectionFieldValue(resource.Fields, "State", "Status")), width),
+		fit(resourceID, width),
+	}
+	if fields := overviewFields(resource, 4); len(fields) != 0 {
+		lines = append(lines, "", styles.section.Render("At a glance"))
+		for _, field := range fields {
+			lines = append(lines, fit(field.Label+"  "+field.Value, width))
+		}
+	}
+	if groups := relationGroups(resource); len(groups) != 0 {
+		lines = append(lines, "", styles.section.Render("Relations"))
+		shown := 0
+		for _, group := range groups {
+			for _, relation := range group.Relations {
+				value := relation.Label
+				if value == "" {
+					value = relation.TargetRef
+				}
+				lines = append(lines, fit(group.Label+"  "+value, width))
+				shown++
+				if shown == 2 {
+					break
+				}
+			}
+			if shown == 2 {
+				break
+			}
+		}
+	}
+	if len(resource.Tags) != 0 {
+		lines = append(lines, "", styles.section.Render("Tags"))
+		for index, tag := range resource.Tags {
+			lines = append(lines, fit(tag.Key+"="+tag.Value, width))
+			if index == 1 {
+				break
+			}
+		}
+	}
+	return lines
 }
 
 func renderSummary(m Model, route routeFrame) string {
@@ -564,7 +632,7 @@ func renderSummary(m Model, route routeFrame) string {
 	}
 	end := min(len(content), available)
 	lines := append(header, content[:end]...)
-	footer := "↑↓ category · →/enter open · ← back · : command · ^o/^i history"
+	footer := "↑↓ category · →/enter open · 1/2 preview target · ← back · : command · ^o/^i history"
 	lines = append(lines, fit(styles.footer.Render(footer), inner))
 	return frameView(lines, m.width, m.height, styles)
 }
@@ -1031,7 +1099,7 @@ func categoryPreview(resource ResourceProjection, category detailCategory) strin
 		return "context group on open"
 	}
 	values := make([]string, 0, min(2, len(category.Group.Relations)))
-	for _, relation := range category.Group.Relations {
+	for index, relation := range category.Group.Relations {
 		value := strings.TrimSpace(relation.Label)
 		if value == "" {
 			value = strings.TrimSpace(relation.TargetRef)
@@ -1040,7 +1108,7 @@ func categoryPreview(resource ResourceProjection, category detailCategory) strin
 			_, value, _ = strings.Cut(relation.Target, ":")
 		}
 		if value != "" {
-			values = append(values, value)
+			values = append(values, fmt.Sprintf("%d:%s", index+1, value))
 		}
 		if len(values) == 2 {
 			break

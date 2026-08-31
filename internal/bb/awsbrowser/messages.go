@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 var (
@@ -280,6 +281,34 @@ func ProjectResourceFields(key ResourceKey, fields map[string]any) ResourceProje
 	relations := withoutSelfRelations(key, projectRelations(fields))
 	tags := projectTags(fields)
 	switch key.Type {
+	case "ec2.launch-template":
+		relations = append(relations, ProjectionRelation{
+			Label: "Versions", Target: "ec2.launch-template-versions:" + key.ID,
+			Type: string(RelationContains), Direction: string(RelationOutgoing),
+			Kind: "scoped-query", Reason: "launch template versions", Scope: key.Region,
+		})
+	case "ec2.launch-template-version":
+		if version, ok := fields["version_number"].(int64); ok {
+			name := firstProjectionString(fields, "name", "launch_template_id")
+			title = safeIntentText(fmt.Sprintf("%s · v%d", name, version))
+			subtitle = safeIntentText(key.ID)
+			if isDefault, _ := fields["default_version"].(bool); isDefault {
+				subtitle += " · default"
+			}
+		}
+		if present, _ := fields["user_data_present"].(bool); present {
+			relations = append(relations, ProjectionRelation{
+				Label: "User Data", Target: "ec2.launch-template-user-data:" + key.ID,
+				Type: string(RelationContains), Direction: string(RelationOutgoing),
+				Kind: "scoped-query", Reason: "explicit launch template user data read", Scope: key.Region,
+			})
+		}
+	case "ec2.launch-template-user-data":
+		if version, ok := fields["version_number"].(int64); ok {
+			name := firstProjectionString(fields, "name", "launch_template_id")
+			title = safeIntentText(fmt.Sprintf("User Data · %s · v%d", name, version))
+			subtitle = "Explicit read · may contain sensitive values"
+		}
 	case "ec2.security-group":
 		projectedFields = withoutProjectionField(projectedFields, "Rules")
 		relations = append(relations,
@@ -478,11 +507,30 @@ func projectFields(fields map[string]any) []ProjectionField {
 	sort.Strings(names)
 	result := make([]ProjectionField, 0, len(names))
 	for _, name := range names {
+		if name == "script" {
+			if value, ok := fields[name].(string); ok && value != "" {
+				result = append(result, ProjectionField{Label: "Script", Value: safeMultilineText(value)})
+			}
+			continue
+		}
 		if value, ok := projectionValue(fields[name]); ok {
 			result = append(result, ProjectionField{Label: humanLabel(name), Value: value})
 		}
 	}
 	return result
+}
+
+func safeMultilineText(value string) string {
+	value = strings.ReplaceAll(strings.ReplaceAll(value, "\r\n", "\n"), "\r", "\n")
+	return strings.Map(func(character rune) rune {
+		if character == '\n' || character == '\t' {
+			return character
+		}
+		if character < 0x20 || character == 0x7f || unicode.In(character, unicode.Bidi_Control) {
+			return -1
+		}
+		return character
+	}, value)
 }
 
 func projectionValue(value any) (string, bool) {
@@ -619,9 +667,10 @@ func projectRelations(fields map[string]any) []ProjectionRelation {
 // narrowed read operation is implemented for its resource type.
 func NavigableRelationTargetType(resourceType string) bool {
 	switch resourceType {
-	case "ec2.instance", "ec2.volume", "ec2.security-group", "ec2.security-group-rule",
+	case "ec2.instance", "ec2.image", "ec2.volume", "ec2.security-group", "ec2.security-group-rule",
 		"ec2.security-group-rules-inbound", "ec2.security-group-rules-outbound",
-		"ec2.vpc", "ec2.subnet", "ec2.route-table", "ec2.vpc-peering-connection", "iam.role", "iam.instance-profile",
+		"ec2.vpc", "ec2.subnet", "ec2.route-table", "ec2.vpc-peering-connection",
+		"ec2.launch-template", "ec2.launch-template-versions", "ec2.launch-template-version", "ec2.launch-template-user-data", "iam.role", "iam.instance-profile",
 		"iam.role-attached-policies", "iam.role-inline-policies", "iam.managed-policy", "iam.inline-policy",
 		"iam.managed-policy-version", "hosted-zone", "route53.records",
 		"cloudfront.distribution-domain", "elbv2.load-balancer-dns", "elbv2.load-balancer",

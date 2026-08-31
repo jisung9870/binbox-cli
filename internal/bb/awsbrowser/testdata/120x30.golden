@@ -8,8 +8,8 @@
 │   IAM Roles                       iam-roles                 Not loaded · AWS global                                  │
 │   VPC & Networking                vpc-networking            Not loaded                                               │
 │   Load Balancers (ALB/NLB)        elbv2-load-balancers      Not loaded                                               │
-│   Cross-profile search            cross-profile-search      Domain, role · scope on open                             │
-│                                                                                                                      │
+│   Cross-profile search            cross-profile-search      AMI, domain, role · scope on open                        │
+│   EC2 Launch Templates            ec2-launch-templates      Not loaded                                               │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

@@ -12,6 +12,7 @@ func (a *App) aws(args []string) error {
   bb aws browse [--profile NAME] [--region REGION]
                                   Browse read-only AWS resources and links
   bb aws query ec2 instances [--profile NAME] [--region REGION] [--json]
+  bb aws query ami <ami-id> [--profile NAME] [--region REGION] [--scope current|all] [--json]
   bb aws query domain <fqdn> [--profile NAME] [--region REGION] [--scope current|all] [--json]
   bb aws query role <exact-name> [--profile NAME] [--region REGION] [--scope current|all] [--json]
                                   Run one scoped read-only AWS query

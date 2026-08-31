@@ -8,7 +8,10 @@ import (
 func TestProviderOperationContractAcceptsOnlyOwnedOperations(t *testing.T) {
 	for _, pair := range [][2]string{
 		{ProviderEC2, OperationDescribeInstances},
+		{ProviderEC2, OperationDescribeImages},
 		{ProviderEC2, OperationDescribeSecurityGroupRules},
+		{ProviderEC2, OperationDescribeLaunchTemplates},
+		{ProviderEC2, OperationDescribeLaunchTemplateVersions},
 		{ProviderIAM, OperationListRoles},
 		{ProviderIAM, OperationGetPolicyVersion},
 		{ProviderRoute53, OperationListHostedZones},

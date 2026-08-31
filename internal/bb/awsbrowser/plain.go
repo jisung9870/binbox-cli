@@ -161,7 +161,7 @@ func (p Plain) Run(ctx context.Context, terminal Terminal, config Config) error 
 		case "search":
 			if len(history) == 0 || !history[len(history)-1].search || len(fields) < 4 ||
 				!plainChoice(fields[1], searchKinds) || !plainChoice(fields[2], searchScopes) {
-				fmt.Fprintln(terminal.Err, "command: search <domain|role|ec2-instances> <all|current> <value>")
+				fmt.Fprintln(terminal.Err, "command: search <ami|domain|role|ec2-instances> <all|current> <value>")
 				continue
 			}
 			query := strings.TrimSpace(strings.Join(strings.Fields(line)[3:], " "))

@@ -2,8 +2,11 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +19,7 @@ import (
 
 type fakeEC2 struct {
 	instances func(context.Context, *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error)
+	images    func(context.Context, *ec2.DescribeImagesInput) (*ec2.DescribeImagesOutput, error)
 	volumes   func(context.Context, *ec2.DescribeVolumesInput) (*ec2.DescribeVolumesOutput, error)
 	groups    func(context.Context, *ec2.DescribeSecurityGroupsInput) (*ec2.DescribeSecurityGroupsOutput, error)
 	rules     func(context.Context, *ec2.DescribeSecurityGroupRulesInput) (*ec2.DescribeSecurityGroupRulesOutput, error)
@@ -23,6 +27,15 @@ type fakeEC2 struct {
 	subnets   func(context.Context, *ec2.DescribeSubnetsInput) (*ec2.DescribeSubnetsOutput, error)
 	routes    func(context.Context, *ec2.DescribeRouteTablesInput) (*ec2.DescribeRouteTablesOutput, error)
 	peerings  func(context.Context, *ec2.DescribeVpcPeeringConnectionsInput) (*ec2.DescribeVpcPeeringConnectionsOutput, error)
+	templates func(context.Context, *ec2.DescribeLaunchTemplatesInput) (*ec2.DescribeLaunchTemplatesOutput, error)
+	versions  func(context.Context, *ec2.DescribeLaunchTemplateVersionsInput) (*ec2.DescribeLaunchTemplateVersionsOutput, error)
+}
+
+func (f *fakeEC2) DescribeImages(c context.Context, i *ec2.DescribeImagesInput) (*ec2.DescribeImagesOutput, error) {
+	if f.images == nil {
+		panic("unexpected DescribeImages")
+	}
+	return f.images(c, i)
 }
 
 func (f *fakeEC2) DescribeInstances(c context.Context, i *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
@@ -73,6 +86,18 @@ func (f *fakeEC2) DescribeVpcPeeringConnections(c context.Context, i *ec2.Descri
 	}
 	return f.peerings(c, i)
 }
+func (f *fakeEC2) DescribeLaunchTemplates(c context.Context, i *ec2.DescribeLaunchTemplatesInput) (*ec2.DescribeLaunchTemplatesOutput, error) {
+	if f.templates == nil {
+		panic("unexpected DescribeLaunchTemplates")
+	}
+	return f.templates(c, i)
+}
+func (f *fakeEC2) DescribeLaunchTemplateVersions(c context.Context, i *ec2.DescribeLaunchTemplateVersionsInput) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
+	if f.versions == nil {
+		panic("unexpected DescribeLaunchTemplateVersions")
+	}
+	return f.versions(c, i)
+}
 
 type captureSink struct {
 	pages     []awsbrowser.QueryPage
@@ -116,7 +141,7 @@ func TestEC2ExecutorSelectsOperationBuildsInputAndMapsRelations(t *testing.T) {
 	client := &fakeEC2{instances: func(_ context.Context, in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 		got = in
 		return &ec2.DescribeInstancesOutput{Reservations: []types.Reservation{{Instances: []types.Instance{{
-			InstanceId: aws.String("i-1"), VpcId: aws.String("vpc-1"), SubnetId: aws.String("subnet-1"), InstanceType: types.InstanceTypeT3Micro,
+			InstanceId: aws.String("i-1"), ImageId: aws.String("ami-1"), VpcId: aws.String("vpc-1"), SubnetId: aws.String("subnet-1"), InstanceType: types.InstanceTypeT3Micro,
 			State: &types.InstanceState{Name: types.InstanceStateNameRunning}, SecurityGroups: []types.GroupIdentifier{{GroupId: aws.String("sg-1")}},
 			BlockDeviceMappings: []types.InstanceBlockDeviceMapping{{DeviceName: aws.String("/dev/xvda"), Ebs: &types.EbsInstanceBlockDevice{VolumeId: aws.String("vol-1")}}},
 			IamInstanceProfile:  &types.IamInstanceProfile{Arn: aws.String("arn:aws:iam::123456789012:instance-profile/app/web-profile")},
@@ -149,6 +174,7 @@ func TestEC2ExecutorSelectsOperationBuildsInputAndMapsRelations(t *testing.T) {
 		t.Fatalf("profile fields=%+v", fields)
 	}
 	wantTargets := map[string]string{
+		"ec2.image/ami-1":                  "us-east-1",
 		"ec2.vpc/vpc-1":                    "us-east-1",
 		"ec2.subnet/subnet-1":              "us-east-1",
 		"ec2.security-group/sg-1":          "us-east-1",
@@ -159,6 +185,7 @@ func TestEC2ExecutorSelectsOperationBuildsInputAndMapsRelations(t *testing.T) {
 		t.Fatalf("relation targets=%+v want=%+v", gotTargets, wantTargets)
 	}
 	wantSemantics := map[string]string{
+		"ec2.image/ami-1":                  "uses|",
 		"ec2.vpc/vpc-1":                    "member-of|",
 		"ec2.subnet/subnet-1":              "member-of|",
 		"ec2.security-group/sg-1":          "uses|network-interface=unknown",
@@ -169,6 +196,169 @@ func TestEC2ExecutorSelectsOperationBuildsInputAndMapsRelations(t *testing.T) {
 		t.Fatalf("relation semantics=%+v want=%+v", gotSemantics, wantSemantics)
 	}
 	assertMappedOnly(t, fields)
+}
+
+func TestEC2LaunchTemplatesAndVersionsAreLazyMappedAndRedactUserData(t *testing.T) {
+	created := fixedClock()().Add(-time.Hour)
+	var templateInput *ec2.DescribeLaunchTemplatesInput
+	client := &fakeEC2{templates: func(_ context.Context, input *ec2.DescribeLaunchTemplatesInput) (*ec2.DescribeLaunchTemplatesOutput, error) {
+		templateInput = input
+		return &ec2.DescribeLaunchTemplatesOutput{LaunchTemplates: []types.LaunchTemplate{{
+			LaunchTemplateId: aws.String("lt-123"), LaunchTemplateName: aws.String("web"),
+			DefaultVersionNumber: aws.Int64(2), LatestVersionNumber: aws.Int64(3), CreateTime: &created,
+			Tags: []types.Tag{{Key: aws.String("Name"), Value: aws.String("web-template")}},
+		}}}, nil
+	}}
+	executor, err := NewEC2QueryExecutor(client, fixedClock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	templateSink := &captureSink{}
+	if err = executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeLaunchTemplates, nil), templateSink); err != nil {
+		t.Fatal(err)
+	}
+	if templateInput == nil || templateInput.MaxResults == nil || len(templateSink.pages) != 1 {
+		t.Fatalf("input=%+v pages=%d", templateInput, len(templateSink.pages))
+	}
+	template := templateSink.pages[0].Resources()[0]
+	if template.Key.Type != "ec2.launch-template" || template.Key.ID != "lt-123" || template.Observation.Fields()["latest_version_number"] != int64(3) {
+		t.Fatalf("template=%+v fields=%+v", template.Key, template.Observation.Fields())
+	}
+
+	const script = "#!/bin/bash\necho ready\n"
+	secretUserData := base64.StdEncoding.EncodeToString([]byte(script))
+	var versionInput *ec2.DescribeLaunchTemplateVersionsInput
+	client = &fakeEC2{versions: func(_ context.Context, input *ec2.DescribeLaunchTemplateVersionsInput) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
+		versionInput = input
+		return &ec2.DescribeLaunchTemplateVersionsOutput{LaunchTemplateVersions: []types.LaunchTemplateVersion{{
+			LaunchTemplateId: aws.String("lt-123"), LaunchTemplateName: aws.String("web"), VersionNumber: aws.Int64(3),
+			DefaultVersion: aws.Bool(true), VersionDescription: aws.String("production"), CreateTime: &created,
+			LaunchTemplateData: &types.ResponseLaunchTemplateData{
+				ImageId: aws.String("ami-123"), InstanceType: types.InstanceTypeT3Micro, UserData: aws.String(secretUserData),
+				IamInstanceProfile: &types.LaunchTemplateIamInstanceProfileSpecification{Name: aws.String("web-profile")},
+				SecurityGroupIds:   []string{"sg-1"},
+				NetworkInterfaces:  []types.LaunchTemplateInstanceNetworkInterfaceSpecification{{SubnetId: aws.String("subnet-1"), Groups: []string{"sg-2"}}},
+			},
+		}}}, nil
+	}}
+	executor, _ = NewEC2QueryExecutor(client, fixedClock())
+	versionSink := &captureSink{}
+	if err = executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeLaunchTemplateVersions, map[string]string{"launch-template-id": "lt-123", "version": "3"}), versionSink); err != nil {
+		t.Fatal(err)
+	}
+	if versionInput == nil || aws.ToString(versionInput.LaunchTemplateId) != "lt-123" || !reflect.DeepEqual(versionInput.Versions, []string{"3"}) || versionInput.MaxResults != nil {
+		t.Fatalf("version input=%+v", versionInput)
+	}
+	versionResource := versionSink.pages[0].Resources()[0]
+	fields := versionResource.Observation.Fields()
+	if versionResource.Key.Type != "ec2.launch-template-version" || versionResource.Key.ID != "lt-123/3" || fields["user_data_present"] != true {
+		t.Fatalf("version=%+v fields=%+v", versionResource.Key, fields)
+	}
+	if strings.Contains(fmt.Sprintf("%v", fields), secretUserData) {
+		t.Fatalf("mapped fields leaked launch template user data: %v", fields)
+	}
+	projection := awsbrowser.ProjectResourceFields(versionResource.Key, fields)
+	for _, target := range []string{"ec2.launch-template:lt-123", "ec2.launch-template-user-data:lt-123/3", "ec2.image:ami-123", "ec2.security-group:sg-1", "ec2.security-group:sg-2", "ec2.subnet:subnet-1", "iam.instance-profile:web-profile"} {
+		found := false
+		for _, relation := range projection.Relations {
+			found = found || relation.Target == target
+		}
+		if !found {
+			t.Fatalf("missing relation %q in %+v", target, projection.Relations)
+		}
+	}
+	if strings.Contains(fmt.Sprintf("%v", fields), script) {
+		t.Fatalf("normal version fields leaked decoded launch template user data: %v", fields)
+	}
+
+	userDataSink := &captureSink{}
+	if err = executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeLaunchTemplateVersions, map[string]string{
+		"launch-template-id": "lt-123", "version": "3", "view": "user-data",
+	}), userDataSink); err != nil {
+		t.Fatal(err)
+	}
+	userData := userDataSink.pages[0].Resources()[0]
+	userFields := userData.Observation.Fields()
+	if userData.Key.Type != "ec2.launch-template-user-data" || userFields["script"] != script || userFields["decoded_bytes"] != len(script) {
+		t.Fatalf("user data=%+v fields=%+v", userData.Key, userFields)
+	}
+	projected := awsbrowser.ProjectResourceFields(userData.Key, userFields)
+	if projected.Title != "User Data · web · v3" || len(projected.Fields) == 0 {
+		t.Fatalf("user data projection=%+v", projected)
+	}
+}
+
+func TestEC2AMIExactReadMapsSafeFields(t *testing.T) {
+	var input *ec2.DescribeImagesInput
+	client := &fakeEC2{images: func(_ context.Context, value *ec2.DescribeImagesInput) (*ec2.DescribeImagesOutput, error) {
+		input = value
+		return &ec2.DescribeImagesOutput{Images: []types.Image{{
+			ImageId: aws.String("ami-123"), Name: aws.String("al2023-app"), Description: aws.String("application base image"),
+			OwnerId: aws.String("123456789012"), CreationDate: aws.String("2026-08-28T01:02:03.000Z"),
+			Architecture: types.ArchitectureValues("x86_64"), State: types.ImageState("available"),
+			ImageType: types.ImageTypeValues("machine"), RootDeviceName: aws.String("/dev/xvda"),
+			RootDeviceType: types.DeviceType("ebs"), VirtualizationType: types.VirtualizationType("hvm"),
+			PlatformDetails: aws.String("Linux/UNIX"), EnaSupport: aws.Bool(true), Public: aws.Bool(false),
+			Tags: []types.Tag{{Key: aws.String("Name"), Value: aws.String("app-ami")}},
+		}}}, nil
+	}}
+	executor, err := NewEC2QueryExecutor(client, fixedClock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &captureSink{}
+	if err = executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeImages, map[string]string{"image-id": "ami-123"}), sink); err != nil {
+		t.Fatal(err)
+	}
+	if input == nil || !reflect.DeepEqual(input.ImageIds, []string{"ami-123"}) || input.MaxResults != nil {
+		t.Fatalf("input=%+v", input)
+	}
+	resource := sink.pages[0].Resources()[0]
+	fields := resource.Observation.Fields()
+	if resource.Key.Type != "ec2.image" || resource.Key.ID != "ami-123" || fields["name"] != "al2023-app" || fields["state"] != "available" || fields["owner_id"] != "123456789012" {
+		t.Fatalf("resource=%+v fields=%+v", resource.Key, fields)
+	}
+	assertMappedOnly(t, fields)
+}
+
+func TestEC2AMIExactReadTreatsMissingImageAsEmpty(t *testing.T) {
+	client := &fakeEC2{images: func(context.Context, *ec2.DescribeImagesInput) (*ec2.DescribeImagesOutput, error) {
+		return &ec2.DescribeImagesOutput{}, nil
+	}}
+	executor, _ := NewEC2QueryExecutor(client, fixedClock())
+	sink := &captureSink{}
+	if err := executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeImages, map[string]string{"image-id": "ami-0123456789abcdef0"}), sink); err != nil {
+		t.Fatal(err)
+	}
+	if sink.completed != 1 || len(sink.pages) != 0 {
+		t.Fatalf("sink=%+v", sink)
+	}
+}
+
+func TestEC2LaunchTemplateVersionSelectorRejectsNonVersionValues(t *testing.T) {
+	for _, value := range []string{"latest", "0", "-1", "$default"} {
+		key := providerKey(t, awsbrowser.OperationDescribeLaunchTemplateVersions, map[string]string{"launch-template-id": "lt-123", "version": value})
+		if _, err := decodeEC2Params(key); !errors.Is(err, errInvalidEC2Query) {
+			t.Fatalf("version %q accepted: %v", value, err)
+		}
+	}
+}
+
+func TestEC2LaunchTemplateUserDataRejectsInvalidBase64WithoutCommitting(t *testing.T) {
+	client := &fakeEC2{versions: func(context.Context, *ec2.DescribeLaunchTemplateVersionsInput) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
+		return &ec2.DescribeLaunchTemplateVersionsOutput{LaunchTemplateVersions: []types.LaunchTemplateVersion{{
+			LaunchTemplateId: aws.String("lt-123"), LaunchTemplateName: aws.String("web"), VersionNumber: aws.Int64(3),
+			LaunchTemplateData: &types.ResponseLaunchTemplateData{UserData: aws.String("not base64")},
+		}}}, nil
+	}}
+	executor, _ := NewEC2QueryExecutor(client, fixedClock())
+	sink := &captureSink{}
+	err := executor.Execute(context.Background(), providerKey(t, awsbrowser.OperationDescribeLaunchTemplateVersions, map[string]string{
+		"launch-template-id": "lt-123", "version": "3", "view": "user-data",
+	}), sink)
+	if err == nil || len(sink.pages) != 0 || sink.completed != 0 {
+		t.Fatalf("error=%v pages=%d completed=%d", err, len(sink.pages), sink.completed)
+	}
 }
 
 func TestEC2ExecutorSelectivelyCallsAllFrozenOperations(t *testing.T) {

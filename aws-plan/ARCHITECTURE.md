@@ -256,6 +256,7 @@ sequenceDiagram
 ### EC2
 
 - Instances/Volumes/Security Groups subroute는 각각 `DescribeInstances`, `DescribeVolumes`, `DescribeSecurityGroups`만 실행한다.
+- Launch Templates는 Home에서 `DescribeLaunchTemplates`로 목록을 읽고, 선택한 템플릿의 Versions를 열 때만 `DescribeLaunchTemplateVersions`를 실행한다. 일반 version mapping은 `UserData` 원문을 버린다. `User Data` 관계를 명시적으로 연 exact-version query만 Base64 내용을 최대 64 KiB까지 디코딩해 전용 세션 메모리 resource로 만들고 terminal control을 projection 경계에서 제거한다. Launch Template version 또는 EC2 instance의 AMI 관계를 열면 해당 ID 하나만 `DescribeImages`로 조회해 AMI 상태, 소유자, 아키텍처, 플랫폼, 생성 시각과 root device 정보를 표시한다.
 - VPC & Network category는 `DescribeVpcs`만 먼저 실행한다. 선택 VPC의 relation이 `DescribeSubnets` 또는 `DescribeRouteTables`를 실행한다.
 - instance Overview는 list output을 재사용한다.
 - EBS는 선택 volume ID로 `DescribeVolumes`를 실행한다.
@@ -366,6 +367,7 @@ SDK concrete client는 `sdk.go` factory가 소유하고 provider에는 아래 na
 | EC2 | `DescribeInstances` | EC2 category/SG usage | regional |
 | EC2 | `DescribeVolumes`, `DescribeSecurityGroups`, `DescribeSecurityGroupRules` | relation/tab | regional |
 | EC2 | `DescribeVpcs`, `DescribeSubnets`, `DescribeRouteTables` | category/relation | regional |
+| EC2 | `DescribeImages`, `DescribeLaunchTemplates`, `DescribeLaunchTemplateVersions` | linked AMI/launch-template category/version open | regional |
 | IAM | `ListRoles`, `GetInstanceProfile`, `GetRole` | IAM/EC2 relation/search | AWS global |
 | IAM | `ListAttachedRolePolicies`, `ListRolePolicies` | policy tab | global |
 | IAM | `GetPolicy`, `GetPolicyVersion`, `GetRolePolicy` | policy open | global |

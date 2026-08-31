@@ -62,7 +62,7 @@ named profile의 `credential_source=Environment`는 P0 cross-profile scope에서
 
 ### Read-only boundary
 
-각 provider는 좁은 SDK client interface만 받는다. 예를 들어 EC2 provider는 `DescribeInstances`, `DescribeVolumes`, `DescribeSecurityGroups`, `DescribeSecurityGroupRules`, `DescribeVpcs`, `DescribeSubnets`, `DescribeRouteTables`만 볼 수 있다. Concrete SDK client는 factory package 밖으로 노출하지 않는다.
+각 provider는 좁은 SDK client interface만 받는다. 예를 들어 EC2 provider는 승인된 `DescribeImages`, `DescribeInstances`, `DescribeVolumes`, `DescribeSecurityGroups`, `DescribeSecurityGroupRules`, `DescribeVpcs`, `DescribeSubnets`, `DescribeRouteTables`, `DescribeVpcPeeringConnections`, `DescribeLaunchTemplates`, `DescribeLaunchTemplateVersions`만 볼 수 있다. Concrete SDK client는 factory package 밖으로 노출하지 않는다.
 
 새 read operation은 다음 네 항목을 함께 추가해야 한다.
 

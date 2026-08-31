@@ -8,6 +8,7 @@ const (
 
 	ScopedQueryGuidance = "bb: aws browse requires an interactive TTY; use a scoped query:\n" +
 		"  bb aws query ec2 instances --profile dev --region ap-northeast-2 --json\n" +
+		"  bb aws query ami ami-0123456789abcdef0 --scope all --json\n" +
 		"  bb aws query domain api.example.com --scope all --json\n"
 	MinimumSizeMessage = "Terminal too small (need 40x12).\nResize or rerun with BB_SELECTOR=plain."
 )

@@ -207,6 +207,12 @@ type guardedEC2 struct {
 	client rawEC2API
 }
 
+func (c guardedEC2) DescribeImages(ctx context.Context, input *ec2.DescribeImagesInput) (*ec2.DescribeImagesOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeImagesOutput, error) {
+		return c.client.DescribeImages(ctx, input)
+	})
+}
+
 func (c guardedEC2) DescribeInstances(ctx context.Context, input *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeInstancesOutput, error) {
 		return c.client.DescribeInstances(ctx, input)
@@ -252,6 +258,18 @@ func (c guardedEC2) DescribeRouteTables(ctx context.Context, input *ec2.Describe
 func (c guardedEC2) DescribeVpcPeeringConnections(ctx context.Context, input *ec2.DescribeVpcPeeringConnectionsInput) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
 	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
 		return c.client.DescribeVpcPeeringConnections(ctx, input)
+	})
+}
+
+func (c guardedEC2) DescribeLaunchTemplates(ctx context.Context, input *ec2.DescribeLaunchTemplatesInput) (*ec2.DescribeLaunchTemplatesOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeLaunchTemplatesOutput, error) {
+		return c.client.DescribeLaunchTemplates(ctx, input)
+	})
+}
+
+func (c guardedEC2) DescribeLaunchTemplateVersions(ctx context.Context, input *ec2.DescribeLaunchTemplateVersionsInput) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
+	return guardedRead(ctx, c.guard, func(ctx context.Context) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
+		return c.client.DescribeLaunchTemplateVersions(ctx, input)
 	})
 }
 

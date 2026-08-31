@@ -34,8 +34,9 @@
 
 - `bb aws browse [--profile NAME] [--region REGION]`: 전용 progressive TUI이며 `--json`을 받지 않는다. `--profile`이 없으면 로컬 profile 선택기로 시작하고 명시하면 Home으로 바로 간다. 리소스 목록의 직접 입력은 로컬 검색이며, `c`는 검색 가능한 profile/group/current region/scope 선택, account/principal 검증, 적용을 TUI 안에서 수행한다. all scope의 EC2/VPC catalog는 current-first, 동시성 2로 region 결과와 coverage를 합치고 IAM/Route 53/CloudFront는 한 번만 읽는다. 리소스를 열면 그 결과의 실제 region으로 고정한다.
 - `bb aws query ec2 instances [--profile NAME] [--region REGION] [--json]`: current context의 scoped query다.
+- `bb aws query ami <ami-id> ... [--scope current|all] [--json]`: exact AMI를 configured profile/account에 조회해 AMI owner account와 실제 조회 가능한 account/profile을 구분해서 보여준다.
 - `bb aws query domain <fqdn> ... [--scope current|all] [--json]`와 `bb aws query role <exact-name> ... [--scope current|all] [--json]`: explicit-submit exact search다.
-- EC2/EBS/SG/VPC/Subnet/Route Table, IAM role/instance profile/policy, Route 53 hosted zone/record, CloudFront distribution, S3 bucket region을 typed provider와 normalized relation으로 읽는다.
+- EC2/AMI/EBS/SG/VPC/Subnet/Route Table과 EC2 Launch Template/version, IAM role/instance profile/policy, Route 53 hosted zone/record, CloudFront distribution, S3 bucket region을 typed provider와 normalized relation으로 읽는다. EC2 instance와 Launch Template version의 AMI 관계를 열면 exact `DescribeImages` 조회로 AMI 상태·소유자·아키텍처·플랫폼·생성 시각·root device를 확인한다. 일반 Launch Template version 조회는 User Data 원문을 버리고 존재 여부만 보여준다. 사용자가 `User Data`를 명시적으로 열면 exact-version 조회를 별도 실행해 Base64 디코딩한 내용을 세션 메모리의 전용 화면에만 표시하며, 해당 화면은 민감값 포함 가능성을 경고한다.
 - profile별 credential generation과 STS identity를 context에 묶고 generation/account/partition이 바뀐 stale response를 commit하지 않는다.
 - current-first cross-profile search, bounded concurrency, duplicate provenance, `not found/not searched/denied/login required` coverage를 보존한다.
 - non-TTY browse는 AWS를 호출하거나 prompt하지 않고 stderr에 scoped query 안내를 쓰며 exit 2를 반환한다.
@@ -46,6 +47,8 @@
 - AWS SDK for Go v2: STS identity와 narrowed EC2/IAM/Route 53/CloudFront/S3 List/Describe/Get operation, pagination, cancellation, typed error.
 - bb: local-first TUI model, query coordinator, session memory cache, relation projection, error/coverage 표시.
 - AWS: credential/token cache와 CloudTrail audit source of truth.
+
+Launch Template와 연결된 AMI 탐색에는 기존 read-only 정책에 `ec2:DescribeLaunchTemplates`, `ec2:DescribeLaunchTemplateVersions`, `ec2:DescribeImages`가 필요하다. 이 Describe action들은 resource-level 권한을 지원하지 않으므로 IAM statement의 `Resource`는 `"*"`를 사용한다. Auto Scaling Group 조회 권한은 필요하지 않으며 이 기능은 ASG API를 호출하지 않는다.
 
 ## 비목표
 

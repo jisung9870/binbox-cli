@@ -30,7 +30,7 @@ func TestPlainStartupAndQuitAreZeroCall(t *testing.T) {
 	if len(dispatcher.intents) != 0 {
 		t.Fatalf("startup intents=%+v", dispatcher.intents)
 	}
-	for _, want := range []string{"AWS Browser · READ ONLY", "Account unresolved", "1  EC2 Instances", "2  Route 53", "3  IAM Roles", "4  VPC & Networking", "5  Load Balancers (ALB/NLB)", "6  Cross-profile search", "open <n>|context|back|refresh|quit"} {
+	for _, want := range []string{"AWS Browser · READ ONLY", "Account unresolved", "1  EC2 Instances", "2  Route 53", "3  IAM Roles", "4  VPC & Networking", "5  Load Balancers (ALB/NLB)", "6  Cross-profile search", "7  EC2 Launch Templates", "open <n>|context|back|refresh|quit"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("plain missing %q:\n%s", want, out.String())
 		}

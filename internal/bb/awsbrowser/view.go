@@ -678,17 +678,20 @@ func overviewFieldPriority(target string) []string {
 	resourceType, _, _ := strings.Cut(target, ":")
 	common := []string{"Name", "Id", "State", "Status", "Type", "Description"}
 	specific := map[string][]string{
-		"ec2.instance":            {"Name", "State", "Instance Type", "Availability Zone", "Private IP Address", "Public IP Address", "VPC Id", "Subnet Id"},
-		"ec2.security-group":      {"Name", "Description", "VPC Id", "Owner Id", "Usage Scope"},
-		"ec2.vpc":                 {"Name", "State", "CIDR Block", "Is Default", "Instance Tenancy", "Owner Id"},
-		"ec2.volume":              {"Name", "State", "Volume Type", "Size GiB", "Availability Zone", "Encrypted", "IOPS", "Throughput Mibps"},
-		"elbv2.load-balancer":     {"Name", "Type", "State", "DNS Name", "Scheme", "IP Address Type", "VPC Id"},
-		"elbv2.target-group":      {"Name", "Target Type", "Protocol", "Port", "Health Check Protocol", "VPC Id"},
-		"hosted-zone":             {"Name", "Id", "Private", "Record Count", "Comment"},
-		"resource-record-set":     {"Name", "Type", "TTL", "Set Identifier", "Hosted Zone Id", "Health Check Id"},
-		"iam.role":                {"Role Name", "Role Id", "ARN", "Path", "Create Date", "Last Used Date"},
-		"iam.managed-policy":      {"Policy Name", "Policy Id", "ARN", "Attachment Count", "Default Version Id", "Update Date"},
-		"cloudfront.distribution": {"Distribution Id", "Domain Name", "Status", "Enabled", "Last Modified Time"},
+		"ec2.instance":                {"Name", "State", "Instance Type", "Availability Zone", "Private IP Address", "Public IP Address", "VPC Id", "Subnet Id"},
+		"ec2.image":                   {"Name", "State", "Description", "Architecture", "Platform Details", "Owner Id", "Creation Date", "Root Device Type", "Virtualization Type", "Public"},
+		"ec2.launch-template":         {"Name", "Id", "Default Version Number", "Latest Version Number", "Created By", "Create Time"},
+		"ec2.launch-template-version": {"Name", "Version Number", "Default Version", "Image Id", "Instance Type", "Instance Profile Name", "User Data Present"},
+		"ec2.security-group":          {"Name", "Description", "VPC Id", "Owner Id", "Usage Scope"},
+		"ec2.vpc":                     {"Name", "State", "CIDR Block", "Is Default", "Instance Tenancy", "Owner Id"},
+		"ec2.volume":                  {"Name", "State", "Volume Type", "Size GiB", "Availability Zone", "Encrypted", "IOPS", "Throughput Mibps"},
+		"elbv2.load-balancer":         {"Name", "Type", "State", "DNS Name", "Scheme", "IP Address Type", "VPC Id"},
+		"elbv2.target-group":          {"Name", "Target Type", "Protocol", "Port", "Health Check Protocol", "VPC Id"},
+		"hosted-zone":                 {"Name", "Id", "Private", "Record Count", "Comment"},
+		"resource-record-set":         {"Name", "Type", "TTL", "Set Identifier", "Hosted Zone Id", "Health Check Id"},
+		"iam.role":                    {"Role Name", "Role Id", "ARN", "Path", "Create Date", "Last Used Date"},
+		"iam.managed-policy":          {"Policy Name", "Policy Id", "ARN", "Attachment Count", "Default Version Id", "Update Date"},
+		"cloudfront.distribution":     {"Distribution Id", "Domain Name", "Status", "Enabled", "Last Modified Time"},
 	}
 	if fields := specific[resourceType]; len(fields) != 0 {
 		return fields

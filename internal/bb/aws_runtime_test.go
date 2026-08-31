@@ -147,6 +147,7 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 		params    map[string]string
 	}{
 		{"ec2-instances", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeInstances, nil},
+		{"ec2-launch-templates", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplates, nil},
 		{"route53-hosted-zones", awsbrowser.ProviderRoute53, awsbrowser.OperationListHostedZones, nil},
 		{"iam-roles", awsbrowser.ProviderIAM, awsbrowser.OperationListRoles, nil},
 		{"vpc-networking", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcs, nil},
@@ -154,6 +155,7 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 		{"elbv2-application-load-balancers", awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-type": "application"}},
 		{"elbv2-network-load-balancers", awsbrowser.ProviderELBV2, awsbrowser.OperationDescribeLoadBalancers, map[string]string{"load-balancer-type": "network"}},
 		{"ec2.instance:i-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeInstances, map[string]string{"instance-id": "i-123"}},
+		{"ec2.image:ami-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeImages, map[string]string{"image-id": "ami-123"}},
 		{"ec2.volume:vol-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVolumes, map[string]string{"volume-id": "vol-123"}},
 		{"ec2.security-group:sg-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSecurityGroups, map[string]string{"group-id": "sg-123"}},
 		{"ec2.security-group-rule:sgr-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSecurityGroupRules, map[string]string{"security-group-rule-id": "sgr-123"}},
@@ -163,6 +165,10 @@ func TestAWSIntentCatalogAndRelationRouting(t *testing.T) {
 		{"ec2.subnet:subnet-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeSubnets, map[string]string{"subnet-id": "subnet-123"}},
 		{"ec2.route-table:rtb-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeRouteTables, map[string]string{"route-table-id": "rtb-123"}},
 		{"ec2.vpc-peering-connection:pcx-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcPeeringConnections, map[string]string{"vpc-peering-connection-id": "pcx-123"}},
+		{"ec2.launch-template:lt-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplates, map[string]string{"launch-template-id": "lt-123"}},
+		{"ec2.launch-template-versions:lt-123", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplateVersions, map[string]string{"launch-template-id": "lt-123"}},
+		{"ec2.launch-template-version:lt-123/3", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplateVersions, map[string]string{"launch-template-id": "lt-123", "version": "3"}},
+		{"ec2.launch-template-user-data:lt-123/3", awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplateVersions, map[string]string{"launch-template-id": "lt-123", "version": "3", "view": "user-data"}},
 		{"iam.role:reader", awsbrowser.ProviderIAM, awsbrowser.OperationGetRole, map[string]string{"role-name": "reader"}},
 		{"iam.role-attached-policies:reader", awsbrowser.ProviderIAM, awsbrowser.OperationListAttachedRolePolicies, map[string]string{"role-name": "reader"}},
 		{"iam.role-inline-policies:reader", awsbrowser.ProviderIAM, awsbrowser.OperationListRolePolicies, map[string]string{"role-name": "reader"}},
@@ -272,7 +278,7 @@ func TestAWSNavigableRelationContractHasRuntimeMapping(t *testing.T) {
 	listenerARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:listener/app/api/123/456"
 	targetGroupARN := "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/api/789"
 	tests := map[string]string{
-		"ec2.instance": "i-1", "ec2.volume": "vol-1", "ec2.security-group": "sg-1",
+		"ec2.instance": "i-1", "ec2.image": "ami-1", "ec2.volume": "vol-1", "ec2.security-group": "sg-1",
 		"ec2.security-group-rule": "sgr-1", "ec2.security-group-rules-inbound": "sg-1",
 		"ec2.security-group-rules-outbound": "sg-1", "ec2.vpc": "vpc-1", "ec2.subnet": "subnet-1",
 		"ec2.route-table": "rtb-1", "ec2.vpc-peering-connection": "pcx-1", "iam.role": "reader", "iam.instance-profile": "worker",
@@ -315,6 +321,7 @@ func TestAWSSearchIntentMapsCurrentAndAll(t *testing.T) {
 		want   awsintegration.SearchRequest
 	}{
 		{awsbrowser.Intent{SearchKind: "ec2-instances", Scope: "current", Query: "i-1", Profile: "dev", Region: "us-east-1"}, awsintegration.SearchRequest{Kind: awsintegration.SearchEC2Instances, Scope: awsintegration.SearchCurrent, Query: "i-1", Profile: "dev", Region: "us-east-1"}},
+		{awsbrowser.Intent{SearchKind: "ami", Scope: "all", Query: "ami-0123456789abcdef0", Profile: "dev", Region: "us-east-1"}, awsintegration.SearchRequest{Kind: awsintegration.SearchAMI, Scope: awsintegration.SearchAll, Query: "ami-0123456789abcdef0", Profile: "dev", Region: "us-east-1"}},
 		{awsbrowser.Intent{SearchKind: "domain", Scope: "all", Query: "api.example.com."}, awsintegration.SearchRequest{Kind: awsintegration.SearchDomain, Scope: awsintegration.SearchAll, Query: "api.example.com."}},
 		{awsbrowser.Intent{SearchKind: "role", Scope: "all", Query: "reader"}, awsintegration.SearchRequest{Kind: awsintegration.SearchRole, Scope: awsintegration.SearchAll, Query: "reader"}},
 	}
@@ -335,7 +342,7 @@ func TestAWSSearchIntentMapsCurrentAndAll(t *testing.T) {
 func TestAWSMultiRegionRoutingAndAggregation(t *testing.T) {
 	regions := []string{"ap-northeast-2", "ap-southeast-1", "us-east-1", "eu-central-1"}
 	regionSet := strings.Join(regions, ",")
-	for _, target := range []string{"ec2-instances", "elbv2-load-balancers", "elbv2-application-load-balancers", "elbv2-network-load-balancers"} {
+	for _, target := range []string{"ec2-instances", "ec2-launch-templates", "elbv2-load-balancers", "elbv2-application-load-balancers", "elbv2-network-load-balancers"} {
 		regional, err := multiRegionIntentRegions(awsbrowser.Intent{Target: target, Region: regions[0], Regions: regionSet})
 		if err != nil || !reflect.DeepEqual(regional, regions) {
 			t.Fatalf("target=%s regional=%+v error=%v", target, regional, err)

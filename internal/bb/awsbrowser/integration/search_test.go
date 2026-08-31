@@ -100,6 +100,53 @@ func TestSearchServiceDoesNoWorkBeforeSubmitAndOrdersDeduplicatedScope(t *testin
 	}
 }
 
+func TestSearchServiceFindsAMIVisibilityAcrossAccounts(t *testing.T) {
+	lister := &searchProfileListerFake{profiles: []string{"dev", "prod"}}
+	contexts := map[string]awsbrowser.AWSContext{
+		"dev":  searchTestContext(t, "dev", "111111111111", 1),
+		"prod": searchTestContext(t, "prod", "222222222222", 1),
+	}
+	core := &searchCoreFake{
+		resolve: func(_ context.Context, request ContextRequest) (ContextResult, error) {
+			value := contexts[request.Profile]
+			return ContextResult{Context: &value}, nil
+		},
+		query: func(_ context.Context, request Request) (Result, error) {
+			if request.Operation != awsbrowser.OperationDescribeImages || request.Params["image-id"] != "ami-0123456789abcdef0" {
+				t.Fatalf("query=%+v", request)
+			}
+			value := contexts[request.Profile]
+			resource := searchTestResource(t, value, request.Operation, false, "ec2.image", "ami-0123456789abcdef0", map[string]any{
+				"name": "shared-base", "owner_id": "999999999999",
+			})
+			return searchTestResult(t, value, request.Provider, request.Operation, request.Params, resource), nil
+		},
+	}
+	service, err := NewSearchService(core, lister, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Submit(context.Background(), SearchRequest{
+		Kind: SearchAMI, Scope: SearchAll, Query: "ami-0123456789abcdef0", Profile: "dev", Region: "ap-northeast-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Resources) != 2 || len(result.Coverage) != 2 {
+		t.Fatalf("result=%+v", result)
+	}
+	for _, coverage := range result.Coverage {
+		if coverage.Status != ProfileStatusMatched || coverage.Matches != 1 {
+			t.Fatalf("coverage=%+v", coverage)
+		}
+	}
+	for _, resource := range result.Resources {
+		if resource.Key.Type != "ec2.image" || resource.Observations[0].Fields()["owner_id"] != "999999999999" {
+			t.Fatalf("resource=%+v", resource)
+		}
+	}
+}
+
 func TestSearchServiceQueriesCurrentWithoutWaitingForSlowProfiles(t *testing.T) {
 	lister := &searchProfileListerFake{profiles: []string{"slow"}}
 	current := searchTestContext(t, "current", "111111111111", 1)

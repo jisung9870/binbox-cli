@@ -123,7 +123,10 @@ func TestInterfacesExposeOnlyApprovedOperations(t *testing.T) {
 			name:   "EC2",
 			typeOf: reflect.TypeOf((*awsbrowser.EC2API)(nil)).Elem(),
 			want: []string{
+				"DescribeImages",
 				"DescribeInstances",
+				"DescribeLaunchTemplateVersions",
+				"DescribeLaunchTemplates",
 				"DescribeRouteTables",
 				"DescribeSecurityGroupRules",
 				"DescribeSecurityGroups",

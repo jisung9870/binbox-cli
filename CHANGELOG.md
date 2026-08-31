@@ -12,8 +12,14 @@ release tags and the corresponding release records.
   AWS SDK for Go v2 EC2/IAM/Route 53/CloudFront/S3 reads, STS-verified profile contexts,
   generation fencing, linked-resource navigation, partial states, and
   explicit-submit bounded cross-profile search.
-- Added `bb aws query ec2 instances|domain|role` for scoped human or schema-v1
+- Added `bb aws query ec2 instances|ami|domain|role` for scoped human or schema-v1
   JSON automation; interactive `aws browse` no longer accepts `--json`.
+- Added exact AMI lookup across configured AWS profiles. Human output reports
+  the AMI owner account separately from each account/profile where the AMI is
+  visible, while JSON retains full coverage and mapped AMI fields.
+- Added EC2 Launch Template catalogs, version details, explicit User Data
+  inspection, and linked AMI navigation from launch-template versions and EC2
+  instances.
 - Added an in-browser AWS context selector: `c` discovers configured profiles,
   lets the operator edit region, verifies the derived account/principal through
   STS, and applies the context without restarting `bb aws browse`.
@@ -68,6 +74,8 @@ release tags and the corresponding release records.
 
 - Immediate context failures now publish a terminal query state instead of
   leaving the TUI on a misleading `incomplete stream` status.
+- Exact launch-template version reads no longer send `MaxResults` together
+  with `Versions`, avoiding EC2 `InvalidParameterCombination` failures.
 
 ## 0.15.1 - 2026-08-13
 

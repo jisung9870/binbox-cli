@@ -8,9 +8,9 @@
 │   IAM Roles                     Not loaded · … │
 │   VPC & Networking              Not loaded     │
 │   Load Balancers (ALB/NLB)      Not loaded     │
-│   Cross-profile search          Domain, role … │
+│   Cross-profile search          AMI, domain, … │
+│   EC2 Launch Templates          Not loaded     │
 │ ↑↓ move · →/enter open · : command             │
-│                                                │
 │                                                │
 │ c context · ctrl+g search · ? help             │
 ╰────────────────────────────────────────────────╯

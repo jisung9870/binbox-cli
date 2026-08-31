@@ -18,14 +18,17 @@ const (
 	ProviderELBV2      = "elbv2"
 	ProviderS3         = "s3"
 
-	OperationDescribeInstances             = "DescribeInstances"
-	OperationDescribeVolumes               = "DescribeVolumes"
-	OperationDescribeSecurityGroups        = "DescribeSecurityGroups"
-	OperationDescribeSecurityGroupRules    = "DescribeSecurityGroupRules"
-	OperationDescribeVpcs                  = "DescribeVpcs"
-	OperationDescribeSubnets               = "DescribeSubnets"
-	OperationDescribeRouteTables           = "DescribeRouteTables"
-	OperationDescribeVpcPeeringConnections = "DescribeVpcPeeringConnections"
+	OperationDescribeImages                 = "DescribeImages"
+	OperationDescribeInstances              = "DescribeInstances"
+	OperationDescribeVolumes                = "DescribeVolumes"
+	OperationDescribeSecurityGroups         = "DescribeSecurityGroups"
+	OperationDescribeSecurityGroupRules     = "DescribeSecurityGroupRules"
+	OperationDescribeVpcs                   = "DescribeVpcs"
+	OperationDescribeSubnets                = "DescribeSubnets"
+	OperationDescribeRouteTables            = "DescribeRouteTables"
+	OperationDescribeVpcPeeringConnections  = "DescribeVpcPeeringConnections"
+	OperationDescribeLaunchTemplates        = "DescribeLaunchTemplates"
+	OperationDescribeLaunchTemplateVersions = "DescribeLaunchTemplateVersions"
 
 	OperationListRoles                = "ListRoles"
 	OperationGetInstanceProfile       = "GetInstanceProfile"
@@ -51,10 +54,11 @@ const (
 
 var providerOperations = map[string]map[string]struct{}{
 	ProviderEC2: operationSet(
-		OperationDescribeInstances, OperationDescribeVolumes, OperationDescribeSecurityGroups,
+		OperationDescribeImages, OperationDescribeInstances, OperationDescribeVolumes, OperationDescribeSecurityGroups,
 		OperationDescribeSecurityGroupRules, OperationDescribeVpcs, OperationDescribeSubnets,
 		OperationDescribeRouteTables,
 		OperationDescribeVpcPeeringConnections,
+		OperationDescribeLaunchTemplates, OperationDescribeLaunchTemplateVersions,
 	),
 	ProviderIAM: operationSet(
 		OperationListRoles, OperationGetInstanceProfile, OperationGetRole,

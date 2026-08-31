@@ -16,6 +16,7 @@
 - 리소스의 출처를 `partition + account + region + type + id`로 식별한다.
 - Tag, Security Group rule, IAM policy는 한 줄로 줄이지 않고 별도 전체 화면에서 읽는다.
 - EC2 → EBS/SG/instance profile → IAM role → policy 이동을 같은 탐색 stack 안에서 처리한다.
+- EC2 Launch Template 목록과 버전을 지연 조회하며 AMI/SG/Subnet/IAM profile 관계를 열 수 있다. AMI 관계는 exact `DescribeImages` 조회로 상세를 표시하고, User Data 원문은 browser model에 넣지 않는다.
 - 도메인·role cross-profile 검색은 모든 키 입력마다 실행하지 않고, 검색 확정 시 선택 범위의 profile을 자동 fan-out 한다.
 - AWS 변경 API는 계속 금지한다. Browser runtime에서 AWS CLI는 profile discovery와 ambient/named credential export만 맡고, AWS SDK for Go v2가 STS·EC2·IAM·Route 53 read operation을 실행한다. 기존 SSO login/assume 명령은 별도 호환 surface다.
 - AWS TUI는 전체 viewport를 사용하는 k9s-inspired workspace다. `:` command, `/` local filter, `Ctrl-o`/`Ctrl-i` history를 제공하지만 k9s의 mutation과 cluster 문맥은 가져오지 않는다.

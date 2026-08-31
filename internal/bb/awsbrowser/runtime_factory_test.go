@@ -87,6 +87,10 @@ type ec2Stub struct {
 	describeInstances func(context.Context) (*ec2.DescribeInstancesOutput, error)
 }
 
+func (*ec2Stub) DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
+	return &ec2.DescribeImagesOutput{}, nil
+}
+
 func (s *ec2Stub) DescribeInstances(ctx context.Context, _ *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	if s.describeInstances != nil {
 		return s.describeInstances(ctx)
@@ -120,6 +124,14 @@ func (*ec2Stub) DescribeRouteTables(context.Context, *ec2.DescribeRouteTablesInp
 
 func (*ec2Stub) DescribeVpcPeeringConnections(context.Context, *ec2.DescribeVpcPeeringConnectionsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcPeeringConnectionsOutput, error) {
 	return &ec2.DescribeVpcPeeringConnectionsOutput{}, nil
+}
+
+func (*ec2Stub) DescribeLaunchTemplates(context.Context, *ec2.DescribeLaunchTemplatesInput, ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplatesOutput, error) {
+	return &ec2.DescribeLaunchTemplatesOutput{}, nil
+}
+
+func (*ec2Stub) DescribeLaunchTemplateVersions(context.Context, *ec2.DescribeLaunchTemplateVersionsInput, ...func(*ec2.Options)) (*ec2.DescribeLaunchTemplateVersionsOutput, error) {
+	return &ec2.DescribeLaunchTemplateVersionsOutput{}, nil
 }
 
 type iamStub struct{}

@@ -25,7 +25,8 @@ var homeCatalog = []catalogItem{
 	{ID: "iam-roles", Label: "IAM Roles", Status: "Not loaded · AWS global"},
 	{ID: "vpc-networking", Label: "VPC & Networking", Status: "Not loaded"},
 	{ID: "elbv2-load-balancers", Label: "Load Balancers (ALB/NLB)", Status: "Not loaded"},
-	{ID: "cross-profile-search", Label: "Cross-profile search", Status: "Domain, role · scope on open"},
+	{ID: "cross-profile-search", Label: "Cross-profile search", Status: "AMI, domain, role · scope on open"},
+	{ID: "ec2-launch-templates", Label: "EC2 Launch Templates", Status: "Not loaded"},
 }
 
 type routeMode uint8
@@ -40,7 +41,7 @@ const (
 	routeContext
 )
 
-var searchKinds = []string{"domain", "role", "ec2-instances"}
+var searchKinds = []string{"domain", "role", "ami", "ec2-instances"}
 var searchScopes = []string{"all", "current"}
 
 type routeFrame struct {
@@ -562,6 +563,9 @@ func (m Model) executeCommand() (tea.Model, tea.Cmd) {
 	case "ec2", "instances", "ec2-instances":
 		m.closeCommand()
 		return m.openCatalogByID("ec2-instances")
+	case "launch-template", "launch-templates", "ec2-launch-templates":
+		m.closeCommand()
+		return m.openCatalogByID("ec2-launch-templates")
 	case "vpc", "network", "networking", "sg", "security-groups":
 		m.closeCommand()
 		return m.openCatalogByID("vpc-networking")
@@ -1178,8 +1182,9 @@ func singletonDetailTarget(target string) bool {
 		return false
 	}
 	switch resourceType {
-	case "ec2.instance", "ec2.volume", "ec2.security-group", "ec2.security-group-rule", "ec2.vpc-peering-connection",
+	case "ec2.instance", "ec2.image", "ec2.volume", "ec2.security-group", "ec2.security-group-rule", "ec2.vpc-peering-connection",
 		"ec2.vpc", "ec2.subnet", "ec2.route-table", "iam.role", "iam.instance-profile",
+		"ec2.launch-template-user-data",
 		"iam.managed-policy", "iam.inline-policy", "iam.managed-policy-version",
 		"cloudfront.distribution-domain", "elbv2.load-balancer-dns", "elbv2.load-balancer",
 		"elbv2.target-group", "s3.bucket":
@@ -1194,6 +1199,7 @@ func directRelationGroup(group relationGroup) bool {
 		(group.Key == "inbound-rules" || group.Key == "outbound-rules" ||
 			group.Key == "attached-policies" || group.Key == "inline-policies" ||
 			group.Key == "policy-document" || group.Key == "dns-records" || group.Key == "alias-targets" ||
+			group.Key == "user-data" ||
 			group.Key == "listeners" || group.Key == "listener-rules" || group.Key == "target-groups" || group.Key == "targets")
 }
 
@@ -1635,6 +1641,7 @@ var relationGroupOrder = []struct{ Key, Label string }{
 	{Key: "attached-policies", Label: "Attached policies"},
 	{Key: "inline-policies", Label: "Inline policies"},
 	{Key: "policy-document", Label: "Policy document"},
+	{Key: "user-data", Label: "User Data"},
 	{Key: "dns-records", Label: "DNS records"},
 	{Key: "security-groups", Label: "Security groups"},
 	{Key: "volumes", Label: "Volumes"},
@@ -1693,6 +1700,8 @@ func relationGroupKey(relation ProjectionRelation) string {
 		return "volumes"
 	case "ec2.instance":
 		return "instances"
+	case "ec2.image":
+		return "amis"
 	case "ec2.vpc":
 		return "vpcs"
 	case "ec2.subnet":
@@ -1709,6 +1718,8 @@ func relationGroupKey(relation ProjectionRelation) string {
 		return "inline-policies"
 	case "iam.managed-policy-version":
 		return "policy-document"
+	case "ec2.launch-template-user-data":
+		return "user-data"
 	case "route53.records":
 		return "dns-records"
 	case "hosted-zone":

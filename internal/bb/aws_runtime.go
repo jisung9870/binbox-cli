@@ -313,7 +313,7 @@ func multiRegionIntentRegions(intent awsbrowser.Intent) ([]string, error) {
 		return nil, nil
 	}
 	switch intent.Target {
-	case "ec2-instances", "vpc-networking", "elbv2-load-balancers",
+	case "ec2-instances", "ec2-launch-templates", "vpc-networking", "elbv2-load-balancers",
 		"elbv2-application-load-balancers", "elbv2-network-load-balancers":
 		return regions, nil
 	default:
@@ -326,6 +326,8 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 	switch intent.Target {
 	case "ec2-instances":
 		request.Provider, request.Operation = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeInstances
+	case "ec2-launch-templates":
+		request.Provider, request.Operation = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplates
 	case "route53-hosted-zones":
 		request.Provider, request.Operation = awsbrowser.ProviderRoute53, awsbrowser.OperationListHostedZones
 	case "iam-roles":
@@ -347,6 +349,8 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 		}
 		request.Params = make(map[string]string)
 		switch resourceType {
+		case "ec2.image":
+			request.Provider, request.Operation, request.Params["image-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeImages, id
 		case "ec2.instance":
 			request.Provider, request.Operation, request.Params["instance-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeInstances, id
 		case "ec2.volume":
@@ -369,6 +373,24 @@ func awsRequestForIntent(intent awsbrowser.Intent) (awsintegration.Request, bool
 			request.Provider, request.Operation, request.Params["route-table-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeRouteTables, id
 		case "ec2.vpc-peering-connection":
 			request.Provider, request.Operation, request.Params["vpc-peering-connection-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeVpcPeeringConnections, id
+		case "ec2.launch-template":
+			request.Provider, request.Operation, request.Params["launch-template-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplates, id
+		case "ec2.launch-template-versions":
+			request.Provider, request.Operation, request.Params["launch-template-id"] = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplateVersions, id
+		case "ec2.launch-template-version":
+			templateID, version, found := strings.Cut(id, "/")
+			if !found || templateID == "" || version == "" {
+				return awsintegration.Request{}, false
+			}
+			request.Provider, request.Operation = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplateVersions
+			request.Params["launch-template-id"], request.Params["version"] = templateID, version
+		case "ec2.launch-template-user-data":
+			templateID, version, found := strings.Cut(id, "/")
+			if !found || templateID == "" || version == "" {
+				return awsintegration.Request{}, false
+			}
+			request.Provider, request.Operation = awsbrowser.ProviderEC2, awsbrowser.OperationDescribeLaunchTemplateVersions
+			request.Params["launch-template-id"], request.Params["version"], request.Params["view"] = templateID, version, "user-data"
 		case "iam.role":
 			request.Provider, request.Operation, request.Params["role-name"] = awsbrowser.ProviderIAM, awsbrowser.OperationGetRole, id
 		case "iam.role-attached-policies":
@@ -452,6 +474,8 @@ func awsSearchRequestForIntent(intent awsbrowser.Intent) (awsintegration.SearchR
 	switch intent.SearchKind {
 	case "ec2-instances":
 		request.Kind = awsintegration.SearchEC2Instances
+	case "ami":
+		request.Kind = awsintegration.SearchAMI
 	case "domain":
 		request.Kind = awsintegration.SearchDomain
 	case "role":
@@ -1070,6 +1094,8 @@ func awsSearchRequestForQuery(request awsQueryRequest) (awsintegration.SearchReq
 	switch request.Kind {
 	case awsQueryKindEC2Instances:
 		intent.SearchKind = "ec2-instances"
+	case awsQueryKindAMIExact:
+		intent.SearchKind = "ami"
 	case awsQueryKindDomainExact:
 		intent.SearchKind = "domain"
 	case awsQueryKindRoleExact:
@@ -1166,6 +1192,8 @@ func searchProviderOperation(kind string) (string, string) {
 	switch kind {
 	case awsQueryKindEC2Instances:
 		return awsbrowser.ProviderEC2, awsbrowser.OperationDescribeInstances
+	case awsQueryKindAMIExact:
+		return awsbrowser.ProviderEC2, awsbrowser.OperationDescribeImages
 	case awsQueryKindRoleExact:
 		return awsbrowser.ProviderIAM, awsbrowser.OperationGetRole
 	case awsQueryKindDomainExact:

@@ -86,7 +86,7 @@ func TestModelStartupAndLocalNavigationAreZeroCall(t *testing.T) {
 	if cmd := m.Init(); cmd != nil {
 		t.Fatalf("Init command=%v", cmd)
 	}
-	for _, want := range []string{"AWS Browser · READ ONLY", "EC2 Instances", "Route 53 Hosted Zones", "IAM Roles", "VPC & Networking", "Load Balancers (ALB/NLB)", "Cross-profile search", "Account unresolved", "Principal unresolved"} {
+	for _, want := range []string{"AWS Browser · READ ONLY", "EC2 Instances", "EC2 Launch Templates", "Route 53 Hosted Zones", "IAM Roles", "VPC & Networking", "Load Balancers (ALB/NLB)", "Cross-profile search", "Account unresolved", "Principal unresolved"} {
 		if !strings.Contains(m.View().Content, want) {
 			t.Fatalf("Home missing %q:\n%s", want, m.View().Content)
 		}
@@ -141,6 +141,7 @@ func TestModelK9sLoadBalancerCommandsOpenAllALBAndNLB(t *testing.T) {
 		{command: "elbv2", target: "elbv2-load-balancers", label: "Load Balancers (ALB/NLB)"},
 		{command: "alb", target: "elbv2-application-load-balancers", label: "Application Load Balancers"},
 		{command: "nlb", target: "elbv2-network-load-balancers", label: "Network Load Balancers"},
+		{command: "launch-templates", target: "ec2-launch-templates", label: "EC2 Launch Templates"},
 	}
 	for _, test := range tests {
 		t.Run(test.command, func(t *testing.T) {
@@ -1841,6 +1842,24 @@ func TestProjectQueryUpdateDerivesSafeFieldsAndNavigableRelations(t *testing.T) 
 	resource := projection.Resources[0]
 	if strings.Contains(resource.Title, "\x1b") || resource.Relations[0].Target != "ec2.security-group:sg-001" || resource.Relations[0].Reason != "instance security group id" {
 		t.Fatalf("unsafe/incomplete projection=%+v", resource)
+	}
+}
+
+func TestLaunchTemplateUserDataProjectionPreservesLinesAndRemovesTerminalControls(t *testing.T) {
+	context := testStoreContext(t, "dev", "123456789012", "us-east-1", 1)
+	key, err := NewRegionalResourceKey(context, "ec2.launch-template-user-data", "lt-123/3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := ProjectResourceFields(key, map[string]any{
+		"name": "web", "version_number": int64(3), "script": "#!/bin/bash\r\necho \x1b[31mready\x1b[0m\n",
+	})
+	if projection.Title != "User Data · web · v3" || len(projection.Fields) != 3 {
+		t.Fatalf("projection=%+v", projection)
+	}
+	value := projectionFieldValue(projection.Fields, "Script")
+	if !strings.Contains(value, "#!/bin/bash\necho [31mready[0m\n") || strings.Contains(value, "\x1b") || strings.Contains(value, "\r") {
+		t.Fatalf("unsafe or flattened script=%q", value)
 	}
 }
 

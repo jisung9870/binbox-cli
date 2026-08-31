@@ -50,7 +50,8 @@ func TestClassifyProviderErrorPreservesControlFlowAndNotFound(t *testing.T) {
 		}
 	}
 	notFound := &smithy.GenericAPIError{Code: "NoSuchEntity", Message: "role missing"}
-	if !IsProviderNotFound(notFound) || IsProviderNotFound(errors.New("NoSuchEntity")) {
+	missingAMI := &smithy.GenericAPIError{Code: "InvalidAMIID.NotFound", Message: "AMI missing"}
+	if !IsProviderNotFound(notFound) || !IsProviderNotFound(missingAMI) || IsProviderNotFound(errors.New("NoSuchEntity")) {
 		t.Fatal("not-found classification did not require a typed API code")
 	}
 }

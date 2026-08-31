@@ -14,6 +14,7 @@ import (
 
 const (
 	awsQueryKindEC2Instances = "ec2_instances"
+	awsQueryKindAMIExact     = "ami_exact"
 	awsQueryKindDomainExact  = "domain_exact"
 	awsQueryKindRoleExact    = "role_exact"
 
@@ -23,6 +24,7 @@ const (
 
 var (
 	awsQueryRoleRE = regexp.MustCompile(`^[A-Za-z0-9_+=,.@-]+$`)
+	awsQueryAMIRE  = regexp.MustCompile(`^ami-(?:[0-9a-f]{8}|[0-9a-f]{17})$`)
 )
 
 type awsQueryRequest struct {
@@ -158,17 +160,18 @@ func mapAWSQueryFailure(err error, message string) error {
 
 const awsQueryHelp = `Usage:
   bb aws query ec2 instances [--profile NAME] [--region REGION] [--json]
+  bb aws query ami <ami-id> [--profile NAME] [--region REGION] [--scope current|all] [--json]
   bb aws query domain <fqdn> [--profile NAME] [--region REGION] [--scope current|all] [--json]
   bb aws query role <exact-name> [--profile NAME] [--region REGION] [--scope current|all] [--json]
 
-EC2 instances queries the current context only. Exact domain and role queries
-default to all configured AWS profiles; use --scope current to restrict them.
+EC2 instances queries the current context only. Exact AMI, domain, and role
+queries default to all configured AWS profiles; use --scope current to restrict them.
 `
 
 func parseAWSQuery(args []string) (awsQueryRequest, bool, error) {
 	var request awsQueryRequest
 	if len(args) == 0 {
-		return request, false, usage("aws query", "ec2 instances|domain <fqdn>|role <exact-name> [options]")
+		return request, false, usage("aws query", "ec2 instances|ami <ami-id>|domain <fqdn>|role <exact-name> [options]")
 	}
 
 	var tail []string
@@ -188,6 +191,12 @@ func parseAWSQuery(args []string) (awsQueryRequest, bool, error) {
 			return request, false, invalid("invalid exact domain FQDN")
 		}
 		request.Kind, request.Value, request.Scope = awsQueryKindDomainExact, value, awsQueryScopeAll
+		tail = args[2:]
+	case "ami":
+		if len(args) < 2 || !validAWSQueryAMI(args[1]) {
+			return request, false, invalid("invalid exact AMI ID")
+		}
+		request.Kind, request.Value, request.Scope = awsQueryKindAMIExact, args[1], awsQueryScopeAll
 		tail = args[2:]
 	case "role":
 		if len(args) < 2 || !validAWSQueryRole(args[1]) {
@@ -299,6 +308,10 @@ func validAWSQueryRole(value string) bool {
 	return value == strings.TrimSpace(value) && len(value) >= 1 && len(value) <= 64 && awsQueryRoleRE.MatchString(value)
 }
 
+func validAWSQueryAMI(value string) bool {
+	return value == strings.TrimSpace(value) && awsQueryAMIRE.MatchString(value)
+}
+
 func normalizeAWSQueryData(request awsQueryRequest, execution awsQueryExecution) awsQueryData {
 	data := awsQueryData{Query: request, Coverage: execution.Coverage, Results: execution.Results, Errors: execution.Errors}
 	if data.Coverage.Profiles == nil {
@@ -333,6 +346,8 @@ func renderAWSQuery(out io.Writer, data awsQueryData, warnings []string) error {
 	switch data.Query.Kind {
 	case awsQueryKindEC2Instances:
 		label = "ec2 instances"
+	case awsQueryKindAMIExact:
+		label = "ami " + data.Query.Value
 	case awsQueryKindDomainExact:
 		label = "domain " + data.Query.Value
 	case awsQueryKindRoleExact:
@@ -355,6 +370,19 @@ func renderAWSQuery(out io.Writer, data awsQueryData, warnings []string) error {
 	if len(data.Results) == 0 {
 		if _, err := fmt.Fprintln(out, "No results."); err != nil {
 			return err
+		}
+	} else if data.Query.Kind == awsQueryKindAMIExact {
+		if _, err := fmt.Fprintln(out, "AMI\tNAME\tOWNER_ACCOUNT\tVISIBLE_IN_ACCOUNT\tPROFILE\tREGION"); err != nil {
+			return err
+		}
+		for _, result := range data.Results {
+			ownerID, _ := result.Fields["owner_id"].(string)
+			name, _ := result.Fields["name"].(string)
+			if _, err := fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\n",
+				safeAWSQueryText(result.Resource.ID), safeAWSQueryText(name), safeAWSQueryText(ownerID),
+				safeAWSQueryText(result.Resource.AccountID), safeAWSQueryText(result.Context.Profile), safeAWSQueryText(result.Resource.Region)); err != nil {
+				return err
+			}
 		}
 	} else {
 		if _, err := fmt.Fprintln(out, "TYPE\tID\tACCOUNT\tPROFILE\tREGION"); err != nil {

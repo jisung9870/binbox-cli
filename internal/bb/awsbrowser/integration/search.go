@@ -21,6 +21,7 @@ type SearchKind string
 
 const (
 	SearchEC2Instances SearchKind = "ec2-instances"
+	SearchAMI          SearchKind = "ami"
 	SearchDomain       SearchKind = "domain"
 	SearchRole         SearchKind = "role"
 )
@@ -338,6 +339,14 @@ func (service *SearchService) searchProfile(ctx context.Context, request SearchR
 		}
 		profile.items = append(profile.items, resourcesFromResult(result)...)
 		status = queryStatus(err, result.Update.Failure, len(profile.items), false)
+	case SearchAMI:
+		result, err, started := query(awsbrowser.ProviderEC2, awsbrowser.OperationDescribeImages, map[string]string{"image-id": request.Query})
+		if !started {
+			status = ProfileStatusNotSearched
+			break
+		}
+		profile.items = append(profile.items, resourcesFromResult(result)...)
+		status = queryStatus(err, result.Update.Failure, len(profile.items), true)
 	case SearchRole:
 		result, err, started := query(awsbrowser.ProviderIAM, awsbrowser.OperationGetRole, map[string]string{"role-name": request.Query})
 		if !started {
@@ -603,6 +612,8 @@ func validSearchRequest(request SearchRequest) bool {
 	switch request.Kind {
 	case SearchEC2Instances:
 		return request.Scope == SearchCurrent && (request.Query == "" || strings.TrimSpace(request.Query) == request.Query)
+	case SearchAMI:
+		return validAMIQuery(request.Query)
 	case SearchRole:
 		return request.Query == strings.TrimSpace(request.Query) && request.Query != "" && len(request.Query) <= 64 && safeSearchName(request.Query)
 	case SearchDomain:
@@ -610,6 +621,22 @@ func validSearchRequest(request SearchRequest) bool {
 	default:
 		return false
 	}
+}
+
+func validAMIQuery(value string) bool {
+	if !strings.HasPrefix(value, "ami-") {
+		return false
+	}
+	suffix := value[len("ami-"):]
+	if len(suffix) != 8 && len(suffix) != 17 {
+		return false
+	}
+	for _, character := range suffix {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func validSearchDomain(value string) bool {

@@ -56,6 +56,11 @@ func TestParseAWSQueryGrammarAndDefaults(t *testing.T) {
 			request:  awsQueryRequest{Kind: awsQueryKindRoleExact, Value: "deploy-role", Scope: awsQueryScopeAll, Profile: "prod"},
 			jsonMode: true,
 		},
+		{
+			name:    "AMI exact all",
+			args:    []string{"ami", "ami-0123456789abcdef0", "--region", "ap-northeast-2"},
+			request: awsQueryRequest{Kind: awsQueryKindAMIExact, Value: "ami-0123456789abcdef0", Scope: awsQueryScopeAll, Region: "ap-northeast-2"},
+		},
 	}
 
 	for _, test := range tests {
@@ -96,6 +101,10 @@ func TestAWSQueryInvalidInvocationsNeverConstructBackend(t *testing.T) {
 		{"role"},
 		{"role", "partial/name"},
 		{"role", strings.Repeat("a", 65)},
+		{"ami"},
+		{"ami", "i-0123456789abcdef0"},
+		{"ami", "ami-not-hex"},
+		{"ami", "ami-123456789"},
 	}
 
 	for _, args := range tests {
@@ -241,6 +250,33 @@ func TestAWSQueryHumanRenderer(t *testing.T) {
 		"iam.role\tdeploy-role\t123456789012\tdev\tglobal\n" +
 		"Warning: partial coverage\n" +
 		"Error: profile=locked unsafe kind=forbidden service=iam operation=GetRole code=AccessDenied request_id=req-1\n"
+	if stdout.String() != want {
+		t.Fatalf("stdout=%q want=%q", stdout.String(), want)
+	}
+}
+
+func TestAWSQueryAMIRendererShowsOwnerAndVisibleAccount(t *testing.T) {
+	stdout := new(bytes.Buffer)
+	app := New(stdout, new(bytes.Buffer), nil)
+	app.awsQueryService = func() (awsQueryService, error) {
+		return awsQueryServiceFunc(func(context.Context, awsQueryRequest) (awsQueryExecution, error) {
+			return awsQueryExecution{
+				Coverage: awsQueryCoverage{Total: 1, Completed: 1, Matched: 1},
+				Results: []awsQueryResult{{
+					Resource: awsQueryResource{Type: "ec2.image", ID: "ami-0123456789abcdef0", AccountID: "111111111111", Region: "ap-northeast-2"},
+					Context:  awsQueryContext{Profile: "dev", AccountID: "111111111111"},
+					Fields:   map[string]any{"owner_id": "999999999999", "name": "shared-base"},
+				}},
+			}, nil
+		}), nil
+	}
+	if err := app.Run([]string{"aws", "query", "ami", "ami-0123456789abcdef0", "--region", "ap-northeast-2"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "AWS query: ami ami-0123456789abcdef0 (scope: all)\n" +
+		"Coverage: 1/1 completed, 1 results\n" +
+		"AMI\tNAME\tOWNER_ACCOUNT\tVISIBLE_IN_ACCOUNT\tPROFILE\tREGION\n" +
+		"ami-0123456789abcdef0\tshared-base\t999999999999\t111111111111\tdev\tap-northeast-2\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout=%q want=%q", stdout.String(), want)
 	}

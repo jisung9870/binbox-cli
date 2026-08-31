@@ -67,5 +67,13 @@ func providerKindForCode(code string) ProviderErrorKind {
 // not silently convert the same code into success.
 func IsProviderNotFound(err error) bool {
 	var apiError smithy.APIError
-	return errors.As(err, &apiError) && apiError.ErrorCode() == "NoSuchEntity"
+	if !errors.As(err, &apiError) {
+		return false
+	}
+	switch apiError.ErrorCode() {
+	case "NoSuchEntity", "InvalidAMIID.NotFound":
+		return true
+	default:
+		return false
+	}
 }

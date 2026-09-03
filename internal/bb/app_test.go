@@ -66,6 +66,22 @@ func TestShellInitZshIsCheckoutIndependent(t *testing.T) {
 	}
 }
 
+func TestShellInitZshHasValidSyntax(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
+	}
+	a, out, _, _ := testApp(t)
+	if err := a.Run([]string{"shell", "init", "zsh"}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(zsh, "-n")
+	cmd.Stdin = strings.NewReader(out.String())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("shell init is not valid zsh syntax: %v\n%s", err, output)
+	}
+}
+
 func TestShellInitRejectsUnsupportedShell(t *testing.T) {
 	a, _, _, _ := testApp(t)
 	if err := a.Run([]string{"shell", "init", "bash"}); ExitCode(err) != ExitInvalidInvocation {

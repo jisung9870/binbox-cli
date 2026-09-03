@@ -166,7 +166,7 @@ _bb() {
 	  elif [[ "${words[3]}" == refs ]]; then
 		if (( CURRENT == 4 )); then
 		  _bb_static 'snapshot resource' 'sg:security groups'
-		elif [[ "${words[4]}" == sg && CURRENT >= 6 ]]; then
+		elif [[ "${words[4]}" == sg ]] && (( CURRENT >= 6 )); then
 		  case "${words[CURRENT-1]}" in
 			--account|--region|--partition) ;;
 			*) _bb_static 'refs option' '--account:12-digit AWS account ID' '--region:AWS region' '--partition:AWS partition' '--json:stable JSON envelope' ;;

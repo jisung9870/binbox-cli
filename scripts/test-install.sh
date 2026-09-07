@@ -86,3 +86,21 @@ rm -f "$XDG_BIN_HOME/bb"
 [ "$("$XDG_BIN_HOME/bb" version)" = "$version" ]
 "$ROOT/scripts/install.sh" --github-cli --dry-run --install-dir "$XDG_BIN_HOME" >/dev/null
 printf '%s\n' 'installer tests passed'
+
+# Lifecycle manager uses the same verified release fixture.
+bash "$ROOT/manage.sh" install --version "$version" --github-cli
+test -f "$XDG_BIN_HOME/.bb.managed.sha256"
+bash "$ROOT/manage.sh" upgrade --version "$version" --github-cli
+mkdir -p "$HOME/.config/bb"
+printf 'preserve\n' > "$HOME/.config/bb/test-data"
+cp "$XDG_BIN_HOME/bb" "$TEST_ROOT/original-bb"
+printf 'modified\n' >> "$XDG_BIN_HOME/bb"
+if bash "$ROOT/manage.sh" uninstall; then exit 1; fi
+cp "$TEST_ROOT/original-bb" "$XDG_BIN_HOME/bb"
+bash "$ROOT/manage.sh" uninstall
+test ! -e "$XDG_BIN_HOME/bb"
+test "$(cat "$HOME/.config/bb/test-data")" = preserve
+bash "$ROOT/manage.sh" uninstall
+bash "$ROOT/manage.sh" install --version "$version" --github-cli
+test -x "$XDG_BIN_HOME/bb"
+printf '%s\n' 'bb lifecycle tests passed'

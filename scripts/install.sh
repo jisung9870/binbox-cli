@@ -122,7 +122,7 @@ fi
 
 if [ -x "$destination" ] && [ ! -L "$destination" ]; then
 	installed_version=$("$destination" version 2>/dev/null || true)
-	if [ "$installed_version" = "$VERSION" ]; then
+	if [ "$installed_version" = "$VERSION" ] && [ "$FORCE" != true ]; then
 		note "$destination already provides version $VERSION"
 		exit 0
 	fi

@@ -8,6 +8,10 @@ release tags and the corresponding release records.
 
 ### Added
 
+- Added `manage.sh install|upgrade|uninstall` for verified release installation,
+  automatic authenticated GitHub CLI selection, and hash-checked removal with
+  binary backups while preserving configuration and secret/state stores.
+
 - Added the unreleased `bb aws browse` local-first progressive TUI with narrowed
   AWS SDK for Go v2 EC2/IAM/Route 53/CloudFront/S3 reads, STS-verified profile contexts,
   generation fencing, linked-resource navigation, partial states, and

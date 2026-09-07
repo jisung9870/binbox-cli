@@ -8,6 +8,7 @@ migration evidence, and version-specific verification records for `bb`.
 | Need | Document |
 |---|---|
 | Install, configure, and try `bb` | [Project README](../README.md) |
+| Install, upgrade, or uninstall a release | [Lifecycle management](lifecycle.md) |
 | See what changed by version | [Changelog](../CHANGELOG.md) |
 | Find a command and its behavior | [Command reference](commands.md) |
 | Understand ownership and product boundaries | [Architecture](architecture.md) |

@@ -1,5 +1,21 @@
 # binbox-cli
 
+체크아웃 디렉터리에서 설치·업그레이드·제거를 실행할 수 있다.
+
+```sh
+bash manage.sh install
+bash manage.sh upgrade
+bash manage.sh uninstall
+```
+
+설치와 업그레이드는 최신 릴리스의 체크섬을 검증하고 `~/.local/bin/bb`에 적용한다.
+로그인된 `gh`를 자동 사용하며, 버전 고정은 `--version 0.15.1`, 설치 경로 변경은
+`--install-dir /path/to/bin`으로 지정한다. 제거 시에도 같은 설치 경로를 지정한다.
+제거는 이 관리 스크립트가 설치한 바이너리의 해시를 확인하고 백업 위치로 옮긴다.
+설정·암호화 비밀·상태·셸 설정은 보존한다. 셸 연동이 필요하면 설치 후 `bb setup shell`을
+실행한다. 제거 후 `.zshrc`의 `bb shell init` 호출은 직접 정리하거나 `command -v bb`로
+존재 여부를 확인하도록 감싼다. [수명주기 운영 안내](docs/lifecycle.md)에 검증·복구 절차가 있다.
+
 `binbox-cli` is the installable, single-binary `bb` CLI. It
 consolidates stateful local workspace behavior in Go while leaving live agent,
 worktree, scheduler, and DAG ownership with Orca and editor configuration with

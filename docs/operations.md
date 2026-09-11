@@ -121,6 +121,13 @@ opens the chosen directory through external `tmux`. Non-TTY use and
 including scripts and tests. This command neither contacts Orca nor records or
 manages an Orca/tmux lifecycle; `tmux` owns the session it attaches or creates.
 
+Sessions are named `bb-<project-name>-<short-id>`, for example
+`bb-environment-tools-4e917e`. The name leads with the project so a session list
+reads at a glance; the short project-ID suffix keeps two directories that share a
+name on separate sessions. Opening a project that still has a session from an
+older bb (named `bb-prj_...`) renames that session in place, so its windows and
+panes survive the upgrade instead of being stranded next to a new session.
+
 The historical `bb agents` surface is not reproduced. Agent and worktree
 lifecycle operations, including status, are invoked directly through the Orca
 app or CLI.

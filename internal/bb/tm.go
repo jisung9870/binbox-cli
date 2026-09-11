@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // tm is the narrow compatibility surface used by the current LazyVim client.
@@ -131,19 +132,18 @@ local tmux session. --project is an explicit non-interactive selector.
 	if _, err := a.lookPath("tmux"); err != nil {
 		return unavailable("tmux is not installed; install tmux to open a project session")
 	}
-	// project.ID is a deterministic bb identifier, not user-supplied shell text.
-	// Arguments are passed directly to tmux; no shell is evaluated. Inside tmux,
-	// switch the current client instead of attempting a nested attach.
-	session := "bb-" + project.ID
+	// The session name is derived from bb's own registry, not user-supplied shell
+	// text. Arguments are passed directly to tmux; no shell is evaluated. Inside
+	// tmux, switch the current client instead of attempting a nested attach.
+	session := tmSessionName(project)
+	exists := a.tmAdoptLegacySession("bb-"+project.ID, session)
 	if a.getenv("TMUX") != "" {
-		probe := a.command("tmux", "has-session", "-t", session)
-		probe.Env = a.env
-		if err := probe.Run(); err != nil {
+		if !exists {
 			if err := a.runTMux("new-session", "-d", "-s", session, "-c", project.Path); err != nil {
 				return fmt.Errorf("create tmux session for %s: %w", project.Name, err)
 			}
 		}
-		if err := a.runTMux("switch-client", "-t", session); err != nil {
+		if err := a.runTMux("switch-client", "-t", "="+session); err != nil {
 			return fmt.Errorf("switch tmux session for %s: %w", project.Name, err)
 		}
 		return nil
@@ -152,6 +152,81 @@ local tmux session. --project is an explicit non-interactive selector.
 		return fmt.Errorf("open tmux session for %s: %w", project.Name, err)
 	}
 	return nil
+}
+
+// tmSessionName keeps the project name in front so a session list stays readable,
+// and appends a short slice of the project ID so two directories that share a
+// name (bb's registry allows that through legacy sources) never share a session.
+func tmSessionName(project projectRecord) string {
+	slug := tmSessionSlug(project.Name)
+	if slug == "" {
+		slug = tmSessionSlug(filepath.Base(project.Path))
+	}
+	suffix := strings.TrimPrefix(project.ID, "prj_")
+	if len(suffix) > tmSessionIDLength {
+		suffix = suffix[:tmSessionIDLength]
+	}
+	switch {
+	case slug == "":
+		return "bb-" + project.ID
+	case suffix == "":
+		return "bb-" + slug
+	default:
+		return "bb-" + slug + "-" + suffix
+	}
+}
+
+const (
+	tmSessionIDLength  = 6
+	tmSessionSlugRunes = 32
+)
+
+// tmSessionSlug drops what tmux target syntax would read as structure: "." and
+// ":" separate session, window and pane, and whitespace makes a name awkward to
+// type. Letters and digits survive, everything else collapses into one dash.
+func tmSessionSlug(name string) string {
+	runes := make([]rune, 0, tmSessionSlugRunes)
+	dash := false
+	for _, r := range strings.ToLower(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+			runes = append(runes, r)
+			dash = false
+		} else if len(runes) > 0 && !dash {
+			runes = append(runes, '-')
+			dash = true
+		}
+		if len(runes) >= tmSessionSlugRunes {
+			break
+		}
+	}
+	return strings.Trim(string(runes), "-")
+}
+
+// tmAdoptLegacySession renames the session an older bb created under the opaque
+// project ID so an upgrade keeps its windows instead of leaving a second session
+// behind for the same project. It reports whether the current name now exists.
+func (a *App) tmAdoptLegacySession(legacy, session string) bool {
+	if a.tmHasSession(session) {
+		return true
+	}
+	if legacy == session || !a.tmHasSession(legacy) {
+		return false
+	}
+	// A rename can lose a race with another client, so re-observe the result
+	// instead of assuming it; the caller then creates or attaches as usual.
+	if err := a.runTMux("rename-session", "-t", "="+legacy, session); err != nil {
+		return a.tmHasSession(session)
+	}
+	return true
+}
+
+// tmHasSession asks tmux about one exact name. The "=" prefix disables tmux's
+// prefix and pattern matching, which would otherwise let "bb-docs-1a2b3c" answer
+// for "bb-docs".
+func (a *App) tmHasSession(name string) bool {
+	probe := a.command("tmux", "has-session", "-t", "="+name)
+	probe.Env = a.env
+	return probe.Run() == nil
 }
 
 // tmSession is deliberately limited to tmux's session-level format fields.

@@ -195,3 +195,106 @@ func TestTMLayoutUsesBuiltInDirectArgvAndRefusesCollision(t *testing.T) {
 		t.Fatalf("collision should only inspect session, got=%q", got)
 	}
 }
+
+func TestTMSessionNameCarriesProjectName(t *testing.T) {
+	cases := []struct {
+		record projectRecord
+		want   string
+	}{
+		{projectRecord{ID: "prj_4e917e8b05e3", Name: "environment-tools", Path: "/home/environment-tools"}, "bb-environment-tools-4e917e"},
+		{projectRecord{ID: "prj_b52e0845e2f3", Name: "UDG", Path: "/home/services/udg"}, "bb-udg-b52e08"},
+		{projectRecord{ID: "prj_000000000001", Name: "web.app: staging", Path: "/srv/web"}, "bb-web-app-staging-000000"},
+		{projectRecord{ID: "prj_000000000002", Name: "", Path: "/srv/fallback"}, "bb-fallback-000000"},
+		{projectRecord{ID: "prj_000000000003", Name: "!!!", Path: "/!!!"}, "bb-prj_000000000003"},
+	}
+	for _, c := range cases {
+		if got := tmSessionName(c.record); got != c.want {
+			t.Fatalf("tmSessionName(%q)=%q want %q", c.record.Name, got, c.want)
+		}
+		if !validTMSessionName(tmSessionName(c.record)) || strings.ContainsAny(tmSessionName(c.record), ".: ") {
+			t.Fatalf("unsafe tmux session name %q", tmSessionName(c.record))
+		}
+	}
+}
+
+func TestTMSessionNamesStayDistinctForSameNamedProjects(t *testing.T) {
+	first := tmSessionName(projectRecord{ID: projectID("/home/platform/docs"), Name: "docs", Path: "/home/platform/docs"})
+	second := tmSessionName(projectRecord{ID: projectID("/home/services/docs"), Name: "docs", Path: "/home/services/docs"})
+	if first == second {
+		t.Fatalf("same session name %q for two different docs projects", first)
+	}
+}
+
+func TestTMRenamesLegacyIDSession(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	project := t.TempDir()
+	if err := a.Run([]string{"project", "add", project, "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	session := testSessionName(project, "demo")
+	legacy := "bb-" + projectID(project)
+	var requests [][]string
+	a.lookPath = func(name string) (string, error) {
+		if name == "tmux" {
+			return "/fake/tmux", nil
+		}
+		return "", os.ErrNotExist
+	}
+	a.command = func(name string, args ...string) *exec.Cmd {
+		requests = append(requests, append([]string{name}, args...))
+		// Only the session an older bb created exists.
+		if len(args) > 2 && args[0] == "has-session" && args[2] != "="+legacy {
+			return exec.Command("false")
+		}
+		return exec.Command("true")
+	}
+	if err := a.Run([]string{"tm", "--project", projectID(project)}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"tmux", "has-session", "-t", "=" + session},
+		{"tmux", "has-session", "-t", "=" + legacy},
+		{"tmux", "rename-session", "-t", "=" + legacy, session},
+		{"tmux", "new-session", "-A", "-s", session, "-c", canonicalPath(project)},
+	}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%q want=%q", requests, want)
+	}
+}
+
+func TestTMInsideTmuxReusesRenamedLegacySession(t *testing.T) {
+	a, _, _, _ := testApp(t)
+	a.env = append(a.env, "TMUX=/tmp/fake,1,0")
+	project := t.TempDir()
+	if err := a.Run([]string{"project", "add", project, "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	session := testSessionName(project, "demo")
+	legacy := "bb-" + projectID(project)
+	var requests [][]string
+	a.lookPath = func(name string) (string, error) {
+		if name == "tmux" {
+			return "/fake/tmux", nil
+		}
+		return "", os.ErrNotExist
+	}
+	a.command = func(name string, args ...string) *exec.Cmd {
+		requests = append(requests, append([]string{name}, args...))
+		if len(args) > 2 && args[0] == "has-session" && args[2] != "="+legacy {
+			return exec.Command("false")
+		}
+		return exec.Command("true")
+	}
+	if err := a.Run([]string{"tm", "--project", projectID(project)}); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"tmux", "has-session", "-t", "=" + session},
+		{"tmux", "has-session", "-t", "=" + legacy},
+		{"tmux", "rename-session", "-t", "=" + legacy, session},
+		{"tmux", "switch-client", "-t", "=" + session},
+	}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%q want=%q", requests, want)
+	}
+}

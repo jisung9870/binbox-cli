@@ -396,6 +396,12 @@ func TestTMProjectsUsesLazyVimEnvelope(t *testing.T) {
 	}
 }
 
+// testSessionName mirrors what bb derives for a registered project so the tmux
+// expectations below stay tied to the registry, not to a hand-written string.
+func testSessionName(path, name string) string {
+	return tmSessionName(projectRecord{ID: projectID(path), Name: name, Path: canonicalPath(path)})
+}
+
 func TestTMExplicitProjectUsesTmuxWithoutFZFOrOrca(t *testing.T) {
 	a, out, _, _ := testApp(t)
 	project := t.TempDir()
@@ -417,7 +423,7 @@ func TestTMExplicitProjectUsesTmuxWithoutFZFOrOrca(t *testing.T) {
 	if err := a.Run([]string{"tm", "--project", projectID(project)}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"tmux", "new-session", "-A", "-s", "bb-" + projectID(project), "-c", canonicalPath(project)}
+	want := []string{"tmux", "new-session", "-A", "-s", testSessionName(project, "demo"), "-c", canonicalPath(project)}
 	if strings.Join(requested, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("tmux request=%q want=%q", requested, want)
 	}
@@ -452,11 +458,12 @@ func TestTMExplicitProjectInsideTmuxCreatesAndSwitches(t *testing.T) {
 	if err := a.Run([]string{"tm", "--project", projectID(project)}); err != nil {
 		t.Fatal(err)
 	}
-	session := "bb-" + projectID(project)
+	session := testSessionName(project, "demo")
 	want := [][]string{
-		{"tmux", "has-session", "-t", session},
+		{"tmux", "has-session", "-t", "=" + session},
+		{"tmux", "has-session", "-t", "=bb-" + projectID(project)},
 		{"tmux", "new-session", "-d", "-s", session, "-c", canonicalPath(project)},
-		{"tmux", "switch-client", "-t", session},
+		{"tmux", "switch-client", "-t", "=" + session},
 	}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("tmux requests=%q want=%q", requests, want)

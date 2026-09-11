@@ -6,6 +6,13 @@ release tags and the corresponding release records.
 
 ## Unreleased
 
+### Changed
+
+- `bb tm` now names tmux sessions `bb-<project-name>-<short-id>` instead of
+  `bb-<project-id>`, so a session list identifies projects by name. Opening a
+  project that still has a session from an older bb renames that session in
+  place rather than leaving it behind.
+
 ### Added
 
 - Added `manage.sh install|upgrade|uninstall` for verified release installation,

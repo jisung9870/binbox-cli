@@ -44,6 +44,7 @@ func TestZshCompletionMatchesAWSBrowseAndQueryGrammar(t *testing.T) {
 		"'sync:collect an explicit AWS snapshot'",
 		"'refs:find snapshot references'",
 		"--group) _bb_dynamic 'AWS context group' aws-context-group",
+		`elif [[ "${words[4]}" == sg ]] && (( CURRENT >= 6 )); then`,
 		"'--account:12-digit AWS account ID' '--region:AWS region' '--partition:AWS partition' '--json:stable JSON envelope'",
 	} {
 		if !strings.Contains(completion, want) {

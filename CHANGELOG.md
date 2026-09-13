@@ -4,10 +4,36 @@ All notable changes to `binbox-cli` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/); entries are derived from annotated
 release tags and the corresponding release records.
 
-## Unreleased
+## 0.16.0 - 2026-09-13
+
+### Added
+
+- Added `bb mcp serve`, a stdio MCP server that exposes the secret and
+  environment stores to agents without returning any secret value. `sec_list`,
+  `sec_ref`, `wenv_list`, `wenv_show`, and `wenv_set` deal in
+  `sec://<service>/<field>` references; `sec_exec` and `wenv_exec` inject values
+  into one child process and return only its output with those values
+  substituted out.
+- Added `bb mcp allow` for fail-closed MCP execution control. An argument prefix
+  after `--` narrows a command to the subcommands it may run, and optional
+  `service`/`preset` scopes narrow which entries those tools may reach.
+  Authorization resolves before the encrypted store is opened, and every attempt
+  is appended to `mcp-serve-audit.jsonl` with the command name and outcome but
+  never a value.
+- Added `bb wenv exec <preset> -- <command>` to scope a resolved preset to one
+  child process. It emits no value of its own, so it stays usable without a
+  terminal, and it maps any environment name onto any `sec://` field rather than
+  deriving names from the field as `bb sec exec` does.
 
 ### Changed
 
+- `bb sec get|env|copy` and `bb wenv apply|export` for presets that reference
+  `sec://` now require stdin and stderr to be terminals. stdout is excluded, so
+  `eval "$(bb wenv dev)"` is unaffected, and presets without references are never
+  gated. `BB_ALLOW_SECRET_OUTPUT=1` is the explicit automation override.
+- The Release workflow now builds and publishes without running tests. The
+  test/vet/AWS-browser-race preflight and the release-size checks move to a local
+  step before tagging; nothing downstream repeats them.
 - `bb tm` now names tmux sessions `bb-<project-name>-<short-id>` instead of
   `bb-<project-id>`, so a session list identifies projects by name. Opening a
   project that still has a session from an older bb renames that session in
@@ -73,8 +99,8 @@ release tags and the corresponding release records.
   patterns in an Origins category, and continue to an S3 bucket Summary with
   its region verified by `GetBucketLocation`; unknown targets stay evidence-only.
 - Restricted the browser's AWS CLI data path to profile discovery and
-  credential export; committed Linux PTY process checks, a skip-free guard,
-  release CI test/vet/AWS-browser-race preflight, and all four release-size
+  credential export; committed Linux PTY process checks, a skip-free guard, the
+  local test/vet/AWS-browser-race preflight, and all four release-size
   checks pass. Optional direct tmux/interactive resize observation and
   owner-approved 12-profile real AWS latency, identity, and CloudTrail evidence
   remain manual/external acceptance.
@@ -87,6 +113,11 @@ release tags and the corresponding release records.
   leaving the TUI on a misleading `incomplete stream` status.
 - Exact launch-template version reads no longer send `MaxResults` together
   with `Versions`, avoiding EC2 `InvalidParameterCombination` failures.
+- `bb aws refs sg` completion now tests the subcommand and the word position as
+  separate zsh conditions, so the option list appears instead of the condition
+  silently evaluating as a single string comparison.
+
+See the [v0.16.0 release record](docs/release-v0.16.0.md).
 
 ## 0.15.1 - 2026-08-13
 

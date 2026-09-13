@@ -4,9 +4,10 @@
 
 This is the maintainer entry point for the current Go implementation of `bb`.
 The unreleased AWS browser implementation and production wiring are complete.
-Automated Linux PTY process checks, the skip-free guard, release CI
+Automated Linux PTY process checks, the skip-free guard, the local
 test/vet/AWS-browser-race preflight, and all-four-target release-size checks pass
-and are committed. Optional direct tmux/interactive resize observation and
+and are committed. Release CI builds and publishes only; the preflight is a local
+step before tagging. Optional direct tmux/interactive resize observation and
 owner-approved 12-profile real AWS latency, identity, and CloudTrail evidence
 remain manual/external acceptance. This guide explains where behavior lives and
 the contracts a code change must preserve. Product ownership and non-goals remain authoritative in

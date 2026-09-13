@@ -8,7 +8,7 @@ does not reproduce Orca lifecycle management, embed the LazyVim configuration,
 or keep the old shell dispatcher/libexec architecture.
 
 The unreleased AWS browser's implementation, production wiring, automated Linux
-PTY process checks, skip-free guard, release CI test/vet/AWS-browser-race
+PTY process checks, skip-free guard, local test/vet/AWS-browser-race
 preflight, and all-four-target release-size checks pass and are committed on
 this branch. Optional direct tmux/interactive resize observation and
 owner-approved 12-profile real AWS latency, identity, and CloudTrail evidence

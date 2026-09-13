@@ -10,6 +10,9 @@ an SPDX SBOM. GitHub build provenance attestation is also emitted when the
 repository is public; GitHub does not support attestations for user-owned
 private repositories.
 
+The Release workflow builds and publishes; it does not run tests. Run the local
+preflight before tagging, because nothing downstream repeats it.
+
 Release builds refuse a dirty checkout, a `COMMIT` other than `HEAD`, or
 anything except an exact annotated `vVERSION` tag pointing at `HEAD`.
 `ALLOW_UNTAGGED_BUILD=1` exists solely for local reproducibility and installer

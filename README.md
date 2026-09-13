@@ -249,8 +249,9 @@ the same hierarchy without ANSI styling.
 Cross-profile domain/role search runs only after submit, with bounded concurrency
 and per-profile coverage. `bb aws browse` is interactive and has no `--json`;
 automation uses `bb aws query`. Automated Linux PTY process checks and the
-release preflight (`test`, `vet`, AWS-browser race, skip-free, and all four
-release-size targets) pass and are committed. Optional direct tmux/interactive
+local preflight (`test`, `vet`, AWS-browser race, skip-free, and all four
+release-size targets) pass and are committed. Release CI builds and publishes
+only, so run that preflight locally before tagging. Optional direct tmux/interactive
 resize observation and owner-approved 12-profile real AWS latency, identity,
 and CloudTrail evidence remain manual/external acceptance, so this branch is
 not yet a released AWS browser.

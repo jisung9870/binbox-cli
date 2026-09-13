@@ -54,6 +54,7 @@ func (a *App) wenv(args []string) error {
   bb wenv show <name>         Print the stored, non-secret values without applying
   bb wenv apply [name] [--yes] Preview, confirm, and print eval-safe exports
   bb wenv export [name]       Print eval-safe exports without applying in the shell wrapper
+  bb wenv exec <name> -- <command> [args...]  Scope a resolved preset to one child process
   bb wenv list|current
   bb wenv set <name> KEY=VALUE...
   bb wenv rm <name> [--yes]
@@ -61,6 +62,8 @@ func (a *App) wenv(args []string) error {
 
 Secret-like variables must use sec://<service>/<field>. References remain
 stored and displayed as references, and resolve only for apply/export output.
+Presets that reference secrets apply/export only on a terminal; automation uses
+"bb mcp serve" or an explicit BB_ALLOW_SECRET_OUTPUT=1.
 `)
 		return e
 	}
@@ -74,6 +77,8 @@ stored and displayed as references, and resolve only for apply/export output.
 		return a.wenvApply(args[1:])
 	case "export":
 		return a.wenvExport(args[1:])
+	case "exec":
+		return a.wenvExec(args[1:])
 	case "list":
 		return a.wenvList(args[1:])
 	case "current":
@@ -249,6 +254,17 @@ func (a *App) resolveWenvValues(vars map[string]string) (map[string]string, erro
 	return resolved, nil
 }
 
+// wenvUsesSecrets reports whether resolving a preset would pull plaintext out of
+// the encrypted store. Presets without references stay usable from automation.
+func wenvUsesSecrets(vars map[string]string) bool {
+	for _, value := range vars {
+		if _, _, ok := parseWenvSecretReference(value); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) wenvApply(args []string) error {
 	args, yes := takeFlag(args, "--yes")
 	if len(args) > 1 {
@@ -284,6 +300,11 @@ func (a *App) wenvApply(args []string) error {
 			return invalid("wenv apply cancelled")
 		}
 	}
+	if wenvUsesSecrets(vars) {
+		if err := a.requireSecretOutputConsent("wenv apply"); err != nil {
+			return err
+		}
+	}
 	resolved, err := a.resolveWenvValues(vars)
 	if err != nil {
 		return err
@@ -315,11 +336,65 @@ func (a *App) wenvExport(args []string) error {
 	if !ok {
 		return invalid("wenv preset not found: " + name)
 	}
+	if wenvUsesSecrets(vars) {
+		if e := a.requireSecretOutputConsent("wenv export"); e != nil {
+			return e
+		}
+	}
 	resolved, e := a.resolveWenvValues(vars)
 	if e != nil {
 		return e
 	}
 	return writeWenvExports(a.out, resolved)
+}
+
+// wenvEnvironment resolves a preset into child-process environment variables and
+// reports which of them came out of the encrypted store. Callers that echo the
+// child's output use the second list to scrub it.
+func (a *App) wenvEnvironment(name string) ([]secretEnvironmentVariable, []secretEnvironmentVariable, error) {
+	vars, err := a.namedWenv(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolved, err := a.resolveWenvValues(vars)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys := sortedWenvKeys(resolved)
+	variables := make([]secretEnvironmentVariable, 0, len(keys))
+	secrets := make([]secretEnvironmentVariable, 0, len(keys))
+	for _, key := range keys {
+		variable := secretEnvironmentVariable{Name: key, Value: resolved[key]}
+		variables = append(variables, variable)
+		if _, _, isReference := parseWenvSecretReference(vars[key]); isReference {
+			secrets = append(secrets, variable)
+		}
+	}
+	return variables, secrets, nil
+}
+
+// wenvExec scopes a resolved preset to one child process. Unlike apply/export it
+// prints no value, so it needs no terminal: it is the path automation and MCP
+// stdio servers take. A preset maps any environment name onto any secret field,
+// which "bb sec exec" cannot do because it derives names from the field itself.
+func (a *App) wenvExec(args []string) error {
+	if len(args) < 3 || args[1] != "--" || args[0] == "" {
+		return usage("wenv exec", "<name> -- <command> [args...]")
+	}
+	variables, _, err := a.wenvEnvironment(args[0])
+	if err != nil {
+		return err
+	}
+	if len(variables) == 0 {
+		return invalid("wenv preset has no variables: " + safeTerminalText(args[0]))
+	}
+	cmd := a.command(args[2], args[3:]...)
+	cmd.Env = overlaySecretEnvironment(a.env, variables)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = a.in, a.out, a.err
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("run with wenv preset %s: %w", safeTerminalText(args[0]), err)
+	}
+	return nil
 }
 
 func wenvActionChoices(name string, variableCount int) []selectChoice {

@@ -102,6 +102,10 @@ func (a *App) mcp(args []string) error {
   bb mcp sync <claude|codex> [name]
   bb mcp check [name] [--json]
   bb mcp audit [--json]
+  bb mcp serve                             Run the bb MCP server over stdio
+  bb mcp allow [list] [--json]
+  bb mcp allow add|rm <command> [-- <required argument prefix>...]
+  bb mcp allow service|preset add|rm <name>...
 
 Options for add/edit:
   --description TEXT          Human-readable purpose
@@ -115,6 +119,13 @@ Options for add/edit:
 
 Secret values are never stored here. Put them in bb sec, reference them from a
 wenv preset, then start Claude/Codex from that applied environment.
+
+"bb mcp serve" exposes bb sec and bb wenv to MCP clients without returning any
+secret value: agents receive sec://<service>/<field> references and run commands
+through sec_exec/wenv_exec, which inject values into a child process only. Those
+two tools are fail-closed and run nothing until "bb mcp allow add <command>".
+An argument prefix after "--" narrows a command to one subcommand, and the
+service/preset scopes narrow which entries those tools may reach at all.
 `)
 		return err
 	}
@@ -138,6 +149,10 @@ wenv preset, then start Claude/Codex from that applied environment.
 		return a.mcpCheck(args[1:])
 	case "audit":
 		return a.mcpAudit(args[1:])
+	case "serve":
+		return a.mcpServe(args[1:])
+	case "allow":
+		return a.mcpAllow(args[1:])
 	default:
 		return invalid("unknown mcp command")
 	}

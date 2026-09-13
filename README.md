@@ -72,6 +72,10 @@ bb wenv import --check
 bb wenv import --apply
 bb wenv show dev
 bb wenv apply dev
+# Scope a resolved preset to one child process instead of the current shell.
+# Unlike apply/export it prints no value, so automation and stdio MCP servers
+# use this path.
+bb wenv exec dev -- mcp-grafana --disable-write
 # Interactively apply/inspect presets and create, update, rename, or remove them.
 bb wenv
 # Keep only an encrypted-secret reference in the wenv preset. Applying the
@@ -92,6 +96,18 @@ bb sec
 bb sec rename github token access-token
 # Scope normalized secret variables to one child process.
 bb sec exec database -- psql
+
+# Serve bb sec/wenv to MCP clients without exposing any secret value. Agents
+# receive sec://<service>/<field> references and delegate execution; sec_exec and
+# wenv_exec inject values into a child process and return only its output.
+bb mcp allow add psql               # fail-closed: exec runs nothing until listed
+bb mcp allow add aws -- sts get-caller-identity   # only this subcommand
+bb mcp allow service add database   # optional: narrow which entries are reachable
+bb mcp allow preset add dev
+bb mcp allow --json
+bb mcp serve                       # stdio JSON-RPC; register it like any server
+bb mcp add bb --stdio bb --arg mcp --arg serve --targets claude,codex
+bb mcp sync claude bb
 
 # Register MCP servers once in bb, then synchronize the selected clients.
 # Only environment-variable names are stored; values remain in bb sec/wenv.
@@ -137,6 +153,40 @@ bb setup nvim --config-dir /path/to/lazyvim-config --dry-run --json
 bb setup nvim --config-dir /path/to/lazyvim-config --apply --consent --json
 bb doctor nvim --config-dir /path/to/lazyvim-config --json
 ```
+
+Commands that print resolved secret material — `bb sec get`, `bb sec env`,
+`bb sec copy`, and `bb wenv apply`/`bb wenv export` for presets that reference
+`sec://` — run only when stdin and stderr are attached to a terminal. A tool
+result or captured pipeline is model context, and a value printed there stays in
+the transcript, so the default refuses rather than redacts. `eval "$(bb wenv
+dev)"` is unaffected because only stdout is piped, and presets without secret
+references are never gated. Non-interactive automation that accepts the exposure
+sets `BB_ALLOW_SECRET_OUTPUT=1` explicitly.
+
+`bb wenv exec <preset> -- <command>` is the CLI counterpart: it resolves a preset
+into one child process and prints nothing itself, so it stays usable without a
+terminal. It is also the way to give two different tokens the same environment
+name — a preset maps any name onto any `sec://` field, whereas `bb sec exec`
+derives names from the fields themselves and injects every field of a service.
+
+`bb mcp serve` is the agent-facing path instead. Its tool surface has no
+value-returning tool at all: `sec_list`, `sec_ref`, `wenv_list`, `wenv_show`, and
+`wenv_set` deal in `sec://<service>/<field>` references, while `sec_exec` and
+`wenv_exec` run one allowlisted command with the values injected into its
+environment and return only that command's output, with the injected values
+substituted out. Nothing is executable until `bb mcp allow add <command>`. An
+argument prefix after `--` narrows a command to the subcommands it may run, so
+`aws sts get-caller-identity` can be permitted without permitting `aws s3 rm`; a
+broad entry and a narrow one for the same command are refused rather than
+silently coexisting. The optional `service` and `preset` scopes narrow which
+secret services and presets those tools may reach at all, and `bb mcp allow`
+reports whether either scope is in effect. The allowlist and scope are both
+checked before the encrypted store is opened, and every attempt is
+appended to `$XDG_STATE_HOME/bb/mcp-serve-audit.jsonl` with the command name and
+outcome but never a value. This closes the accidental-leak path, not a determined
+one: an agent with shell access can still read the store through other means, so
+pair it with permission rules that deny `bb sec get`, `bb sec copy`, and
+`BB_ALLOW_SECRET_OUTPUT`.
 
 The MVP stores configuration under `$XDG_CONFIG_HOME/bb` and operational state
 under `$XDG_STATE_HOME/bb` (with standard home-directory fallbacks). It does

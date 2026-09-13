@@ -54,7 +54,7 @@ func TestShellInitZshIsCheckoutIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	for _, want := range []string{"bb()", "command bb", `eval "$_bb_output"`, `list|current|show|export|set|rm|import`, `"${1:-}" == "assume"`, `"${1:-}" == "aws" && "${2:-}" == "assume"`, `list|current|exec|profile`, "compdef _bb bb", "completion candidates"} {
+	for _, want := range []string{"bb()", "command bb", `eval "$_bb_output"`, `list|current|show|export|exec|set|rm|import`, `"${1:-}" == "assume"`, `"${1:-}" == "aws" && "${2:-}" == "assume"`, `list|current|exec|profile`, "compdef _bb bb", "completion candidates"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("shell init missing %q:\n%s", want, got)
 		}

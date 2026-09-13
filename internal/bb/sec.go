@@ -51,6 +51,8 @@ func (a *App) sec(args []string) error {
   bb sec rm <service> [field] [--yes]
 
 Uses the existing age key/store format. Plaintext is never written to disk or journaled.
+get/env/copy emit secret material and run only on a terminal. Automation resolves
+secrets through "bb sec exec", "bb mcp serve", or an explicit BB_ALLOW_SECRET_OUTPUT=1.
 `)
 		return e
 	}
@@ -275,6 +277,9 @@ func (a *App) secGet(args []string) error {
 	if len(args) < 1 || len(args) > 2 {
 		return usage("sec get", "<service> [field]")
 	}
+	if e := a.requireSecretOutputConsent("sec get"); e != nil {
+		return e
+	}
 	d, e := a.readSecrets()
 	if e != nil {
 		return e
@@ -360,6 +365,35 @@ func (a *App) secRenameField(args []string) error {
 	return a.writeSecrets(data, old)
 }
 
+// secretOutputOverrideEnv re-enables plaintext secret output for automation that
+// has no terminal and accepts the exposure. It is deliberately explicit so a
+// permission rule or an audit can look for it.
+const secretOutputOverrideEnv = "BB_ALLOW_SECRET_OUTPUT"
+
+// terminalAttached reports whether bb is talking to a human terminal. stdout is
+// deliberately excluded: `eval "$(bb wenv dev)"` pipes stdout while stdin and
+// stderr stay attached to the operator's terminal.
+func (a *App) terminalAttached() bool {
+	input, ok := a.in.(*os.File)
+	if !ok || !a.isTerminal(input.Fd()) {
+		return false
+	}
+	errOut, ok := a.err.(*os.File)
+	return ok && a.isTerminal(errOut.Fd())
+}
+
+// requireSecretOutputConsent refuses to emit resolved secret material into a
+// stream no human is watching. Agent tool calls and captured pipelines land
+// there, and a value printed once stays in their transcript forever.
+func (a *App) requireSecretOutputConsent(command string) error {
+	if a.terminalAttached() || a.getenv(secretOutputOverrideEnv) == "1" {
+		return nil
+	}
+	return invalid(fmt.Sprintf(
+		"bb %s emits secret material and requires a terminal; run 'bb sec exec' or 'bb mcp serve' from automation, or set %s=1 to accept the exposure",
+		command, secretOutputOverrideEnv))
+}
+
 func (a *App) readSecretValue() ([]byte, error) {
 	if input, ok := a.in.(*os.File); ok && a.isTerminal(input.Fd()) {
 		if _, e := fmt.Fprint(a.err, "Secret value: "); e != nil {
@@ -426,6 +460,9 @@ func (a *App) secRemove(args []string) error {
 func (a *App) secEnv(args []string) error {
 	if len(args) != 1 {
 		return usage("sec env", "<service>")
+	}
+	if e := a.requireSecretOutputConsent("sec env"); e != nil {
+		return e
 	}
 	d, e := a.readSecrets()
 	if e != nil {
@@ -714,6 +751,9 @@ func (a *App) promptSecretName(label string) (string, error) {
 func (a *App) secCopy(args []string) error {
 	if len(args) > 2 {
 		return usage("sec copy", "[service] [field]")
+	}
+	if e := a.requireSecretOutputConsent("sec copy"); e != nil {
+		return e
 	}
 	d, e := a.readSecrets()
 	if e != nil {

@@ -105,11 +105,11 @@ _bb() {
       ;;
     wenv)
       if (( CURRENT == 3 )); then
-        _bb_static 'wenv command' 'list:list presets' 'current:show current preset' 'show:show preset values' 'apply:apply a preset' 'export:print exports' 'set:set preset values' 'rm:remove a preset' 'import:import legacy presets'
+        _bb_static 'wenv command' 'list:list presets' 'current:show current preset' 'show:show preset values' 'apply:apply a preset' 'export:print exports' 'exec:run a command with a resolved preset' 'set:set preset values' 'rm:remove a preset' 'import:import legacy presets'
         _bb_dynamic 'environment' wenv
       elif (( CURRENT == 4 )); then
         case "${words[3]}" in
-          show|apply|export|set|rm) _bb_dynamic 'environment' wenv ;;
+          show|apply|export|exec|set|rm) _bb_dynamic 'environment' wenv ;;
           import) _bb_static 'mode or option' '--check:preview import' '--apply:apply import' '--dir:legacy directory' ;;
         esac
       elif (( CURRENT == 5 )); then
@@ -250,12 +250,13 @@ _bb() {
       ;;
     mcp)
       if (( CURRENT == 3 )); then
-        _bb_static 'MCP command' 'list:list servers' 'show:show a server' 'add:add a server' 'edit:edit a server' 'rm:remove a server' 'sync:synchronize a client' 'check:validate registrations' 'audit:audit config metadata'
+        _bb_static 'MCP command' 'list:list servers' 'show:show a server' 'add:add a server' 'edit:edit a server' 'rm:remove a server' 'sync:synchronize a client' 'check:validate registrations' 'audit:audit config metadata' 'serve:run the bb MCP server over stdio' 'allow:manage the MCP exec allowlist'
       elif (( CURRENT == 4 )); then
         case "${words[3]}" in
           show|edit|rm|check) _bb_dynamic 'MCP server' mcp ;;
           sync) _bb_static 'MCP client' 'claude:Claude Code' 'codex:Codex' ;;
           list|audit) _bb_static 'option' '--json:JSON envelope' ;;
+          allow) _bb_static 'allowlist action' 'list:show the allowlist and scopes' 'add:allow a command' 'rm:remove a command' 'service:scope secret services' 'preset:scope wenv presets' ;;
           add) _bb_static 'option' '--stdio:stdio command' '--http:streamable HTTP URL' '--description:purpose' '--arg:stdio argument' '--env:required environment name' '--bearer-token-env:bearer token environment name' '--targets:registration targets' ;;
         esac
       elif (( CURRENT == 5 )); then

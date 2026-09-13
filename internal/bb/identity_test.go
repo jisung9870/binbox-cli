@@ -818,7 +818,7 @@ func TestWenvTUIAddsPresetAndPreservesExistingChoices(t *testing.T) {
 	a, out, _, _ := testApp(t)
 	stderr := new(bytes.Buffer)
 	a.err = stderr
-	a.env = append(a.env, "BB_SELECTOR=plain")
+	a.env = append(a.env, "BB_SELECTOR=plain", secretOutputOverrideEnv+"=1")
 	a.in = strings.NewReader("1\nawx\nCONTROLLER_HOST=https://at.core.line.games\nCONTROLLER_OAUTH_TOKEN=sec://awx/w-token\n\n")
 	if err := a.Run([]string{"wenv"}); err != nil {
 		t.Fatal(err)
@@ -1090,7 +1090,7 @@ func TestSecHelperProcess(t *testing.T) {
 	os.Exit(90)
 }
 
-func enableSecHelper(a *App, dir string) {
+func enableSecStoreHelper(a *App, dir string) {
 	a.env = append(a.env,
 		"BINBOX_SECRETS_FILE="+filepath.Join(dir, "secrets.json.age"),
 		"BINBOX_AGE_KEY="+filepath.Join(dir, "age.key"),
@@ -1102,10 +1102,17 @@ func enableSecHelper(a *App, dir string) {
 	}
 }
 
+func enableSecHelper(a *App, dir string) {
+	enableSecStoreHelper(a, dir)
+	// These tests cover store semantics, not the terminal gate; the gate has its
+	// own tests in mcp_serve_test.go.
+	a.env = append(a.env, secretOutputOverrideEnv+"=1")
+}
+
 func TestSecCompatibleCRUD(t *testing.T) {
 	a, out, _, _ := testApp(t)
 	dir := t.TempDir()
-	a.env = append(a.env, "BINBOX_SECRETS_FILE="+filepath.Join(dir, "secrets.json.age"), "BINBOX_AGE_KEY="+filepath.Join(dir, "age.key"), "GO_WANT_SEC_HELPER=1")
+	a.env = append(a.env, "BINBOX_SECRETS_FILE="+filepath.Join(dir, "secrets.json.age"), "BINBOX_AGE_KEY="+filepath.Join(dir, "age.key"), "GO_WANT_SEC_HELPER=1", secretOutputOverrideEnv+"=1")
 	a.lookPath = func(string) (string, error) { return "helper", nil }
 	a.command = func(name string, args ...string) *exec.Cmd {
 		return exec.Command(os.Args[0], append([]string{"-test.run=TestSecHelperProcess", "--", name}, args...)...)
@@ -1660,6 +1667,7 @@ func TestSecCopySelectorUsesStableValueAndKeepsStdoutClean(t *testing.T) {
 		"GO_WANT_SEC_HELPER=1",
 		"SEC_CLIPBOARD_FILE="+clipboard,
 		"BB_SELECTOR=plain",
+		secretOutputOverrideEnv+"=1",
 	)
 	a.lookPath = func(string) (string, error) { return "helper", nil }
 	a.command = func(name string, args ...string) *exec.Cmd {

@@ -90,6 +90,12 @@ bb sec add github/token --paste --expires 90d
 bb sec check
 # rm moves to a 7-day encrypted trash.
 bb sec rm github/token && bb sec restore github/token
+# Rotate with a way back, see what uses a token, verify it with the issuer.
+bb sec rotate github/token --paste      # previous value kept 7 days; --undo swaps back
+bb sec where github/token
+bb sec meta github/token --verify github && bb sec verify
+bb sec check --unused 90d
+bb sec import .env --service app        # .env → fields, values never printed
 # Automation can still pipe an exact value.
 printf '%s' "$TOKEN" | bb sec set github token
 # Existing values require confirmation or an explicit automation override.

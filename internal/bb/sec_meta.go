@@ -24,6 +24,10 @@ type secretMeta struct {
 	URL           string `json:"url,omitempty"`
 	Note          string `json:"note,omitempty"`
 	UpdatedAt     string `json:"updated_at,omitempty"`
+	// LastUsedAt is the last day bb handed the value to a command or client.
+	LastUsedAt string `json:"last_used_at,omitempty"`
+	// Verify says where bb sec verify checks the value; see sec_verify.go.
+	Verify *secretVerify `json:"verify,omitempty"`
 }
 
 type secretMetaFile struct {
@@ -356,8 +360,19 @@ func (a *App) secCheck(args []string) error {
 	if e != nil {
 		return e
 	}
+	args, unused, hasUnused, e := takeOptionValue(args, "--unused")
+	if e != nil {
+		return e
+	}
 	if len(args) != 0 {
-		return usage("sec check", "[--within 14d] [--all] [--json|--quiet]")
+		return usage("sec check", "[--within 14d] [--all] [--json|--quiet] | --unused 90d [--json]")
+	}
+	if hasUnused {
+		n, convErr := strconv.Atoi(strings.TrimSuffix(unused, "d"))
+		if convErr != nil || n < 0 {
+			return invalid("--unused must be a number of days such as 90d")
+		}
+		return a.printUnusedSecrets(n, jsonMode)
 	}
 	window := defaultExpiryWindowDays
 	if hasWithin {
@@ -408,9 +423,38 @@ func (a *App) secMeta(args []string) error {
 	if e != nil {
 		return e
 	}
+	args, verifyValue, hasVerify, e := takeOptionValue(args, "--verify")
+	if e != nil {
+		return e
+	}
+	args, verifyUser, hasVerifyUser, e := takeOptionValue(args, "--verify-user")
+	if e != nil {
+		return e
+	}
 	args, jsonMode := takeFlag(args, "--json")
 	if len(args) != 2 || !validSecretName(args[0]) || !validSecretName(args[1]) {
-		return usage("sec meta", "<service/field> [--expires DATE|90d|none] [--url URL|none] [--note TEXT|none] [--json]")
+		return usage("sec meta", "<service/field> [--expires DATE|90d|none] [--url URL|none] [--note TEXT|none] [--verify KIND[=URL]|none [--verify-user FIELD]] [--json]")
+	}
+	if hasVerifyUser && !hasVerify {
+		return invalid("--verify-user goes with --verify")
+	}
+	var verify *secretVerify
+	if hasVerify {
+		// The target decides where the token is sent, so only the operator may
+		// set it: the same gate as printing the value.
+		if !a.terminalAttached() && a.getenv(secretOutputOverrideEnv) != "1" {
+			return invalid("setting a verify target decides where the token is sent and requires a terminal")
+		}
+		if verify, e = parseSecretVerify(verifyValue, verifyUser); e != nil {
+			return e
+		}
+		if verify != nil {
+			signingKey, keyErr := a.verifyTargetKey()
+			if keyErr != nil {
+				return keyErr
+			}
+			verify.MAC = verifyTargetMAC(signingKey, secretKey(args[0], args[1]), *verify)
+		}
 	}
 	data, e := a.readSecrets()
 	if e != nil {
@@ -420,11 +464,19 @@ func (a *App) secMeta(args []string) error {
 		return invalid("secret field not found")
 	}
 	key := secretKey(args[0], args[1])
-	if opts.any() {
+	if verify != nil && verify.UserField != "" {
+		if _, ok := data[args[0]][verify.UserField]; !ok {
+			return invalid("user field not found in " + args[0] + ": " + verify.UserField)
+		}
+	}
+	if opts.any() || hasVerify {
 		e = a.updateSecretMeta(func(entries map[string]secretMeta) error {
 			updated, applyErr := opts.apply(entries[key], a.secretToday(), "")
 			if applyErr != nil {
 				return applyErr
+			}
+			if hasVerify {
+				updated.Verify = verify
 			}
 			updated.UpdatedAt = a.now().UTC().Format(time.RFC3339)
 			entries[key] = updated
@@ -455,6 +507,15 @@ func (a *App) secMeta(args []string) error {
 	fmt.Fprintf(w, "expires\t%s\n", expires)
 	fmt.Fprintf(w, "url\t%s\n", orDash(safeTerminalText(m.URL)))
 	fmt.Fprintf(w, "note\t%s\n", orDash(safeTerminalText(m.Note)))
+	fmt.Fprintf(w, "last used\t%s\n", orDash(m.LastUsedAt))
+	target := "-"
+	if m.Verify != nil {
+		target = m.Verify.Kind + " " + safeTerminalText(m.Verify.URL)
+		if m.Verify.UserField != "" {
+			target += " (user field " + m.Verify.UserField + ")"
+		}
+	}
+	fmt.Fprintf(w, "verify\t%s\n", target)
 	return w.Flush()
 }
 

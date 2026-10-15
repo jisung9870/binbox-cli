@@ -47,6 +47,13 @@ func (a *App) sec(args []string) error {
   bb sec set <service/field> ...    Same as add
   bb sec meta <service/field> [--expires DATE|90d|none] [--url URL|none] [--note TEXT|none] [--json]
   bb sec check [--within 14d] [--all] [--json|--quiet]
+  bb sec check --unused 90d [--json]   Fields bb has not handed out for 90 days
+  bb sec rotate <service/field> [--paste] [--expires DATE|90d]   Previous value kept 7 days
+  bb sec rotate <service/field> --undo
+  bb sec where <service[/field]> [--json]   wenv presets, MCP servers and exec rules using it
+  bb sec import <file.env|-> --service <service> [--only KEY,KEY] [--force]
+  bb sec meta <service/field> --verify gitlab=https://host|github|jenkins=URL|awx=URL [--verify-user FIELD]
+  bb sec verify [service[/field]] [--json]   Ask the issuer who the token is; records reported expiry
   bb sec rename <service/field> <new-field> [--yes]
   bb sec get <service[/field]>
   bb sec copy [service[/field]] [--keep]
@@ -76,7 +83,7 @@ secrets through "bb sec exec", "bb mcp serve", or an explicit BB_ALLOW_SECRET_OU
 	}
 	rest := args[1:]
 	switch args[0] {
-	case "set", "add", "meta", "rename", "get", "copy", "rm", "restore":
+	case "set", "add", "meta", "rename", "get", "copy", "rm", "restore", "rotate", "where", "verify":
 		rest = expandSecretPath(rest)
 	}
 	switch args[0] {
@@ -108,6 +115,14 @@ secrets through "bb sec exec", "bb mcp serve", or an explicit BB_ALLOW_SECRET_OU
 		return a.secRestore(rest)
 	case "harden":
 		return a.secHarden(rest)
+	case "where":
+		return a.secWhere(rest)
+	case "import":
+		return a.secImport(rest)
+	case "rotate":
+		return a.secRotate(rest)
+	case "verify":
+		return a.secVerify(rest)
 	case clipboardClearCommand:
 		return a.secClipboardClear(rest)
 	default:
@@ -379,6 +394,7 @@ func (a *App) secGet(args []string) error {
 	if e != nil {
 		return e
 	}
+	a.markSecretsUsed([]string{secretKey(args[0], field)})
 	_, e = fmt.Fprintln(a.out, d[args[0]][field])
 	return e
 }
@@ -506,6 +522,7 @@ func (a *App) secRenameField(args []string) error {
 	if e := a.writeSecrets(data, old); e != nil {
 		return e
 	}
+	a.warnSecretReferences(service, field, "renamed to "+newField)
 	return a.renameSecretMeta(service, field, newField)
 }
 
@@ -646,6 +663,11 @@ func (a *App) secRemove(args []string) error {
 	if e := a.dropSecretMeta(keys); e != nil {
 		return e
 	}
+	field := ""
+	if len(args) == 2 {
+		field = args[1]
+	}
+	a.warnSecretReferences(args[0], field, "removed")
 	if !purge {
 		fmt.Fprintf(a.err, "Moved %s to the trash; restore within 7 days with: bb sec restore %s\n",
 			strings.Join(keys, ", "), strings.Join(args, "/"))
@@ -671,6 +693,7 @@ func (a *App) secEnv(args []string) error {
 	if e != nil {
 		return e
 	}
+	a.markSecretsUsed(serviceKeys(args[0], fields))
 	for _, variable := range variables {
 		if _, e := fmt.Fprintf(a.out, "export %s=%s\n", variable.Name, shellQuote(variable.Value)); e != nil {
 			return e
@@ -730,6 +753,7 @@ func (a *App) secExec(args []string) error {
 	if e != nil {
 		return e
 	}
+	a.markSecretsUsed(serviceKeys(args[0], fields))
 	cmd := a.command(args[2], args[3:]...)
 	cmd.Env = overlaySecretEnvironment(a.env, variables)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = a.in, a.out, a.err
@@ -1031,6 +1055,7 @@ func (a *App) secCopy(args []string) error {
 	if e := a.writeClipboard(value); e != nil {
 		return e
 	}
+	a.markSecretsUsed([]string{secretKey(svc, field)})
 	seconds := a.clipboardClearSeconds()
 	if keep || seconds == 0 {
 		return nil

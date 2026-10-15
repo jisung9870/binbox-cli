@@ -6,6 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.8
 	charm.land/lipgloss/v2 v2.0.6
+	github.com/BurntSushi/toml v1.5.0
 	github.com/aws/aws-sdk-go-v2 v1.45.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.40
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.70.1

@@ -72,6 +72,17 @@ release tags and the corresponding release records.
   metadata by anything else is refused. https is required except on loopback,
   environment proxies are ignored, and redirects are not followed.
 
+- `bb mcp audit --secrets [--json]` reports literal credentials in Claude
+  (`~/.claude.json` user and local servers, `./.mcp.json`) and Codex
+  (`config.toml`) MCP configuration by client, scope, server and location
+  (env, header, argument, URL) without printing them, and exits 1 when it
+  finds any.
+- `bb mcp adopt <claude|codex> <name> --service S [--drop-unmodeled]` moves a
+  user-scope server's literal env values (or its bearer token, Claude only)
+  into bb sec, registers it in bb with references, and re-synchronizes the
+  client so it starts the server through `bb mcp launch` or `headersHelper`.
+  It needs a terminal and stops before dropping settings bb does not model.
+
 ### Fixed
 
 - `--json` commands that print their own result and then exit non-zero (such

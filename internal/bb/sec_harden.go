@@ -39,7 +39,7 @@ func (a *App) hardenCommandPrefixes() [][]string {
 			// An agent that can register a server or widen the allowlist can
 			// launch a command of its choosing with a token; those changes
 			// belong to the operator.
-			{"mcp", "add"}, {"mcp", "edit"}, {"mcp", "launch"}, {"mcp", "allow"},
+			{"mcp", "add"}, {"mcp", "edit"}, {"mcp", "launch"}, {"mcp", "allow"}, {"mcp", "adopt"},
 		} {
 			prefixes = append(prefixes, append([]string{bb}, sub...))
 		}

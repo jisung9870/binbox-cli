@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/x/term"
@@ -32,6 +33,7 @@ type App struct {
 	command              func(string, ...string) *exec.Cmd
 	isTerminal           func(uintptr) bool
 	readPassword         func(uintptr) ([]byte, error)
+	execReplace          func(path string, argv, env []string) error
 	awsBrowserTerminal   func() awsbrowser.Terminal
 	awsBrowserDispatcher awsbrowser.IntentDispatcher
 	awsQueryService      awsQueryServiceFactory
@@ -50,6 +52,7 @@ func New(out, err io.Writer, env []string) *App {
 		command:      exec.Command,
 		isTerminal:   term.IsTerminal,
 		readPassword: term.ReadPassword,
+		execReplace:  syscall.Exec,
 	}
 	a.awsBrowserTerminal = func() awsbrowser.Terminal {
 		terminal := awsbrowser.Terminal{In: a.in, Err: a.err}

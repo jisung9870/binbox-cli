@@ -47,7 +47,8 @@ operator-managed allowlist (bb mcp allow), which may bind a command to specific
 services or presets.
 
 sec_check reports expired or expiring secrets, and exec results warn when the
-credential they used is one. Tell the operator; renewal is a human step.`
+credential they used is one. sec_verify asks the issuer whose token it is.
+Tell the operator; renewal is a human step.`
 
 // mcpExecRule permits one command through sec_exec/wenv_exec. An empty Args
 // permits any arguments; otherwise argv[1:] must start with Args, which is how a
@@ -725,6 +726,16 @@ func mcpServeTools() []mcpTool {
 			handler: (*App).mcpToolSecRef,
 		},
 		{
+			Name:        "sec_verify",
+			Title:       "Verify secrets with their issuer",
+			Description: "Ask the issuing service (GitLab, GitHub, Jenkins, AWX) which user a stored token belongs to, for fields the operator gave a verify target. Returns identity, ok/error and any expiry the service reports; never the token.",
+			InputSchema: mcpObjectSchema(map[string]any{
+				"service": mcpStringSchema("Limit to one service."),
+				"field":   mcpStringSchema("Limit to one field of the service."),
+			}),
+			handler: (*App).mcpToolSecVerify,
+		},
+		{
 			Name:        "wenv_list",
 			Title:       "List environment presets",
 			Description: "List declarative environment preset names and their variable counts.",
@@ -1045,6 +1056,24 @@ func (a *App) mcpToolSecRef(arguments json.RawMessage) (any, error) {
 	}, nil
 }
 
+func (a *App) mcpToolSecVerify(arguments json.RawMessage) (any, error) {
+	var input struct {
+		Service string `json:"service"`
+		Field   string `json:"field"`
+	}
+	if err := decodeMCPArguments(arguments, &input); err != nil {
+		return nil, err
+	}
+	if (input.Service != "" && !validSecretName(input.Service)) || (input.Field != "" && (input.Service == "" || !validSecretName(input.Field))) {
+		return nil, invalid("field needs a service, and names may contain only letters, digits, dot, underscore, and hyphen")
+	}
+	results, err := a.runSecretVerification(input.Service, input.Field)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"results": results}, nil
+}
+
 type mcpWenvPreset struct {
 	Name      string `json:"name"`
 	Variables int    `json:"variables"`
@@ -1173,10 +1202,8 @@ func (a *App) mcpToolSecExec(arguments json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	keys := make([]string, 0, len(fields))
-	for field := range fields {
-		keys = append(keys, secretKey(input.Service, field))
-	}
+	keys := serviceKeys(input.Service, fields)
+	a.markSecretsUsed(keys)
 	return a.mcpRunWithEnvironment("sec_exec", input.Service, variables, variables, input.Argv, a.expiryWarnings(keys))
 }
 

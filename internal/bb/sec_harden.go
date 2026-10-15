@@ -100,6 +100,8 @@ func (a *App) claudeHardenRules() []string {
 			rules = append(rules, "Edit(/"+filepath.Join(config, name)+")")
 		}
 	}
+	// The metadata holds verify targets, which decide where a token is sent.
+	rules = append(rules, "Edit(/"+a.secMetaPath()+")")
 	if runtime.GOOS == "linux" {
 		rules = append(rules, "Read(//proc/**/environ)")
 	}

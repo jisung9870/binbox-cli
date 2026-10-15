@@ -228,6 +228,7 @@ func wenvPreviewValue(key, value string) string {
 func (a *App) resolveWenvValues(vars map[string]string) (map[string]string, error) {
 	resolved := make(map[string]string, len(vars))
 	var secrets secretStore
+	used := []string{}
 	for key, value := range vars {
 		service, field, reference := parseWenvSecretReference(value)
 		if !reference {
@@ -250,7 +251,9 @@ func (a *App) resolveWenvValues(vars map[string]string) (map[string]string, erro
 			return nil, invalid(fmt.Sprintf("wenv secret field not found: %s/%s", service, field))
 		}
 		resolved[key] = secret
+		used = append(used, secretKey(service, field))
 	}
+	a.markSecretsUsed(used)
 	return resolved, nil
 }
 

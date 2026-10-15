@@ -124,6 +124,7 @@ func (a *App) mcpLaunch(args []string) error {
 		return err
 	}
 	a.warnExpiringMCPSecrets(name, refs)
+	a.markSecretsUsed(secretKeysForReferences(refs))
 	names := make([]string, 0, len(server.SecretEnv))
 	for variable := range server.SecretEnv {
 		names = append(names, variable)
@@ -169,6 +170,7 @@ func (a *App) mcpHeader(args []string) error {
 		return err
 	}
 	a.warnExpiringMCPSecrets(name, refs)
+	a.markSecretsUsed(secretKeysForReferences(refs))
 	return json.NewEncoder(a.out).Encode(map[string]string{"Authorization": "Bearer " + values[server.BearerTokenSecret]})
 }
 

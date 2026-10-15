@@ -52,6 +52,31 @@ release tags and the corresponding release records.
   Claude's `settings.json` (order kept, symlinks written through, duplicate
   keys refused) or to Codex's `rules/bb-sec.rules`.
 
+- `bb sec where <service[/field]>` lists the wenv presets, MCP servers and MCP
+  exec rules that reference a secret; `rm` and `rename` warn when something
+  still does.
+- `bb sec import <file.env|-> --service S [--only KEY,..] [--force]` stores a
+  `.env` file as fields of one service without printing values; values that
+  `--force` replaces go to the trash like a rotation.
+- `bb sec rotate <service/field>` replaces a value and keeps the previous one in
+  the trash; `--undo` swaps them back. Rotation drops the old expiry and, when
+  a verify target exists, verifies the new value and records its expiry.
+- bb records the day it last handed a value out (`last_used_at` in the
+  metadata, written at most once a day), and `bb sec check --unused 90d` lists
+  fields not used since.
+- `bb sec meta <service/field> --verify gitlab=URL|github|jenkins=URL|awx=URL
+  [--verify-user FIELD]` sets where `bb sec verify` and the MCP `sec_verify`
+  tool ask who the token belongs to. Expiry reported by GitLab and GitHub is
+  recorded. Setting a target requires a terminal and signs it with a key
+  derived from the age identity, so a target written into the plaintext
+  metadata by anything else is refused. https is required except on loopback,
+  environment proxies are ignored, and redirects are not followed.
+
+### Fixed
+
+- `--json` commands that print their own result and then exit non-zero (such
+  as `bb sec check --json`) no longer print a second error document.
+
 ### Changed
 
 - `bb sec rm` moves fields to the trash. Removing one field no longer asks for

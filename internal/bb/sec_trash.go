@@ -21,6 +21,8 @@ type secretTrashEntry struct {
 	Value     string      `json:"value"`
 	Meta      *secretMeta `json:"meta,omitempty"`
 	DeletedAt time.Time   `json:"deleted_at"`
+	// Rotated marks the value a rotation replaced, which rotate --undo restores.
+	Rotated bool `json:"rotated,omitempty"`
 }
 
 type secretTrash struct {
@@ -82,6 +84,25 @@ func (a *App) purgeFromTrash(keys []string) error {
 		if !drop[secretKey(entry.Service, entry.Field)] {
 			kept = append(kept, entry)
 		}
+	}
+	trash.Entries = kept
+	return a.writeEncryptedJSON(a.secTrashPath(), trash, old, false)
+}
+
+// dropTrashEntry removes one entry, matched by key, time, rotation mark and
+// value (two entries can share a timestamp).
+func (a *App) dropTrashEntry(target secretTrashEntry) error {
+	trash, old, e := a.readSecretTrash()
+	if e != nil || old == nil {
+		return e
+	}
+	kept := trash.Entries[:0]
+	for _, entry := range trash.Entries {
+		if entry.Service == target.Service && entry.Field == target.Field && entry.Rotated == target.Rotated &&
+			entry.DeletedAt.Equal(target.DeletedAt) && entry.Value == target.Value {
+			continue
+		}
+		kept = append(kept, entry)
 	}
 	trash.Entries = kept
 	return a.writeEncryptedJSON(a.secTrashPath(), trash, old, false)

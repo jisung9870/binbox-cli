@@ -26,7 +26,7 @@ The repository includes `docs/examples/aws-contexts.udg.json` as a portable,
 credential-free UDG group example. Copy it to `~/.config/bb/aws-contexts.json`
 on WSL/Linux before opening `aws browse`.
 | Environments | `wenv`, `wenv list/current/show/apply/set/rm/export/import` | Staged preset CRUD TUI; declarative XDG JSON with `sec://service/field` references; redacted preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
-| Secrets | `sec`, `sec init/list/add/set/meta/check/rename/get/copy/env/exec/rm/trash/restore/harden` | Service→Field→Action manager with `Add secret`/`Add field` metadata-only choices and expiry badges; `service/field` paths; clipboard paste and timed clipboard clear; value-free expiry/URL/note metadata with `check`; 7-day encrypted trash; `harden claude|codex` agent deny rules; default-cancel overwrite/rename/service removal/purge; hidden input; child-scoped exec; existing age key/ciphertext format |
+| Secrets | `sec`, `sec init/list/add/set/meta/check/rename/get/copy/env/exec/rm/trash/restore/rotate/where/import/verify/harden` | Service→Field→Action manager with `Add secret`/`Add field` metadata-only choices and expiry badges; `service/field` paths; clipboard paste and timed clipboard clear; value-free expiry/URL/note metadata with `check`; 7-day encrypted trash; `harden claude|codex` agent deny rules; default-cancel overwrite/rename/service removal/purge; hidden input; child-scoped exec; existing age key/ciphertext format |
 | Terraform | `tfx init/validate/fmt/plan/sum/browse/session/status/apply/destroy/end/state/review/clean` | Account-, scope-, expiry-, and plan-bound destructive safeguards; `browse` only reads a plan |
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
 | Local ports | `port inspect/kill` | Exact sorted PID observation followed by confirmation and re-observation |
@@ -59,6 +59,36 @@ It reads only the metadata, so it can run from a prompt or a scheduler without
 the age key. Replacing a value keeps its expiry and prints a reminder to update
 it with `bb sec meta`.
 
+`bb sec rotate <service/field>` replaces a value after moving the previous one
+into the trash marked as rotated; `bb sec rotate <service/field> --undo` swaps
+the current value with the newest rotated copy, so running it twice returns to
+the rotated-in value. Rotation clears the recorded expiry, which belonged to
+the old value, unless `--expires`, a JWT `exp` or verification supplies a new
+one. `bb sec where` lists wenv presets, MCP servers (`--secret-env`, bearer
+secret) and MCP exec bindings that name a secret, and `rm`/`rename` print the
+same list as a warning. `bb sec import` parses `KEY=VALUE` lines (with
+`export`, quotes and comments) into one service, refusing existing fields
+without `--force`. bb records `last_used_at` (a date, written at most once a
+day) when `get`, `copy`, `env`, `exec`, wenv resolution, `mcp launch`,
+`mcp header`, `sec_exec` or `verify` hands a value out; `check --unused 90d`
+lists recorded fields older than that. Fields never used since this tracking
+began have no record and are not listed.
+
+`bb sec meta <service/field> --verify KIND[=URL]` records where `bb sec verify`
+checks a token: `gitlab=URL` (`/api/v4/user`, plus the token's own expiry from
+`/api/v4/personal_access_tokens/self`), `github[=API URL]` (`/user` and the
+expiry header), `jenkins=URL --verify-user FIELD` (`/me/api/json` with basic
+auth) and `awx=URL` (`/api/v2/me/`). Output and the MCP `sec_verify` tool carry
+identity, status and expiry only, never a body or token; reported expiry is
+stored with source `verify`. The target decides where a token is sent, so
+setting it needs a terminal (like printing a value) and stores an HMAC keyed
+from the age identity; `verify` refuses a target whose signature does not
+match, so editing `secrets.meta.json` cannot redirect a token, and a renamed
+field needs its target set again. URLs must be https except on loopback,
+`HTTPS_PROXY` and similar are ignored, and redirects are not followed.
+Verification does not count as a use. `verify` exits 1 when any check
+fails.
+
 `bb sec harden claude|codex` shows deny rules for agent shells and, after
 confirmation, adds them to Claude's `settings.json` `permissions.deny`
 (`CLAUDE_CONFIG_DIR` respected; other keys keep their order) or writes Codex's
@@ -66,7 +96,7 @@ confirmation, adds them to Claude's `settings.json` `permissions.deny`
 value-printing and agent-chosen-child commands (`bb sec get|env|copy|exec`,
 `bb wenv apply|export|exec`, `bb mcp header`), registry changes
 (`bb mcp add|edit|launch|allow`, Claude `Edit` of the two registries),
-`BB_ALLOW_SECRET_OUTPUT`,
+`BB_ALLOW_SECRET_OUTPUT`, `Edit` of `secrets.meta.json` (verify targets),
 `age -d`, environment-printing `ps` forms and the age key file. Agents use the
 `bb mcp serve` tools instead. The rules match command prefixes and are a
 guardrail, not containment.

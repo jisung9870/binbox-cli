@@ -205,23 +205,26 @@ _bb() {
       ;;
     sec)
       if (( CURRENT == 3 )); then
-        _bb_static 'secret command' 'init:initialize encrypted store' 'list:list metadata' 'add:add a value' 'set:set a value' 'meta:show or edit expiry metadata' 'check:report expiring secrets' 'rename:rename a field' 'get:print a value' 'copy:copy a value' 'env:print exports' 'exec:run a scoped command' 'rm:move to trash' 'trash:list trashed fields' 'restore:restore from trash' 'harden:add agent deny rules'
+        _bb_static 'secret command' 'init:initialize encrypted store' 'list:list metadata' 'add:add a value' 'set:set a value' 'meta:show or edit expiry metadata' 'check:report expiring secrets' 'rename:rename a field' 'get:print a value' 'copy:copy a value' 'env:print exports' 'exec:run a scoped command' 'rm:move to trash' 'trash:list trashed fields' 'restore:restore from trash' 'harden:add agent deny rules' 'rotate:replace a value, keeping the previous one' 'where:show what references a secret' 'import:import a .env file' 'verify:check tokens with their issuer'
       elif (( CURRENT == 4 )); then
         case "${words[3]}" in
-          list|add|set|meta|rename|get|copy|env|exec|rm) _bb_dynamic 'secret service' secret-service ;;
-          check) _bb_static 'option' '--within:days to look ahead' '--all:include healthy entries' '--json:print JSON' '--quiet:exit status only' ;;
+          list|add|set|meta|rename|get|copy|env|exec|rm|rotate|where|verify) _bb_dynamic 'secret service' secret-service ;;
+          check) _bb_static 'option' '--within:days to look ahead' '--all:include healthy entries' '--unused:days without use' '--json:print JSON' '--quiet:exit status only' ;;
+          import) _files ;;
           harden) _bb_static 'agent client' 'claude:Claude Code settings deny rules' 'codex:Codex execpolicy rules' ;;
         esac
       elif (( CURRENT == 5 )); then
         case "${words[3]}" in
-          add|set|meta|rename|get|copy|rm) _bb_dynamic 'secret field' secret-field "${words[4]}" ;;
+          add|set|meta|rename|get|copy|rm|rotate|where|verify) _bb_dynamic 'secret field' secret-field "${words[4]}" ;;
+          import) _bb_static 'option' '--service:target service' '--only:keys to import' '--force:replace existing fields' ;;
           exec) _bb_static 'separator' '--:end bb options' ;;
           harden) _bb_static 'option' '--print:show rules only' '--yes:skip confirmation' ;;
         esac
       elif (( CURRENT == 6 )); then
         case "${words[3]}" in
           add|set) _bb_static 'option' '--paste:read from the clipboard' '--expires:expiry date or duration' '--url:reissue URL' '--note:note' '--force:replace without confirmation' ;;
-          meta) _bb_static 'option' '--expires:expiry date or duration' '--url:reissue URL' '--note:note' '--json:print JSON' ;;
+          meta) _bb_static 'option' '--expires:expiry date or duration' '--url:reissue URL' '--note:note' '--verify:verify target KIND=URL' '--verify-user:user name field' '--json:print JSON' ;;
+          rotate) _bb_static 'option' '--paste:read from the clipboard' '--expires:expiry date or duration' '--undo:swap back the previous value' ;;
           rm) _bb_static 'option' '--yes:skip confirmation' '--purge:delete without the trash' ;;
         esac
       elif (( CURRENT == 7 )) && [[ "${words[3]}" == rename ]]; then

@@ -37,6 +37,20 @@ release tags and the corresponding release records.
   to `--targets claude` and a Codex target is rejected.
 - `bb mcp check` reports `missing_secrets` for references absent from the
   store. `sec://` may be omitted in references (`svc/field`).
+- `bb mcp allow add <command> --service S --preset P` binds a rule to the
+  entries it may run with; `bb mcp allow rm <command> --service S` removes a
+  binding, and removing the last one removes the rule rather than widening it.
+- `bb mcp allow add --bundle gh-read|glab-read|aws-identity --service S` adds
+  read-only subcommand sets that refuse host-selecting flags and URL arguments;
+  `bb mcp allow bundles` lists them. A broader rule that would let a bound rule
+  run with other targets is refused.
+- `bb mcp serve` gains a `sec_check` tool, `sec_list` reports each field's
+  recorded expiry, and `sec_exec`/`wenv_exec` results warn when the credential
+  they used is expired or expiring.
+- `bb sec harden claude|codex [--print] [--yes]` adds deny rules for the
+  commands that print secret values or reconfigure what runs with them to
+  Claude's `settings.json` (order kept, symlinks written through, duplicate
+  keys refused) or to Codex's `rules/bb-sec.rules`.
 
 ### Changed
 

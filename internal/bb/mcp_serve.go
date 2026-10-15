@@ -43,18 +43,90 @@ Secret values are never returned by any tool. Work with sec://<service>/<field>
 references, store them in wenv presets, and run commands that need the value
 through sec_exec or wenv_exec, which inject it into a child process environment
 and return only that process output. Executable commands are restricted to an
-operator-managed allowlist (bb mcp allow).`
+operator-managed allowlist (bb mcp allow), which may bind a command to specific
+services or presets.
+
+sec_check reports expired or expiring secrets, and exec results warn when the
+credential they used is one. Tell the operator; renewal is a human step.`
 
 // mcpExecRule permits one command through sec_exec/wenv_exec. An empty Args
 // permits any arguments; otherwise argv[1:] must start with Args, which is how a
 // read-only subcommand is allowed without allowing its destructive siblings.
+//
+// Services and Presets bind a rule to the targets it may run with. A rule with
+// neither runs with any target the global scope allows; a bound rule runs only
+// with its own, so "glab" can be tied to the gitlab token alone.
+//
+// DenyArgs and DenyURLs refuse arguments anywhere after the prefix. Bundles use
+// them to stop a CLI being pointed at another host, which would send the
+// injected token there instead of into redactable output.
 type mcpExecRule struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
+	Command  string   `json:"command"`
+	Args     []string `json:"args,omitempty"`
+	Services []string `json:"services,omitempty"`
+	Presets  []string `json:"presets,omitempty"`
+	DenyArgs []string `json:"deny_args,omitempty"`
+	DenyURLs bool     `json:"deny_urls,omitempty"`
 }
 
+// String is the rule's identity: command and argument prefix, without targets.
 func (r mcpExecRule) String() string {
 	return strings.Join(append([]string{r.Command}, r.Args...), " ")
+}
+
+func (r mcpExecRule) bound() bool {
+	return len(r.Services) > 0 || len(r.Presets) > 0
+}
+
+// display is String plus the bound targets, for listings.
+func (r mcpExecRule) display() string {
+	text := r.String()
+	var scopes []string
+	if len(r.Services) > 0 {
+		scopes = append(scopes, "services: "+strings.Join(r.Services, ","))
+	}
+	if len(r.Presets) > 0 {
+		scopes = append(scopes, "presets: "+strings.Join(r.Presets, ","))
+	}
+	if len(r.DenyArgs) > 0 {
+		scopes = append(scopes, "deny: "+strings.Join(r.DenyArgs, ","))
+	}
+	if r.DenyURLs {
+		scopes = append(scopes, "no URLs")
+	}
+	if len(scopes) > 0 {
+		text += " [" + strings.Join(scopes, "; ") + "]"
+	}
+	return text
+}
+
+// deniesArgument reports whether argument is one of the rule's refused flags
+// (as "--flag", "--flag=value", or a short "-Rvalue"), or a URL when URLs are
+// refused.
+func (r mcpExecRule) deniesArgument(argument string) bool {
+	if r.DenyURLs && strings.Contains(argument, "://") {
+		return true
+	}
+	for _, flag := range r.DenyArgs {
+		if argument == flag || strings.HasPrefix(argument, flag+"=") {
+			return true
+		}
+		if len(flag) == 2 && flag[0] == '-' && flag[1] != '-' && strings.HasPrefix(argument, flag) && !strings.HasPrefix(argument, "--") {
+			return true
+		}
+	}
+	return false
+}
+
+// permitsTarget reports whether the rule may run with tool's target.
+func (r mcpExecRule) permitsTarget(tool, target string) bool {
+	if !r.bound() {
+		return true
+	}
+	if tool == "wenv_exec" {
+		return containsString(r.Presets, target)
+	}
+	return containsString(r.Services, target)
 }
 
 func (r mcpExecRule) permits(argv []string) bool {
@@ -66,7 +138,52 @@ func (r mcpExecRule) permits(argv []string) bool {
 			return false
 		}
 	}
+	for _, argument := range argv[1+len(r.Args):] {
+		if r.deniesArgument(argument) {
+			return false
+		}
+	}
 	return true
+}
+
+// masks reports whether short, whose prefix covers long's, permits a target
+// long does not; long's listed binding would then overstate the restriction.
+func (short mcpExecRule) masks(long mcpExecRule) bool {
+	if !short.bound() {
+		return long.bound()
+	}
+	if !long.bound() {
+		return false
+	}
+	return len(withoutStrings(short.Services, long.Services)) > 0 || len(withoutStrings(short.Presets, long.Presets)) > 0
+}
+
+func prefixCovers(short, long []string) bool {
+	if len(short) > len(long) {
+		return false
+	}
+	for index := range short {
+		if short[index] != long[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// validateMCPRuleOverlaps refuses a configuration where a broader rule lets a
+// narrower one run with targets its binding does not list.
+func validateMCPRuleOverlaps(rules []mcpExecRule) error {
+	for _, short := range rules {
+		for _, long := range rules {
+			if short.Command != long.Command || short.String() == long.String() || !prefixCovers(short.Args, long.Args) {
+				continue
+			}
+			if short.masks(long) {
+				return invalid(fmt.Sprintf("%s would run with targets that %s is not bound to; give both the same bindings or remove one", safeTerminalText(short.display()), safeTerminalText(long.display())))
+			}
+		}
+	}
+	return nil
 }
 
 // mcpServeConfig holds the exec allowlist. Commands are fail-closed: with no
@@ -90,9 +207,9 @@ func (c mcpServeConfig) rulesFor(command string) []mcpExecRule {
 	return matches
 }
 
-func (c mcpServeConfig) permits(argv []string) bool {
+func (c mcpServeConfig) permits(tool, target string, argv []string) bool {
 	for _, rule := range c.ExecRules {
-		if rule.permits(argv) {
+		if rule.permits(argv) && rule.permitsTarget(tool, target) {
 			return true
 		}
 	}
@@ -113,6 +230,9 @@ func normalizeMCPServeConfig(config *mcpServeConfig) {
 		if rule.Args == nil {
 			rule.Args = []string{}
 		}
+		rule.Services = sortedUniqueOrNil(rule.Services)
+		rule.Presets = sortedUniqueOrNil(rule.Presets)
+		rule.DenyArgs = sortedUniqueOrNil(rule.DenyArgs)
 		key := rule.String()
 		if seen[key] {
 			continue
@@ -124,6 +244,13 @@ func normalizeMCPServeConfig(config *mcpServeConfig) {
 	config.ExecRules = rules
 	config.ExecServices = sortedUnique(config.ExecServices)
 	config.ExecPresets = sortedUnique(config.ExecPresets)
+}
+
+func sortedUniqueOrNil(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return sortedUnique(values)
 }
 
 func (a *App) mcpServeConfigPath() (string, error) {
@@ -195,6 +322,56 @@ func validMCPExecCommand(name string) bool {
 	return validExplicitName(name) && !strings.ContainsAny(name, "/ \t")
 }
 
+// mcpAllowTargets are the --service/--preset bindings given before "--".
+type mcpAllowTargets struct {
+	services, presets []string
+}
+
+func (t mcpAllowTargets) any() bool { return len(t.services) > 0 || len(t.presets) > 0 }
+
+// takeMCPAllowOptions removes --service, --preset and --bundle from the part of
+// args before "--", leaving the argument prefix untouched.
+func takeMCPAllowOptions(args []string) ([]string, mcpAllowTargets, string, error) {
+	var targets mcpAllowTargets
+	bundle := ""
+	out := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			out = append(out, args[index:]...)
+			break
+		}
+		name, value, inline := strings.Cut(arg, "=")
+		if name != "--service" && name != "--preset" && name != "--bundle" {
+			out = append(out, arg)
+			continue
+		}
+		if !inline {
+			if index+1 >= len(args) {
+				return nil, targets, "", invalid("missing value for " + name)
+			}
+			index++
+			value = args[index]
+		}
+		switch name {
+		case "--bundle":
+			if bundle != "" {
+				return nil, targets, "", invalid("--bundle may be given once")
+			}
+			bundle = value
+			continue
+		case "--service":
+			targets.services = append(targets.services, value)
+		default:
+			targets.presets = append(targets.presets, value)
+		}
+		if !presetNameRE.MatchString(value) {
+			return nil, targets, "", invalid(name + " values may contain only letters, digits, dot, underscore, and hyphen")
+		}
+	}
+	return out, targets, bundle, nil
+}
+
 func (a *App) mcpAllow(args []string) error {
 	args, jsonMode := takeFlag(args, "--json")
 	if len(args) == 0 || args[0] == "list" {
@@ -203,19 +380,42 @@ func (a *App) mcpAllow(args []string) error {
 		}
 		return a.mcpAllowList(jsonMode)
 	}
+	if args[0] == "bundles" {
+		if len(args) > 1 {
+			return usage("mcp allow bundles", "[--json]")
+		}
+		return a.mcpAllowBundles(jsonMode)
+	}
 	if args[0] == "service" || args[0] == "preset" {
 		return a.mcpAllowScope(args[0], args[1:])
 	}
 	action := args[0]
 	if action != "add" && action != "rm" && action != "remove" {
-		return usage("mcp allow", "[list] | add|rm <command> [-- <argument>...] | service|preset add|rm <name>...")
+		return usage("mcp allow", "[list] | bundles | add|rm <command> [--service S]... [--preset P]... [-- <argument>...] | add --bundle NAME [--service S]... | service|preset add|rm <name>...")
 	}
-	names, prefix, restricted, err := splitMCPAllowArgs(args[1:])
+	rest, targets, bundle, err := takeMCPAllowOptions(args[1:])
+	if err != nil {
+		return err
+	}
+	if bundle != "" {
+		if action != "add" || len(rest) != 0 {
+			return usage("mcp allow add", "--bundle <name> [--service S]... [--preset P]...")
+		}
+		rules, ok := mcpAllowBundleRules(bundle)
+		if !ok {
+			return invalid("unknown MCP allow bundle: " + safeTerminalText(bundle) + "; see 'bb mcp allow bundles'")
+		}
+		if !targets.any() {
+			return invalid("--bundle needs --service or --preset so its rules run only with that token")
+		}
+		return a.mcpAllowAddRules(rules, targets)
+	}
+	names, prefix, restricted, err := splitMCPAllowArgs(rest)
 	if err != nil {
 		return err
 	}
 	if len(names) == 0 {
-		return usage("mcp allow "+action, "<command> [-- <argument>...]")
+		return usage("mcp allow "+action, "<command> [--service S]... [--preset P]... [-- <argument>...]")
 	}
 	for _, name := range names {
 		if !validMCPExecCommand(name) {
@@ -228,7 +428,14 @@ func (a *App) mcpAllow(args []string) error {
 		}
 	}
 	if action == "add" {
-		return a.mcpAllowAdd(names, prefix, restricted)
+		rules := make([]mcpExecRule, 0, len(names))
+		for _, name := range names {
+			rules = append(rules, mcpExecRule{Command: name, Args: prefix})
+		}
+		return a.mcpAllowAddRules(rules, targets)
+	}
+	if targets.any() {
+		return a.mcpAllowUnbind(names, prefix, restricted, targets)
 	}
 	return a.mcpAllowRemove(names, prefix, restricted)
 }
@@ -240,7 +447,7 @@ func (a *App) mcpAllowList(jsonMode bool) error {
 	}
 	commands := make([]string, 0, len(config.ExecRules))
 	for _, rule := range config.ExecRules {
-		commands = append(commands, rule.String())
+		commands = append(commands, rule.display())
 	}
 	data := map[string]any{
 		"exec_commands":   commands,
@@ -251,29 +458,55 @@ func (a *App) mcpAllowList(jsonMode bool) error {
 		"presets_scoped":  len(config.ExecPresets) > 0,
 	}
 	if jsonMode {
+		data["exec_rules"] = config.ExecRules
 		return printEnvelope(a.out, data, nil)
 	}
 	return printHuman(a.out, data)
 }
 
-func (a *App) mcpAllowAdd(names, prefix []string, restricted bool) error {
+// mcpAllowAddRules adds rules, or binds more targets to rules already present.
+func (a *App) mcpAllowAddRules(rules []mcpExecRule, targets mcpAllowTargets) error {
 	return a.updateMCPServeConfig(func(config *mcpServeConfig) error {
-		for _, name := range names {
-			existing := config.rulesFor(name)
-			// Refuse to let a broad rule and a narrow one coexist: an operator who
-			// adds "aws sts get-caller-identity" on top of a bare "aws" has narrowed
-			// nothing, and nothing in the listing would say so.
-			for _, rule := range existing {
-				if len(rule.Args) == 0 && restricted {
-					return invalid(name + " is already allowed with any arguments; remove that entry before narrowing it")
+		for _, rule := range rules {
+			rule.Services, rule.Presets = targets.services, targets.presets
+			restricted := len(rule.Args) > 0
+			var same *mcpExecRule
+			for index := range config.ExecRules {
+				existing := &config.ExecRules[index]
+				if existing.Command != rule.Command {
+					continue
 				}
-				if len(rule.Args) > 0 && !restricted {
-					return invalid(name + " already has argument-restricted entries; remove them before allowing any arguments")
+				// Refuse to let a broad rule and a narrow one coexist: an operator who
+				// adds "aws sts get-caller-identity" on top of a bare "aws" has narrowed
+				// nothing, and nothing in the listing would say so.
+				if len(existing.Args) == 0 && restricted {
+					return invalid(rule.Command + " is already allowed with any arguments; remove that entry before narrowing it")
+				}
+				if len(existing.Args) > 0 && !restricted {
+					return invalid(rule.Command + " already has argument-restricted entries; remove them before allowing any arguments")
+				}
+				if existing.String() == rule.String() {
+					same = existing
 				}
 			}
-			config.ExecRules = append(config.ExecRules, mcpExecRule{Command: name, Args: prefix})
+			if same == nil {
+				config.ExecRules = append(config.ExecRules, rule)
+				continue
+			}
+			// The same reasoning applies to targets: binding an unbound rule, or
+			// unbinding a bound one, must be an explicit remove and re-add.
+			switch {
+			case !same.bound() && rule.bound():
+				return invalid(rule.String() + " is already allowed for every target; remove it before binding it to a service or preset")
+			case same.bound() && !rule.bound():
+				return invalid(rule.String() + " is bound to specific targets; remove it before allowing every target")
+			}
+			same.Services = append(same.Services, rule.Services...)
+			same.Presets = append(same.Presets, rule.Presets...)
+			same.DenyArgs = append(same.DenyArgs, rule.DenyArgs...)
+			same.DenyURLs = same.DenyURLs || rule.DenyURLs
 		}
-		return nil
+		return validateMCPRuleOverlaps(config.ExecRules)
 	})
 }
 
@@ -301,6 +534,53 @@ func (a *App) mcpAllowRemove(names, prefix []string, restricted bool) error {
 		config.ExecRules = kept
 		return nil
 	})
+}
+
+// mcpAllowUnbind removes targets from matching rules. A rule left with no
+// target is removed rather than kept, because an unbound rule would run with
+// every target: taking away the last service must never widen access.
+func (a *App) mcpAllowUnbind(names, prefix []string, restricted bool, targets mcpAllowTargets) error {
+	target := mcpExecRule{Command: names[0], Args: prefix}
+	return a.updateMCPServeConfig(func(config *mcpServeConfig) error {
+		kept := make([]mcpExecRule, 0, len(config.ExecRules))
+		changed := 0
+		for _, rule := range config.ExecRules {
+			match := containsString(names, rule.Command)
+			if restricted {
+				match = rule.String() == target.String()
+			}
+			if !match || !rule.bound() {
+				kept = append(kept, rule)
+				continue
+			}
+			services := withoutStrings(rule.Services, targets.services)
+			presets := withoutStrings(rule.Presets, targets.presets)
+			if len(services) == len(rule.Services) && len(presets) == len(rule.Presets) {
+				kept = append(kept, rule)
+				continue
+			}
+			changed++
+			rule.Services, rule.Presets = services, presets
+			if rule.bound() {
+				kept = append(kept, rule)
+			}
+		}
+		if changed == 0 {
+			return invalid("no matching MCP exec allowlist binding")
+		}
+		config.ExecRules = kept
+		return validateMCPRuleOverlaps(kept)
+	})
+}
+
+func withoutStrings(values, drop []string) []string {
+	kept := make([]string, 0, len(values))
+	for _, value := range values {
+		if !containsString(drop, value) {
+			kept = append(kept, value)
+		}
+	}
+	return kept
 }
 
 func (a *App) mcpAllowScope(kind string, args []string) error {
@@ -418,11 +698,21 @@ func mcpServeTools() []mcpTool {
 		{
 			Name:        "sec_list",
 			Title:       "List secret services and fields",
-			Description: "List the service and field names in the encrypted store. Values are never included.",
+			Description: "List the service and field names in the encrypted store, with each field's recorded expiry. Values are never included.",
 			InputSchema: mcpObjectSchema(map[string]any{
 				"service": mcpStringSchema("Restrict the listing to one service."),
 			}),
 			handler: (*App).mcpToolSecList,
+		},
+		{
+			Name:        "sec_check",
+			Title:       "Check secret expiry",
+			Description: "Report secrets that are expired or expire within the window, from recorded expiry dates. Tell the operator when one needs renewal; renewing is a human step (bb sec add <service/field> --force).",
+			InputSchema: mcpObjectSchema(map[string]any{
+				"within_days": map[string]any{"type": "integer", "minimum": 0, "description": "Expiry window in days. Defaults to 14."},
+				"all":         map[string]any{"type": "boolean", "description": "Also list entries that are not expiring yet."},
+			}),
+			handler: (*App).mcpToolSecCheck,
 		},
 		{
 			Name:        "sec_ref",
@@ -624,8 +914,27 @@ func decodeMCPArguments[T any](arguments json.RawMessage, into *T) error {
 }
 
 type mcpSecretService struct {
-	Name   string   `json:"name"`
-	Fields []string `json:"fields"`
+	Name   string                        `json:"name"`
+	Fields []string                      `json:"fields"`
+	Expiry map[string]secretExpiryStatus `json:"expiry,omitempty"`
+}
+
+// mcpSecretServiceFor lists a service's fields and the expiry of those that
+// have one recorded.
+func mcpSecretServiceFor(name string, fields map[string]string, meta map[string]secretMeta, today time.Time) mcpSecretService {
+	service := mcpSecretService{Name: name, Fields: sortedSecretFields(fields)}
+	for _, field := range service.Fields {
+		key := secretKey(name, field)
+		status := expiryStatus(key, meta[key], today, defaultExpiryWindowDays)
+		if status.DaysLeft == nil {
+			continue
+		}
+		if service.Expiry == nil {
+			service.Expiry = map[string]secretExpiryStatus{}
+		}
+		service.Expiry[field] = status
+	}
+	return service
 }
 
 func (a *App) mcpToolSecList(arguments json.RawMessage) (any, error) {
@@ -639,12 +948,18 @@ func (a *App) mcpToolSecList(arguments json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Expiry is a convenience; a broken metadata file must not hide the names.
+	meta, metaErr := a.readSecretMeta()
+	if metaErr != nil {
+		meta = nil
+	}
+	today := a.secretToday()
 	if input.Service != "" {
 		fields, ok := data[input.Service]
 		if !ok {
 			return nil, invalid("secret service not found: " + safeTerminalText(input.Service))
 		}
-		return mcpSecretService{Name: input.Service, Fields: sortedSecretFields(fields)}, nil
+		return mcpSecretServiceFor(input.Service, fields, meta, today), nil
 	}
 	names := make([]string, 0, len(data))
 	for name := range data {
@@ -653,9 +968,43 @@ func (a *App) mcpToolSecList(arguments json.RawMessage) (any, error) {
 	sort.Strings(names)
 	services := make([]mcpSecretService, 0, len(names))
 	for _, name := range names {
-		services = append(services, mcpSecretService{Name: name, Fields: sortedSecretFields(data[name])})
+		services = append(services, mcpSecretServiceFor(name, data[name], meta, today))
 	}
 	return map[string]any{"services": services}, nil
+}
+
+func (a *App) mcpToolSecCheck(arguments json.RawMessage) (any, error) {
+	var input struct {
+		WithinDays *int `json:"within_days"`
+		All        bool `json:"all"`
+	}
+	if err := decodeMCPArguments(arguments, &input); err != nil {
+		return nil, err
+	}
+	window := defaultExpiryWindowDays
+	if input.WithinDays != nil {
+		if *input.WithinDays < 0 {
+			return nil, invalid("within_days must not be negative")
+		}
+		window = *input.WithinDays
+	}
+	meta, results, problems, err := a.secretExpiryReport(window, input.All)
+	if err != nil {
+		return nil, err
+	}
+	type entry struct {
+		secretExpiryStatus
+		RenewURL string `json:"renew_url,omitempty"`
+	}
+	entries := make([]entry, 0, len(results))
+	for _, status := range results {
+		item := entry{secretExpiryStatus: status}
+		if status.State != "ok" {
+			item.RenewURL = meta[status.Key].URL
+		}
+		entries = append(entries, item)
+	}
+	return map[string]any{"window_days": window, "problems": problems, "entries": entries}, nil
 }
 
 func sortedSecretFields(fields map[string]string) []string {
@@ -824,7 +1173,11 @@ func (a *App) mcpToolSecExec(arguments json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return a.mcpRunWithEnvironment("sec_exec", input.Service, variables, variables, input.Argv)
+	keys := make([]string, 0, len(fields))
+	for field := range fields {
+		keys = append(keys, secretKey(input.Service, field))
+	}
+	return a.mcpRunWithEnvironment("sec_exec", input.Service, variables, variables, input.Argv, a.expiryWarnings(keys))
 }
 
 func (a *App) mcpToolWenvExec(arguments json.RawMessage) (any, error) {
@@ -844,7 +1197,15 @@ func (a *App) mcpToolWenvExec(arguments json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return a.mcpRunWithEnvironment("wenv_exec", input.Preset, variables, secrets, input.Argv)
+	vars, err := a.namedWenv(input.Preset)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]string, 0, len(vars))
+	for _, value := range vars {
+		refs = append(refs, value)
+	}
+	return a.mcpRunWithEnvironment("wenv_exec", input.Preset, variables, secrets, input.Argv, a.expiryWarnings(secretKeysForReferences(refs)))
 }
 
 type mcpExecResult struct {
@@ -880,9 +1241,9 @@ func (a *App) authorizeMCPExec(tool, target string, argv []string) error {
 		a.appendMCPServeAudit(tool, target, argv, false, -1)
 		return unavailable("no command is allowlisted for MCP execution; run 'bb mcp allow add <command>'")
 	}
-	if !config.permits(argv) {
+	if !config.permits(tool, target, argv) {
 		a.appendMCPServeAudit(tool, target, argv, false, -1)
-		return mcpExecDenial(config, argv)
+		return mcpExecDenial(config, tool, target, argv)
 	}
 	scope, kind := config.ExecServices, "secret service"
 	if tool == "wenv_exec" {
@@ -898,22 +1259,36 @@ func (a *App) authorizeMCPExec(tool, target string, argv []string) error {
 	return nil
 }
 
-// mcpExecDenial distinguishes an unlisted command from a listed one invoked with
-// arguments outside its prefix, and names the prefixes that would work.
-func mcpExecDenial(config mcpServeConfig, argv []string) error {
+// mcpExecDenial distinguishes an unlisted command, a listed one invoked with
+// arguments outside its prefix, and a permitted argv bound to other targets.
+func mcpExecDenial(config mcpServeConfig, tool, target string, argv []string) error {
 	rules := config.rulesFor(argv[0])
 	if len(rules) == 0 {
 		return invalid("command is not on the MCP exec allowlist: " + safeTerminalText(argv[0]))
 	}
 	allowed := make([]string, 0, len(rules))
+	bound := make([]string, 0, len(rules))
 	for _, rule := range rules {
 		allowed = append(allowed, rule.String())
+		if rule.permits(argv) {
+			bound = append(bound, rule.display())
+		}
+	}
+	if len(bound) > 0 {
+		kind := "secret service"
+		if tool == "wenv_exec" {
+			kind = "wenv preset"
+		}
+		return invalid(fmt.Sprintf("%s is not bound to %s %s; allowed: %s",
+			safeTerminalText(argv[0]), kind, safeTerminalText(target), safeTerminalText(strings.Join(bound, ", "))))
 	}
 	return invalid(fmt.Sprintf("arguments are not allowed for %s; allowed: %s",
 		safeTerminalText(argv[0]), safeTerminalText(strings.Join(allowed, ", "))))
 }
 
-func (a *App) mcpRunWithEnvironment(tool, target string, variables, secrets []secretEnvironmentVariable, argv []string) (any, error) {
+// notices are prepended to the result warnings, so an agent reports an expiring
+// credential alongside a failure it may explain.
+func (a *App) mcpRunWithEnvironment(tool, target string, variables, secrets []secretEnvironmentVariable, argv []string, notices []string) (any, error) {
 	stdout := &cappedBuffer{limit: mcpServeMaxOutputBytes}
 	stderr := &cappedBuffer{limit: mcpServeMaxOutputBytes}
 	cmd := a.command(argv[0], argv[1:]...)
@@ -945,6 +1320,7 @@ func (a *App) mcpRunWithEnvironment(tool, target string, variables, secrets []se
 	}
 
 	values, warnings := redactionValues(secrets)
+	warnings = append(append([]string{}, notices...), warnings...)
 	outText, outRedacted := redactSecretValues(stdout.String(), values)
 	errText, errRedacted := redactSecretValues(stderr.String(), values)
 	if timedOut {

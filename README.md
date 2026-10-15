@@ -107,9 +107,12 @@ bb sec exec database -- psql
 # wenv_exec inject values into a child process and return only its output.
 bb mcp allow add psql               # fail-closed: exec runs nothing until listed
 bb mcp allow add aws -- sts get-caller-identity   # only this subcommand
+bb mcp allow add --bundle glab-read --service gitlab  # read-only glab, gitlab token only
 bb mcp allow service add database   # optional: narrow which entries are reachable
 bb mcp allow preset add dev
 bb mcp allow --json
+bb sec harden claude                # deny agent shells bb sec get/env/copy/exec etc.
+bb sec harden codex
 bb mcp serve                       # stdio JSON-RPC; register it like any server
 bb mcp add bb --stdio bb --arg mcp --arg serve --targets claude,codex
 bb mcp sync claude bb
@@ -188,15 +191,41 @@ substituted out. Nothing is executable until `bb mcp allow add <command>`. An
 argument prefix after `--` narrows a command to the subcommands it may run, so
 `aws sts get-caller-identity` can be permitted without permitting `aws s3 rm`; a
 broad entry and a narrow one for the same command are refused rather than
-silently coexisting. The optional `service` and `preset` scopes narrow which
+silently coexisting. `--service` and `--preset` on `bb mcp allow add` bind a
+rule to the entries it may run with, so `glab` can run with the gitlab token and
+nothing else; binding an unbound rule (or the reverse) needs an explicit remove
+first, and removing a rule's last binding removes the rule instead of widening
+it. `bb mcp allow add --bundle <name> --service <svc>` adds a read-only
+subcommand set (`gh-read`, `glab-read`, `aws-identity`; `bb mcp allow bundles`
+lists them). A bundle must be bound, refuses host- or repository-selecting flags
+(`-R`, `--repo`, `--hostname`, `--endpoint-url`) and URL arguments so the token
+cannot be sent to another host, and leaves out `auth status`, whose
+`--show-token` prints tokens redaction does not know about. A broader rule that
+would let a bound one run with other targets is refused.
+The optional global `service` and `preset` scopes narrow which
 secret services and presets those tools may reach at all, and `bb mcp allow`
-reports whether either scope is in effect. The allowlist and scope are both
+reports whether either scope is in effect. `sec_list` includes each field's
+recorded expiry, `sec_check` reports expired and expiring fields, and
+`sec_exec`/`wenv_exec` results carry a warning when the credential they used is
+one, so an agent can tell the operator instead of failing opaquely. The allowlist and scope are both
 checked before the encrypted store is opened, and every attempt is
 appended to `$XDG_STATE_HOME/bb/mcp-serve-audit.jsonl` with the command name and
 outcome but never a value. This closes the accidental-leak path, not a determined
 one: an agent with shell access can still read the store through other means, so
-pair it with permission rules that deny `bb sec get`, `bb sec copy`, and
-`BB_ALLOW_SECRET_OUTPUT`.
+pair it with client deny rules. `bb sec harden claude` adds them to
+`permissions.deny` in Claude's `settings.json` (keeping the other settings and
+their order), and `bb sec harden codex` writes `rules/bb-sec.rules` as Codex
+`forbidden` prefix rules; both show the rules and ask first (`--print` only
+shows, `--yes` skips the question). The rules cover `bb sec get|env|copy|exec`,
+`bb wenv apply|export|exec`, `bb mcp header`, and the registry changes an agent
+could use to run a command of its choosing with a token (`bb mcp
+add|edit|launch|allow`, bare and by absolute path; for Claude also `Edit` of
+`mcp.json` and `mcp-serve.json`), plus `BB_ALLOW_SECRET_OUTPUT`, `age -d`, `ps`
+forms that print process environments, and reading the age key. They are prefix
+matches over command text: they block the obvious routes, not a shell wrapper or
+a copied binary. In particular a shell function or alias that wraps
+`bb sec exec` (for example `glab() { bb sec exec gitlab -- glab "$@"; }`) runs
+under its own name and is not covered.
 
 The MVP stores configuration under `$XDG_CONFIG_HOME/bb` and operational state
 under `$XDG_STATE_HOME/bb` (with standard home-directory fallbacks). It does

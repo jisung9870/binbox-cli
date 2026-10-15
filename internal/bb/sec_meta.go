@@ -319,6 +319,33 @@ func (a *App) printSecretNames(names []string, badges map[string]string) error {
 	return nil
 }
 
+// secretExpiryReport lists expired and expiring entries, plus every dated one
+// when all is set, from metadata alone.
+func (a *App) secretExpiryReport(window int, all bool) (map[string]secretMeta, []secretExpiryStatus, int, error) {
+	meta, e := a.readSecretMeta()
+	if e != nil {
+		return nil, nil, 0, e
+	}
+	today := a.secretToday()
+	keys := make([]string, 0, len(meta))
+	for key := range meta {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	results := []secretExpiryStatus{}
+	problems := 0
+	for _, key := range keys {
+		s := expiryStatus(key, meta[key], today, window)
+		if s.State == "expired" || s.State == "expiring" {
+			problems++
+		} else if !all || s.DaysLeft == nil {
+			continue
+		}
+		results = append(results, s)
+	}
+	return meta, results, problems, nil
+}
+
 // secCheck reports expired and expiring secrets from metadata alone; it never
 // decrypts the store, so it is cheap enough for a prompt or a scheduler.
 func (a *App) secCheck(args []string) error {
@@ -340,26 +367,9 @@ func (a *App) secCheck(args []string) error {
 		}
 		window = n
 	}
-	meta, e := a.readSecretMeta()
+	meta, results, problems, e := a.secretExpiryReport(window, all)
 	if e != nil {
 		return e
-	}
-	today := a.secretToday()
-	keys := make([]string, 0, len(meta))
-	for key := range meta {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	results := []secretExpiryStatus{}
-	problems := 0
-	for _, key := range keys {
-		s := expiryStatus(key, meta[key], today, window)
-		if s.State == "expired" || s.State == "expiring" {
-			problems++
-		} else if !all || s.DaysLeft == nil {
-			continue
-		}
-		results = append(results, s)
 	}
 	var result error
 	if problems > 0 {

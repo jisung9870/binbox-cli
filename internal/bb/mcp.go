@@ -110,7 +110,9 @@ func (a *App) mcp(args []string) error {
   bb mcp check [name] [--json]
   bb mcp launch <name>                     Start a stdio server with its bb sec values
   bb mcp header <name>                     Print HTTP auth headers (Claude headersHelper)
-  bb mcp audit [--json]
+  bb mcp audit [--json]                    Config file digests only
+  bb mcp audit --secrets [--json]          Plaintext credentials in Claude/Codex MCP config
+  bb mcp adopt <claude|codex> <name> --service S [--yes]   Move them into bb sec
   bb mcp serve                             Run the bb MCP server over stdio
   bb mcp allow [list] [--json]
   bb mcp allow add|rm <command> [--service S]... [--preset P]... [-- <required argument prefix>...]
@@ -139,6 +141,13 @@ configuration or your shell. An HTTP server with --bearer-token-secret is
 registered in Claude with headersHelper "bb mcp header <name>"; Codex has no
 helper mechanism, so use --bearer-token-env with a wenv preset there.
 "S/F" may be written without the sec:// prefix.
+
+"audit --secrets" reads ~/.claude.json (user and local servers), ./.mcp.json and
+Codex config.toml and reports where a literal token sits (env, header, args,
+URL) without showing it; it exits 1 when it finds one. "adopt" takes a
+user-scope server, stores every literal env value (or the bearer token) in
+bb sec under --service, registers the server in bb and re-synchronizes the
+client so it starts through bb mcp launch (or Claude's headersHelper).
 
 "bb mcp serve" exposes bb sec and bb wenv to MCP clients without returning any
 secret value: agents receive sec://<service>/<field> references and run commands
@@ -172,6 +181,8 @@ entries those tools may reach at all. sec_check and sec_list report expiry.
 		return a.mcpCheck(args[1:])
 	case "audit":
 		return a.mcpAudit(args[1:])
+	case "adopt":
+		return a.mcpAdopt(args[1:])
 	case "launch":
 		return a.mcpLaunch(args[1:])
 	case "header":
@@ -726,8 +737,12 @@ func claudeMCPHealth(output string) string {
 
 func (a *App) mcpAudit(args []string) error {
 	args, jsonMode := takeFlag(args, "--json")
+	args, secrets := takeFlag(args, "--secrets")
 	if len(args) != 0 {
-		return usage("mcp audit", "[--json]")
+		return usage("mcp audit", "[--secrets] [--json]")
+	}
+	if secrets {
+		return a.mcpAuditSecrets(jsonMode)
 	}
 	config, _, err := a.paths()
 	if err != nil {

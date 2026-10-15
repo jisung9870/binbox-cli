@@ -147,6 +147,29 @@ arguments. A broader rule that would mask a narrower rule's binding is refused. 
 `bb mcp serve` tools `sec_list` (with recorded expiry) and `sec_check` report
 expiry without values, and exec results warn about an expiring credential.
 
+`bb mcp audit --secrets` inspects client configuration that plain `audit`
+only fingerprints: Claude's `~/.claude.json` (`mcpServers` at user scope and per
+project as `local:<path>`), `./.mcp.json` (project), and Codex `config.toml`
+(user and `./.codex/config.toml`, `[mcp_servers.*]` with `env`, `http_headers`
+and `bearer_token`). A finding is a literal value under a secret-like name
+(`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`/`X-API-Key`, `COOKIE`, `PAT`, `AUTH`
+…), a token-shaped value (`glpat-`, `ghp_`, `xoxb-`, `sk-`, `AKIA…`, JWTs), a
+literal `Authorization` header (also as a `--header` argument), a secret flag
+or `-e KEY=value` argument, credentials in a URL, or a config file bb could not
+parse; `${VAR}` references are fine. Output names client, scope, server and
+location only, and the command exits 1 on findings. `bb mcp adopt <client> <name> --service S` handles a user-scope
+server: every literal env value becomes `S/<VAR>` (so non-secret settings
+survive the move to `bb mcp launch`), `${VAR}` references become required env
+names, and a Claude HTTP server's `Bearer` header becomes `S/token` served by
+`headersHelper`. It needs a terminal, and refuses SSE servers, servers with credentials in
+arguments or the URL, values that are `sec://` or partial `${…}` references,
+existing fields or fields whose environment names would collide, and names
+already in the bb registry. Settings bb does not model (Codex tool approvals,
+`startup_timeout_sec`, `cwd`, `env_vars`, Claude `oauth` …) are listed and
+adoption stops unless `--drop-unmodeled` accepts losing them. It then stores,
+registers and re-synchronizes after confirmation; client backups such as
+`~/.claude.json.backup` may still hold the old value, so rotate the credential.
+
 `mcp check` reports missing variables, `missing_secrets` for references absent
 from the store, and registrations. Claude performs its own health check during `get`;
 Codex `get` verifies registration, not a protocol handshake.

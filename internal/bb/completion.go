@@ -262,12 +262,14 @@ _bb() {
       ;;
     mcp)
       if (( CURRENT == 3 )); then
-        _bb_static 'MCP command' 'list:list servers' 'show:show a server' 'add:add a server' 'edit:edit a server' 'rm:remove a server' 'sync:synchronize a client' 'check:validate registrations' 'launch:start a stdio server with bb sec values' 'header:print HTTP auth headers for Claude' 'audit:audit config metadata' 'serve:run the bb MCP server over stdio' 'allow:manage the MCP exec allowlist'
+        _bb_static 'MCP command' 'list:list servers' 'show:show a server' 'add:add a server' 'edit:edit a server' 'rm:remove a server' 'sync:synchronize a client' 'check:validate registrations' 'launch:start a stdio server with bb sec values' 'header:print HTTP auth headers for Claude' 'audit:audit config metadata' 'adopt:move plaintext tokens into bb sec' 'serve:run the bb MCP server over stdio' 'allow:manage the MCP exec allowlist'
       elif (( CURRENT == 4 )); then
         case "${words[3]}" in
           show|edit|rm|check|launch|header) _bb_dynamic 'MCP server' mcp ;;
           sync) _bb_static 'MCP client' 'claude:Claude Code' 'codex:Codex' ;;
-          list|audit) _bb_static 'option' '--json:JSON envelope' ;;
+          list) _bb_static 'option' '--json:JSON envelope' ;;
+          audit) _bb_static 'option' '--secrets:find plaintext credentials' '--json:JSON envelope' ;;
+          adopt) _bb_static 'MCP client' 'claude:Claude Code' 'codex:Codex' ;;
           allow) _bb_static 'allowlist action' 'list:show the allowlist and scopes' 'add:allow a command' 'rm:remove a command' 'bundles:list read-only rule bundles' 'service:scope secret services' 'preset:scope wenv presets' ;;
           add) _bb_static 'option' '--stdio:stdio command' '--http:streamable HTTP URL' '--description:purpose' '--arg:stdio argument' '--env:required environment name' '--bearer-token-env:bearer token environment name' '--targets:registration targets' ;;
         esac

@@ -1083,6 +1083,11 @@ func TestSecHelperProcess(t *testing.T) {
 		_ = os.WriteFile(os.Getenv("SEC_CLIPBOARD_FILE"), b, 0o600)
 		os.Exit(0)
 	}
+	if name == "pbpaste" {
+		b, _ := os.ReadFile(os.Getenv("SEC_CLIPBOARD_FILE"))
+		os.Stdout.Write(b)
+		os.Exit(0)
+	}
 	if name == "envcheck" {
 		fmt.Fprintf(os.Stdout, "%s|%s|%s", os.Getenv("SVC_TOKEN"), os.Getenv("SVC_USER_NAME"), os.Getenv("KEEP"))
 		os.Exit(0)
@@ -1514,7 +1519,7 @@ func TestSecManagerRenamesSelectedField(t *testing.T) {
 
 func TestSecretChoicesSeparateServicesAndFieldsWithoutValues(t *testing.T) {
 	data := secretStore{"service": {"alpha": "not-rendered", "beta": "also-secret"}}
-	services := secretServiceChoices(data)
+	services := secretServiceChoices(data, nil, time.Time{})
 	if len(services) != 1 || services[0].Value != "service" || services[0].Label != "service" || services[0].Description != "2 fields" {
 		t.Fatalf("service choices=%+v", services)
 	}
@@ -1523,7 +1528,7 @@ func TestSecretChoicesSeparateServicesAndFieldsWithoutValues(t *testing.T) {
 		t.Fatalf("service view:\n%s", serviceView)
 	}
 
-	fields := secretFieldChoices("service", data["service"])
+	fields := secretFieldChoices("service", data["service"], nil, time.Time{})
 	if len(fields) != 2 || fields[0].Value != "alpha" || fields[0].Label != "alpha" || fields[1].Value != "beta" {
 		t.Fatalf("field choices=%+v", fields)
 	}

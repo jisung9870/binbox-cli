@@ -85,6 +85,11 @@ bb wenv set awx CONTROLLER_HOST=https://at.core.line.games \
 bb wenv apply awx
 # Interactive terminals prompt without echo.
 bb sec set github token
+# Same with a path, from the clipboard, with an expiry; check what is expiring.
+bb sec add github/token --paste --expires 90d
+bb sec check
+# rm moves to a 7-day encrypted trash.
+bb sec rm github/token && bb sec restore github/token
 # Automation can still pipe an exact value.
 printf '%s' "$TOKEN" | bb sec set github token
 # Existing values require confirmation or an explicit automation override.

@@ -71,10 +71,33 @@ the detached clearer receives a SHA-256 digest on a pipe, never the value.
 `bb mcp` opens a Server→Action manager. A server uses either local stdio or
 streamable HTTP and declares its Claude/Codex targets. `sync` calls the selected
 client's supported `mcp` CLI rather than editing client configuration files.
-For authenticated servers, the registry stores only environment-variable names.
-Put the actual value in `bb sec`, expose it through a `wenv` `sec://` reference,
-apply that preset before starting the client, and use `mcp check` to find missing
-variables or registrations. Claude performs its own health check during `get`;
+For authenticated servers, the registry stores only environment-variable names
+or `sec://<service>/<field>` references, never values.
+
+- A stdio server given `--secret-env GITLAB_TOKEN=gitlab/token` is synchronized
+  as `<absolute bb> mcp launch <name>`. When the client starts it, `launch`
+  decrypts only that server's references, overlays them on the inherited
+  environment (replacing a stale shell value of the same name), and replaces
+  itself with the server process. No wenv preset needs to be applied before
+  starting the client, and the values exist only in that server's environment.
+  A same-user process can still read that environment (`ps -E`), as with any
+  environment-based secret.
+- An HTTP server given `--bearer-token-secret jira/token` is synchronized to
+  Claude with `claude mcp add-json` and `headersHelper: <bb> mcp header <name>`.
+  Claude runs the helper at connect and after a 401/403. `bb mcp header` prints
+  the Authorization header only when `CLAUDE_CODE_MCP_SERVER_NAME` names that
+  server; this prevents accidental output, not a deliberate same-user caller.
+  Codex has no helper, so such a server defaults to `--targets claude` and a
+  Codex target is rejected; give Codex `--bearer-token-env` and a wenv preset
+  instead.
+- `launch` reads the registry on every start, so whoever can edit `mcp.json`
+  decides which secrets the next server start receives. That is the same
+  same-user trust `bb sec exec` already relies on.
+- Otherwise put the value in `bb sec`, expose it through a `wenv` `sec://`
+  reference, and apply that preset before starting the client.
+
+`mcp check` reports missing variables, `missing_secrets` for references absent
+from the store, and registrations. Claude performs its own health check during `get`;
 Codex `get` verifies registration, not a protocol handshake.
 
 bb-owned structured reads render human-readable labels or tables by default.

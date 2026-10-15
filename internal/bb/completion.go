@@ -257,10 +257,10 @@ _bb() {
       ;;
     mcp)
       if (( CURRENT == 3 )); then
-        _bb_static 'MCP command' 'list:list servers' 'show:show a server' 'add:add a server' 'edit:edit a server' 'rm:remove a server' 'sync:synchronize a client' 'check:validate registrations' 'audit:audit config metadata' 'serve:run the bb MCP server over stdio' 'allow:manage the MCP exec allowlist'
+        _bb_static 'MCP command' 'list:list servers' 'show:show a server' 'add:add a server' 'edit:edit a server' 'rm:remove a server' 'sync:synchronize a client' 'check:validate registrations' 'launch:start a stdio server with bb sec values' 'header:print HTTP auth headers for Claude' 'audit:audit config metadata' 'serve:run the bb MCP server over stdio' 'allow:manage the MCP exec allowlist'
       elif (( CURRENT == 4 )); then
         case "${words[3]}" in
-          show|edit|rm|check) _bb_dynamic 'MCP server' mcp ;;
+          show|edit|rm|check|launch|header) _bb_dynamic 'MCP server' mcp ;;
           sync) _bb_static 'MCP client' 'claude:Claude Code' 'codex:Codex' ;;
           list|audit) _bb_static 'option' '--json:JSON envelope' ;;
           allow) _bb_static 'allowlist action' 'list:show the allowlist and scopes' 'add:allow a command' 'rm:remove a command' 'service:scope secret services' 'preset:scope wenv presets' ;;

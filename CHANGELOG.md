@@ -22,6 +22,21 @@ release tags and the corresponding release records.
   expiring fields from metadata alone and exits 1 when it finds any.
 - `bb sec trash` and `bb sec restore` back a 7-day encrypted trash
   (`secrets.trash.json.age`).
+- `bb mcp add|edit --secret-env VAR=sec://svc/field` stores a reference for a
+  stdio server. `bb mcp sync` registers such a server as
+  `<bb> mcp launch <name>`, which decrypts only that server's references and
+  `exec`s the server with them, so the values never reach client
+  configuration or the shell that started the client. Launch warns on stderr
+  when a referenced secret is expired or expiring.
+- `bb mcp add|edit --bearer-token-secret sec://svc/field` for HTTP servers is
+  registered in Claude through `claude mcp add-json` with
+  `headersHelper: <bb> mcp header <name>`. `bb mcp header` prints the
+  Authorization header only when `CLAUDE_CODE_MCP_SERVER_NAME` names that
+  server, which guards against accidental use rather than a deliberate
+  same-user caller. Codex has no helper mechanism, so such a server defaults
+  to `--targets claude` and a Codex target is rejected.
+- `bb mcp check` reports `missing_secrets` for references absent from the
+  store. `sec://` may be omitted in references (`svc/field`).
 
 ### Changed
 

@@ -3,6 +3,7 @@ package bb
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -30,6 +31,12 @@ type mcpServer struct {
 	URL               string   `json:"url,omitempty"`
 	EnvVars           []string `json:"env_vars,omitempty"`
 	BearerTokenEnvVar string   `json:"bearer_token_env_var,omitempty"`
+	// SecretEnv maps environment names to sec://<service>/<field> references
+	// that "bb mcp launch" resolves into the stdio server process only.
+	SecretEnv map[string]string `json:"secret_env,omitempty"`
+	// BearerTokenSecret is a sec:// reference for an HTTP server's bearer token,
+	// served to Claude through "bb mcp header".
+	BearerTokenSecret string   `json:"bearer_token_secret,omitempty"`
 	Targets           []string `json:"targets"`
 }
 
@@ -101,6 +108,8 @@ func (a *App) mcp(args []string) error {
   bb mcp rm <name> [--yes]
   bb mcp sync <claude|codex> [name]
   bb mcp check [name] [--json]
+  bb mcp launch <name>                     Start a stdio server with its bb sec values
+  bb mcp header <name>                     Print HTTP auth headers (Claude headersHelper)
   bb mcp audit [--json]
   bb mcp serve                             Run the bb MCP server over stdio
   bb mcp allow [list] [--json]
@@ -112,13 +121,22 @@ Options for add/edit:
   --arg ARG                   Stdio argument (repeatable)
   --env VAR                   Required inherited environment variable (repeatable)
   --bearer-token-env VAR      HTTP bearer-token environment variable
+  --secret-env VAR=sec://S/F  Stdio variable resolved from bb sec at launch (repeatable)
+  --bearer-token-secret sec://S/F  HTTP bearer token resolved from bb sec (Claude only)
   --targets claude,codex      Registration targets (default: both)
   --clear-args                Remove all stdio arguments when editing
   --clear-env                 Remove all required environment variables
   --clear-bearer-token-env    Remove HTTP bearer-token environment variable
+  --clear-secret-env          Remove all secret environment references
+  --clear-bearer-token-secret Remove the HTTP bearer-token secret reference
 
-Secret values are never stored here. Put them in bb sec, reference them from a
-wenv preset, then start Claude/Codex from that applied environment.
+Secret values are never stored here. A server with --secret-env is registered
+as "bb mcp launch <name>", which decrypts only its references and replaces itself
+with the server, so the values live in that one process and never in client
+configuration or your shell. An HTTP server with --bearer-token-secret is
+registered in Claude with headersHelper "bb mcp header <name>"; Codex has no
+helper mechanism, so use --bearer-token-env with a wenv preset there.
+"S/F" may be written without the sec:// prefix.
 
 "bb mcp serve" exposes bb sec and bb wenv to MCP clients without returning any
 secret value: agents receive sec://<service>/<field> references and run commands
@@ -149,6 +167,10 @@ service/preset scopes narrow which entries those tools may reach at all.
 		return a.mcpCheck(args[1:])
 	case "audit":
 		return a.mcpAudit(args[1:])
+	case "launch":
+		return a.mcpLaunch(args[1:])
+	case "header":
+		return a.mcpHeader(args[1:])
 	case "serve":
 		return a.mcpServe(args[1:])
 	case "allow":
@@ -176,6 +198,12 @@ func parseMCPOptions(args []string) (mcpSpecOptions, error) {
 		case "--clear-bearer-token-env":
 			opts.server.BearerTokenEnvVar, opts.seen["bearer"] = "", true
 			continue
+		case "--clear-secret-env":
+			opts.server.SecretEnv, opts.seen["secret-env"] = map[string]string{}, true
+			continue
+		case "--clear-bearer-token-secret":
+			opts.server.BearerTokenSecret, opts.seen["bearer-secret"] = "", true
+			continue
 		}
 		if i+1 >= len(args) {
 			return opts, invalid(flag + " requires a value")
@@ -199,6 +227,18 @@ func parseMCPOptions(args []string) (mcpSpecOptions, error) {
 			opts.seen["env"] = true
 		case "--bearer-token-env":
 			opts.server.BearerTokenEnvVar, opts.seen["bearer"] = value, true
+		case "--secret-env":
+			name, reference, ok := strings.Cut(value, "=")
+			if !ok {
+				return opts, invalid("--secret-env takes VAR=sec://<service>/<field>")
+			}
+			if opts.server.SecretEnv == nil {
+				opts.server.SecretEnv = map[string]string{}
+			}
+			opts.server.SecretEnv[name] = normalizeSecretReference(reference)
+			opts.seen["secret-env"] = true
+		case "--bearer-token-secret":
+			opts.server.BearerTokenSecret, opts.seen["bearer-secret"] = normalizeSecretReference(value), true
 		case "--targets":
 			opts.server.Targets = splitMCPList(value)
 			opts.seen["targets"] = true
@@ -228,6 +268,9 @@ func normalizeMCPServer(server mcpServer) mcpServer {
 	}
 	if server.EnvVars == nil {
 		server.EnvVars = []string{}
+	}
+	if len(server.SecretEnv) == 0 {
+		server.SecretEnv = nil
 	}
 	return server
 }
@@ -265,12 +308,34 @@ func validateMCPServer(name string, server mcpServer) error {
 	if server.BearerTokenEnvVar != "" && !envKeyRE.MatchString(server.BearerTokenEnvVar) {
 		return invalid("MCP bearer token must name an environment variable")
 	}
+	for variable, reference := range server.SecretEnv {
+		if !envKeyRE.MatchString(variable) {
+			return invalid("MCP secret environment names must be variable names")
+		}
+		if _, _, ok := parseWenvSecretReference(reference); !ok {
+			return invalid("MCP secret environment values must be sec://<service>/<field>")
+		}
+		if containsString(server.EnvVars, variable) {
+			return invalid("MCP variable " + variable + " is both inherited and resolved from bb sec")
+		}
+	}
+	if server.BearerTokenSecret != "" {
+		if _, _, ok := parseWenvSecretReference(server.BearerTokenSecret); !ok {
+			return invalid("MCP bearer token secret must be sec://<service>/<field>")
+		}
+		if server.BearerTokenEnvVar != "" {
+			return invalid("MCP bearer token takes either an environment variable or a bb sec reference")
+		}
+		if containsString(server.Targets, "codex") {
+			return invalid("--bearer-token-secret works with Claude only (Codex has no headers helper); use --targets claude")
+		}
+	}
 	switch server.Transport {
 	case "stdio":
 		if !validExplicitName(server.Command) {
 			return invalid("stdio MCP server requires a command")
 		}
-		if server.URL != "" || server.BearerTokenEnvVar != "" {
+		if server.URL != "" || server.BearerTokenEnvVar != "" || server.BearerTokenSecret != "" {
 			return invalid("stdio MCP server cannot use HTTP options")
 		}
 	case "http":
@@ -278,7 +343,7 @@ func validateMCPServer(name string, server mcpServer) error {
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
 			return invalid("HTTP MCP server requires an http(s) URL without embedded credentials")
 		}
-		if server.Command != "" || len(server.Args) != 0 {
+		if server.Command != "" || len(server.Args) != 0 || len(server.SecretEnv) != 0 {
 			return invalid("HTTP MCP server cannot use stdio command options")
 		}
 	default:
@@ -297,6 +362,9 @@ func (a *App) mcpAdd(args []string) error {
 	}
 	if !opts.seen["targets"] {
 		opts.server.Targets = []string{"claude", "codex"}
+		if opts.server.BearerTokenSecret != "" {
+			opts.server.Targets = []string{"claude"}
+		}
 	}
 	server := normalizeMCPServer(opts.server)
 	if err := validateMCPServer(opts.position[0], server); err != nil {
@@ -338,15 +406,21 @@ func (a *App) mcpEdit(args []string) error {
 		if opts.seen["bearer"] {
 			server.BearerTokenEnvVar = opts.server.BearerTokenEnvVar
 		}
+		if opts.seen["secret-env"] {
+			server.SecretEnv = opts.server.SecretEnv
+		}
+		if opts.seen["bearer-secret"] {
+			server.BearerTokenSecret = opts.server.BearerTokenSecret
+		}
 		if opts.seen["args"] {
 			server.Args = opts.server.Args
 		}
 		if opts.seen["transport"] {
 			server.Transport, server.Command, server.URL = opts.server.Transport, opts.server.Command, opts.server.URL
 			if server.Transport == "stdio" {
-				server.BearerTokenEnvVar = ""
+				server.BearerTokenEnvVar, server.BearerTokenSecret = "", ""
 			} else {
-				server.Args = nil
+				server.Args, server.SecretEnv = nil, nil
 			}
 		}
 		server = normalizeMCPServer(server)
@@ -484,6 +558,17 @@ func (a *App) mcpSync(args []string) error {
 }
 
 func (a *App) syncMCPServer(target string, item namedMCPServer) error {
+	if target == "codex" && item.BearerTokenSecret != "" {
+		return invalid("Codex has no headers helper; give " + item.Name + " --bearer-token-env and a wenv preset for Codex, or target claude only")
+	}
+	// Resolve everything that can fail before the old registration is removed.
+	bb := ""
+	if item.BearerTokenSecret != "" || len(item.SecretEnv) != 0 {
+		var err error
+		if bb, err = a.bbLauncherPath(); err != nil {
+			return err
+		}
+	}
 	removeArgs := []string{"mcp", "remove"}
 	if target == "claude" {
 		removeArgs = append(removeArgs, "--scope", "user")
@@ -497,7 +582,17 @@ func (a *App) syncMCPServer(target string, item namedMCPServer) error {
 	if target == "claude" {
 		argv = append(argv, "--scope", "user")
 	}
-	if item.Transport == "http" {
+	if item.Transport == "http" && item.BearerTokenSecret != "" {
+		spec, err := json.Marshal(map[string]string{
+			"type":          "http",
+			"url":           item.URL,
+			"headersHelper": shellQuote(bb) + " mcp header " + shellQuote(item.Name),
+		})
+		if err != nil {
+			return err
+		}
+		argv = []string{"mcp", "add-json", "--scope", "user", item.Name, string(spec)}
+	} else if item.Transport == "http" {
 		if target == "codex" {
 			argv = append(argv, item.Name, "--url", item.URL)
 			if item.BearerTokenEnvVar != "" {
@@ -509,6 +604,8 @@ func (a *App) syncMCPServer(target string, item namedMCPServer) error {
 				argv = append(argv, "--header", "Authorization: Bearer ${"+item.BearerTokenEnvVar+"}")
 			}
 		}
+	} else if len(item.SecretEnv) != 0 {
+		argv = append(argv, item.Name, "--", bb, "mcp", "launch", item.Name)
 	} else {
 		argv = append(argv, item.Name, "--", item.Command)
 		argv = append(argv, item.Args...)
@@ -522,11 +619,15 @@ func (a *App) syncMCPServer(target string, item namedMCPServer) error {
 }
 
 type mcpCheckResult struct {
-	Name       string            `json:"name"`
-	Valid      bool              `json:"valid"`
-	Executable bool              `json:"executable,omitempty"`
-	MissingEnv []string          `json:"missing_env"`
-	Targets    map[string]string `json:"targets"`
+	Name       string   `json:"name"`
+	Valid      bool     `json:"valid"`
+	Executable bool     `json:"executable,omitempty"`
+	MissingEnv []string `json:"missing_env"`
+	// MissingSecrets lists sec:// references absent from the store; it is
+	// omitted when the server has none or the store could not be opened.
+	MissingSecrets []string          `json:"missing_secrets,omitempty"`
+	SecretsError   string            `json:"secrets_error,omitempty"`
+	Targets        map[string]string `json:"targets"`
 }
 
 func (a *App) mcpCheck(args []string) error {
@@ -547,11 +648,27 @@ func (a *App) mcpCheck(args []string) error {
 		items = []namedMCPServer{{Name: args[0], mcpServer: server}}
 	}
 	results := make([]mcpCheckResult, 0, len(items))
+	var secrets secretStore
+	var secretsErr error
 	for _, item := range items {
 		result := mcpCheckResult{Name: item.Name, Valid: validateMCPServer(item.Name, item.mcpServer) == nil, MissingEnv: []string{}, Targets: map[string]string{}}
 		if item.Transport == "stdio" {
 			_, lookupErr := a.lookPath(item.Command)
 			result.Executable = lookupErr == nil
+		}
+		if refs := mcpSecretReferences(item.mcpServer); len(refs) != 0 {
+			if secrets == nil && secretsErr == nil {
+				secrets, secretsErr = a.readSecrets()
+			}
+			if secretsErr != nil {
+				result.SecretsError = secretsErr.Error()
+			}
+			for _, reference := range refs {
+				service, field, _ := parseWenvSecretReference(reference)
+				if _, ok := secrets[service][field]; !ok && secretsErr == nil {
+					result.MissingSecrets = append(result.MissingSecrets, reference)
+				}
+			}
 		}
 		variables := append([]string{}, item.EnvVars...)
 		if item.BearerTokenEnvVar != "" {
@@ -765,7 +882,15 @@ func (a *App) promptMCPSpec(name string, current mcpServer, add bool) error {
 		if err != nil {
 			return err
 		}
-		server.Command, server.Args, server.URL, server.BearerTokenEnvVar = command, splitMCPList(args), "", ""
+		secretEnv, err := a.promptMCPOptionalLine("Secret env from bb sec (VAR=service/field, comma-separated)", formatMCPSecretEnv(current.SecretEnv))
+		if err != nil {
+			return err
+		}
+		server.SecretEnv, err = parseMCPSecretEnv(secretEnv)
+		if err != nil {
+			return err
+		}
+		server.Command, server.Args, server.URL, server.BearerTokenEnvVar, server.BearerTokenSecret = command, splitMCPList(args), "", "", ""
 	} else {
 		address, ok, err := a.promptMCPLine("URL", current.URL)
 		if err != nil || !ok {
@@ -775,7 +900,15 @@ func (a *App) promptMCPSpec(name string, current mcpServer, add bool) error {
 		if err != nil {
 			return err
 		}
-		server.URL, server.BearerTokenEnvVar, server.Command, server.Args = address, bearer, "", nil
+		bearerSecret := ""
+		if bearer == "" {
+			bearerSecret, err = a.promptMCPOptionalLine("Bearer token from bb sec, Claude only (service/field, optional)", strings.TrimPrefix(current.BearerTokenSecret, wenvSecretReferencePrefix))
+			if err != nil {
+				return err
+			}
+		}
+		server.URL, server.BearerTokenEnvVar, server.BearerTokenSecret = address, bearer, normalizeSecretReference(bearerSecret)
+		server.Command, server.Args, server.SecretEnv = "", nil, nil
 	}
 	envVars, err := a.promptMCPOptionalLine("Required env vars (comma-separated)", strings.Join(current.EnvVars, ","))
 	if err != nil {
@@ -801,4 +934,29 @@ func (a *App) promptMCPSpec(name string, current mcpServer, add bool) error {
 		store.Servers[name] = server
 		return nil
 	})
+}
+
+func formatMCPSecretEnv(secretEnv map[string]string) string {
+	names := make([]string, 0, len(secretEnv))
+	for name := range secretEnv {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	parts := make([]string, len(names))
+	for i, name := range names {
+		parts[i] = name + "=" + strings.TrimPrefix(secretEnv[name], wenvSecretReferencePrefix)
+	}
+	return strings.Join(parts, ",")
+}
+
+func parseMCPSecretEnv(value string) (map[string]string, error) {
+	result := map[string]string{}
+	for _, part := range splitMCPList(value) {
+		name, reference, ok := strings.Cut(part, "=")
+		if !ok {
+			return nil, invalid("secret env entries take VAR=service/field")
+		}
+		result[strings.TrimSpace(name)] = normalizeSecretReference(strings.TrimSpace(reference))
+	}
+	return result, nil
 }

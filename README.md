@@ -119,6 +119,11 @@ bb mcp sync claude bb
 bb mcp add jira --http https://jira.example.test/mcp \
   --bearer-token-env JIRA_TOKEN --targets claude,codex
 bb wenv set mcp JIRA_TOKEN=sec://jira/token
+# Or let the server read bb sec directly: sync registers "bb mcp launch gitlab",
+# which injects the token into that server process only.
+bb mcp add gitlab --stdio npx --arg @x/gitlab-mcp --secret-env GITLAB_TOKEN=gitlab/token
+# HTTP bearer token for Claude via headersHelper (Claude-only target).
+bb mcp add jira --http https://jira.example/mcp --bearer-token-secret jira/token
 bb wenv apply mcp
 bb mcp sync claude jira
 bb mcp sync codex jira

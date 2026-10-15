@@ -202,7 +202,7 @@ func TestClaudeMCPHealthDistinguishesRegistrationFromConnection(t *testing.T) {
 func TestMCPPlainManagerCanAddServer(t *testing.T) {
 	a, _, _, _ := testApp(t)
 	a.env = append(a.env, "BB_SELECTOR=plain")
-	a.in = strings.NewReader("1\npersonal\nLocal tools\nstdio\nnpx\n-y,@example/mcp\n\nclaude,codex\n")
+	a.in = strings.NewReader("1\npersonal\nLocal tools\nstdio\nnpx\n-y,@example/mcp\n\n\nclaude,codex\n")
 	if err := a.Run([]string{"mcp"}); err != nil {
 		t.Fatal(err)
 	}

@@ -113,7 +113,9 @@ func (a *App) mcp(args []string) error {
   bb mcp audit [--json]
   bb mcp serve                             Run the bb MCP server over stdio
   bb mcp allow [list] [--json]
-  bb mcp allow add|rm <command> [-- <required argument prefix>...]
+  bb mcp allow add|rm <command> [--service S]... [--preset P]... [-- <required argument prefix>...]
+  bb mcp allow add --bundle <name> [--service S]... [--preset P]...
+  bb mcp allow bundles [--json]
   bb mcp allow service|preset add|rm <name>...
 
 Options for add/edit:
@@ -142,8 +144,11 @@ helper mechanism, so use --bearer-token-env with a wenv preset there.
 secret value: agents receive sec://<service>/<field> references and run commands
 through sec_exec/wenv_exec, which inject values into a child process only. Those
 two tools are fail-closed and run nothing until "bb mcp allow add <command>".
-An argument prefix after "--" narrows a command to one subcommand, and the
-service/preset scopes narrow which entries those tools may reach at all.
+An argument prefix after "--" narrows a command to one subcommand. --service and
+--preset bind a rule to the entries it may run with (glab only with the gitlab
+token); removing a rule's last binding removes the rule. Bundles add read-only
+subcommand sets such as glab-read. The service/preset scopes narrow which
+entries those tools may reach at all. sec_check and sec_list report expiry.
 `)
 		return err
 	}

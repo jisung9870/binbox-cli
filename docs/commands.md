@@ -26,12 +26,12 @@ The repository includes `docs/examples/aws-contexts.udg.json` as a portable,
 credential-free UDG group example. Copy it to `~/.config/bb/aws-contexts.json`
 on WSL/Linux before opening `aws browse`.
 | Environments | `wenv`, `wenv list/current/show/apply/set/rm/export/import` | Staged preset CRUD TUI; declarative XDG JSON with `sec://service/field` references; redacted preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
-| Secrets | `sec`, `sec init/list/add/set/meta/check/rename/get/copy/env/exec/rm/trash/restore` | Service→Field→Action manager with `Add secret`/`Add field` metadata-only choices and expiry badges; `service/field` paths; clipboard paste and timed clipboard clear; value-free expiry/URL/note metadata with `check`; 7-day encrypted trash; default-cancel overwrite/rename/service removal/purge; hidden input; child-scoped exec; existing age key/ciphertext format |
+| Secrets | `sec`, `sec init/list/add/set/meta/check/rename/get/copy/env/exec/rm/trash/restore/harden` | Service→Field→Action manager with `Add secret`/`Add field` metadata-only choices and expiry badges; `service/field` paths; clipboard paste and timed clipboard clear; value-free expiry/URL/note metadata with `check`; 7-day encrypted trash; `harden claude|codex` agent deny rules; default-cancel overwrite/rename/service removal/purge; hidden input; child-scoped exec; existing age key/ciphertext format |
 | Terraform | `tfx init/validate/fmt/plan/sum/browse/session/status/apply/destroy/end/state/review/clean` | Account-, scope-, expiry-, and plan-bound destructive safeguards; `browse` only reads a plan |
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
 | Local ports | `port inspect/kill` | Exact sorted PID observation followed by confirmation and re-observation |
 | LazyVim | `setup nvim` | Validates a separate config identity and links only with apply plus consent |
-| MCP | `mcp`, `mcp list/show/add/edit/rm/sync/check/audit` | XDG CRUD registry and staged TUI; owner-CLI synchronization to Claude/Codex; required environment names only; no secret values, proxy, or server installation |
+| MCP | `mcp`, `mcp list/show/add/edit/rm/sync/check/audit/launch/header/serve/allow` | XDG CRUD registry and staged TUI; owner-CLI synchronization to Claude/Codex; required environment names only; no secret values, proxy, or server installation |
 
 Interactive selection renders only on stderr. Printable input searches without a
 mode switch; `↑/↓` or `Ctrl+N/P` move, Enter selects, and Escape clears then
@@ -58,6 +58,18 @@ and fields expiring within 14 days (`--within`), exiting 1 when there are any.
 It reads only the metadata, so it can run from a prompt or a scheduler without
 the age key. Replacing a value keeps its expiry and prints a reminder to update
 it with `bb sec meta`.
+
+`bb sec harden claude|codex` shows deny rules for agent shells and, after
+confirmation, adds them to Claude's `settings.json` `permissions.deny`
+(`CLAUDE_CONFIG_DIR` respected; other keys keep their order) or writes Codex's
+`$CODEX_HOME/rules/bb-sec.rules` as `forbidden` prefix rules. They cover the
+value-printing and agent-chosen-child commands (`bb sec get|env|copy|exec`,
+`bb wenv apply|export|exec`, `bb mcp header`), registry changes
+(`bb mcp add|edit|launch|allow`, Claude `Edit` of the two registries),
+`BB_ALLOW_SECRET_OUTPUT`,
+`age -d`, environment-printing `ps` forms and the age key file. Agents use the
+`bb mcp serve` tools instead. The rules match command prefixes and are a
+guardrail, not containment.
 
 `bb sec rm` moves fields, with their metadata, into `secrets.trash.json.age`,
 which is encrypted to the same key and pruned after 7 days. `bb sec trash` lists
@@ -95,6 +107,15 @@ or `sec://<service>/<field>` references, never values.
   same-user trust `bb sec exec` already relies on.
 - Otherwise put the value in `bb sec`, expose it through a `wenv` `sec://`
   reference, and apply that preset before starting the client.
+
+`bb mcp allow add <command> [--service S]... [--preset P]... [-- <prefix>...]`
+binds an exec rule to the services or presets it may run with; a rule with no
+binding runs with any entry the global `allow service|preset` scope permits.
+`--bundle gh-read|glab-read|aws-identity` (with a binding) adds read-only
+subcommand sets that refuse `-R`/`--repo`/`--hostname`/`--endpoint-url` and URL
+arguments. A broader rule that would mask a narrower rule's binding is refused. The
+`bb mcp serve` tools `sec_list` (with recorded expiry) and `sec_check` report
+expiry without values, and exec results warn about an expiring credential.
 
 `mcp check` reports missing variables, `missing_secrets` for references absent
 from the store, and registrations. Claude performs its own health check during `get`;

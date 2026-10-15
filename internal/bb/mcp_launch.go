@@ -52,22 +52,39 @@ func (a *App) resolveMCPReferences(refs []string) (map[string]string, error) {
 	return values, nil
 }
 
+// expiryWarnings describes expired or soon-expiring entries among keys
+// (service/field). Metadata problems produce no warning: they never block use.
+func (a *App) expiryWarnings(keys []string) []string {
+	meta, err := a.readSecretMeta()
+	if err != nil {
+		return nil
+	}
+	today := a.secretToday()
+	warnings := []string{}
+	for _, key := range sortedUnique(keys) {
+		status := expiryStatus(key, meta[key], today, defaultExpiryWindowDays)
+		if status.State == "expired" || status.State == "expiring" {
+			warnings = append(warnings, fmt.Sprintf("%s (%s); renew it with: bb sec add %s --force", key, status.badge(), key))
+		}
+	}
+	return warnings
+}
+
+func secretKeysForReferences(refs []string) []string {
+	keys := make([]string, 0, len(refs))
+	for _, reference := range refs {
+		if service, field, ok := parseWenvSecretReference(reference); ok {
+			keys = append(keys, secretKey(service, field))
+		}
+	}
+	return keys
+}
+
 // warnExpiringMCPSecrets reports expired or soon-expiring references on stderr,
 // which MCP clients keep in their server logs. It never blocks a launch.
 func (a *App) warnExpiringMCPSecrets(name string, refs []string) {
-	meta, err := a.readSecretMeta()
-	if err != nil {
-		return
-	}
-	today := a.secretToday()
-	for _, reference := range refs {
-		service, field, _ := parseWenvSecretReference(reference)
-		key := secretKey(service, field)
-		status := expiryStatus(key, meta[key], today, defaultExpiryWindowDays)
-		if status.State == "expired" || status.State == "expiring" {
-			fmt.Fprintf(a.err, "bb: MCP server %s uses %s (%s); renew it with: bb sec add %s --force\n",
-				name, key, status.badge(), key)
-		}
+	for _, warning := range a.expiryWarnings(secretKeysForReferences(refs)) {
+		fmt.Fprintf(a.err, "bb: MCP server %s uses %s\n", name, warning)
 	}
 }
 

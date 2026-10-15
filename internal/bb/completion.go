@@ -205,16 +205,18 @@ _bb() {
       ;;
     sec)
       if (( CURRENT == 3 )); then
-        _bb_static 'secret command' 'init:initialize encrypted store' 'list:list metadata' 'add:add a value' 'set:set a value' 'meta:show or edit expiry metadata' 'check:report expiring secrets' 'rename:rename a field' 'get:print a value' 'copy:copy a value' 'env:print exports' 'exec:run a scoped command' 'rm:move to trash' 'trash:list trashed fields' 'restore:restore from trash'
+        _bb_static 'secret command' 'init:initialize encrypted store' 'list:list metadata' 'add:add a value' 'set:set a value' 'meta:show or edit expiry metadata' 'check:report expiring secrets' 'rename:rename a field' 'get:print a value' 'copy:copy a value' 'env:print exports' 'exec:run a scoped command' 'rm:move to trash' 'trash:list trashed fields' 'restore:restore from trash' 'harden:add agent deny rules'
       elif (( CURRENT == 4 )); then
         case "${words[3]}" in
           list|add|set|meta|rename|get|copy|env|exec|rm) _bb_dynamic 'secret service' secret-service ;;
           check) _bb_static 'option' '--within:days to look ahead' '--all:include healthy entries' '--json:print JSON' '--quiet:exit status only' ;;
+          harden) _bb_static 'agent client' 'claude:Claude Code settings deny rules' 'codex:Codex execpolicy rules' ;;
         esac
       elif (( CURRENT == 5 )); then
         case "${words[3]}" in
           add|set|meta|rename|get|copy|rm) _bb_dynamic 'secret field' secret-field "${words[4]}" ;;
           exec) _bb_static 'separator' '--:end bb options' ;;
+          harden) _bb_static 'option' '--print:show rules only' '--yes:skip confirmation' ;;
         esac
       elif (( CURRENT == 6 )); then
         case "${words[3]}" in
@@ -263,7 +265,7 @@ _bb() {
           show|edit|rm|check|launch|header) _bb_dynamic 'MCP server' mcp ;;
           sync) _bb_static 'MCP client' 'claude:Claude Code' 'codex:Codex' ;;
           list|audit) _bb_static 'option' '--json:JSON envelope' ;;
-          allow) _bb_static 'allowlist action' 'list:show the allowlist and scopes' 'add:allow a command' 'rm:remove a command' 'service:scope secret services' 'preset:scope wenv presets' ;;
+          allow) _bb_static 'allowlist action' 'list:show the allowlist and scopes' 'add:allow a command' 'rm:remove a command' 'bundles:list read-only rule bundles' 'service:scope secret services' 'preset:scope wenv presets' ;;
           add) _bb_static 'option' '--stdio:stdio command' '--http:streamable HTTP URL' '--description:purpose' '--arg:stdio argument' '--env:required environment name' '--bearer-token-env:bearer token environment name' '--targets:registration targets' ;;
         esac
       elif (( CURRENT == 5 )); then

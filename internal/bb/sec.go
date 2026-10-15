@@ -55,6 +55,7 @@ func (a *App) sec(args []string) error {
   bb sec rm <service[/field]> [--purge] [--yes]
   bb sec trash [--empty [--yes]]
   bb sec restore [service[/field]]
+  bb sec harden claude|codex [--print] [--yes]   Deny agent shells the value-printing commands
 
 "service field" still works wherever "service/field" is shown.
 --paste reads the value from the clipboard and clears it after storing.
@@ -105,6 +106,8 @@ secrets through "bb sec exec", "bb mcp serve", or an explicit BB_ALLOW_SECRET_OU
 		return a.secTrash(rest)
 	case "restore":
 		return a.secRestore(rest)
+	case "harden":
+		return a.secHarden(rest)
 	case clipboardClearCommand:
 		return a.secClipboardClear(rest)
 	default:

@@ -26,7 +26,7 @@ The repository includes `docs/examples/aws-contexts.udg.json` as a portable,
 credential-free UDG group example. Copy it to `~/.config/bb/aws-contexts.json`
 on WSL/Linux before opening `aws browse`.
 | Environments | `wenv`, `wenv list/current/show/apply/set/rm/export/import` | Staged preset CRUD TUI; declarative XDG JSON with `sec://service/field` references; redacted preview/default-cancel confirmation before apply; legacy shell is parsed, never sourced |
-| Secrets | `sec`, `sec init/list/set/rename/get/copy/env/exec/rm` | Service→Field→Action manager with `Add secret`/`Add field` metadata-only choices; default-cancel rename/overwrite/removal; hidden input; child-scoped exec; existing age key/ciphertext format |
+| Secrets | `sec`, `sec init/list/add/set/meta/check/rename/get/copy/env/exec/rm/trash/restore` | Service→Field→Action manager with `Add secret`/`Add field` metadata-only choices and expiry badges; `service/field` paths; clipboard paste and timed clipboard clear; value-free expiry/URL/note metadata with `check`; 7-day encrypted trash; default-cancel overwrite/rename/service removal/purge; hidden input; child-scoped exec; existing age key/ciphertext format |
 | Terraform | `tfx init/validate/fmt/plan/sum/browse/session/status/apply/destroy/end/state/review/clean` | Account-, scope-, expiry-, and plan-bound destructive safeguards; `browse` only reads a plan |
 | Trivy | `tvx image/repo/config/ci/sbom/report/k8s/clean/doctor` | Fixed security policies and explicit guarded node collection |
 | Local ports | `port inspect/kill` | Exact sorted PID observation followed by confirmation and re-observation |
@@ -48,6 +48,25 @@ shell wrapper evaluates output only when Apply succeeds. `bb sec` similarly
 appends `Add secret` at the service level and `Add field` within an existing
 service. Secret values still use the hidden terminal prompt and encrypted store
 path used by `bb sec set`.
+
+`bb sec add gitlab/token --paste --expires 90d --url <reissue page>` stores a
+value from the clipboard, clears the clipboard, and records metadata in
+`secrets.meta.json` next to the store. That file holds expiry, URL, and note
+only, but its keys reveal `service/field` names in plaintext (mode 0600); JWT values fill the expiry from their `exp` claim. `bb sec list` and the
+manager show `D-N` or `expired` badges, and `bb sec check` lists expired fields
+and fields expiring within 14 days (`--within`), exiting 1 when there are any.
+It reads only the metadata, so it can run from a prompt or a scheduler without
+the age key. Replacing a value keeps its expiry and prints a reminder to update
+it with `bb sec meta`.
+
+`bb sec rm` moves fields, with their metadata, into `secrets.trash.json.age`,
+which is encrypted to the same key and pruned after 7 days. `bb sec trash` lists
+it, `bb sec restore <service[/field]>` brings the newest copy back without
+overwriting an existing field, and `--purge` skips the trash and also drops
+earlier trashed copies of the same field (encrypted store backups under the
+state directory are unaffected). `bb sec copy`
+clears the clipboard after 30 seconds only if it still holds the copied value;
+the detached clearer receives a SHA-256 digest on a pipe, never the value.
 
 `bb mcp` opens a Server→Action manager. A server uses either local stdio or
 streamable HTTP and declares its Claude/Codex targets. `sync` calls the selected

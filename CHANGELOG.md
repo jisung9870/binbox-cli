@@ -4,6 +4,36 @@ All notable changes to `binbox-cli` are recorded here. The project follows
 [Semantic Versioning](https://semver.org/); entries are derived from annotated
 release tags and the corresponding release records.
 
+## Unreleased
+
+### Added
+
+- `bb sec` accepts `service/field` wherever it took `service field`, and `add`
+  is an alias of `set`.
+- `bb sec add --paste` stores the clipboard and clears it afterwards when it
+  still holds that value.
+- Secret metadata (`--expires`, `--url`, `--note` on `add`/`set`, and the new
+  `bb sec meta`) lives in `secrets.meta.json` beside the store and never holds a
+  value. Expiry accepts `YYYY-MM-DD` or `90d`/`12w`/`6m`/`1y`; JWT values get it
+  from their `exp` claim when none is given.
+- `bb sec list` shows `D-N`/`expired` badges when metadata exists, and the
+  manager shows them and offers `Set expiry`.
+- `bb sec check [--within 14d] [--all] [--json|--quiet]` reports expired and
+  expiring fields from metadata alone and exits 1 when it finds any.
+- `bb sec trash` and `bb sec restore` back a 7-day encrypted trash
+  (`secrets.trash.json.age`).
+
+### Changed
+
+- `bb sec rm` moves fields to the trash. Removing one field no longer asks for
+  confirmation; removing a whole service and the new `--purge` still default to
+  cancel. `--purge` also drops earlier trashed copies of the field.
+- `bb sec list` adds an aligned badge column once any listed entry has an
+  expiry; listings without metadata are unchanged.
+- `bb sec copy` clears the clipboard after 30 seconds unless the content has
+  changed. `--keep` or `BB_SEC_CLIPBOARD_CLEAR=0` disables it and
+  `BB_SEC_CLIPBOARD_CLEAR=<seconds>` changes the delay.
+
 ## 0.16.0 - 2026-09-13
 
 ### Added
